@@ -121,7 +121,7 @@ class TranscriptionTab:
                 )
 
                 upload_transcription_btn = gr.Button(
-                    "📝 Transkription hinzufügen", variant="primary"
+                    "📝 Transkription hinzufügen", variant="primary", visible=False
                 )
 
                 # Transcription files display
@@ -546,7 +546,7 @@ class TranscriptionTab:
         )
 
         # Event handlers
-        upload_transcription_btn.click(
+        transcription_file_upload.upload(
             auto_analyze_on_upload,
             inputs=[transcription_file_upload, self.app_state, auto_check_gdpr],
             outputs=[
