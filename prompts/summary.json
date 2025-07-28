@@ -1,0 +1,9 @@
+{
+  "name": "Zusammenfassung",
+  "description": "Erstellt strukturierte Zusammenfassungen von Bildungsvorträgen",
+  "system_message": "Du bist mein Assistent, der Vorträge von Veranstaltungen zusammenfasst. Du sollst mir helfen aus dem Transkript eines Vortrags eine Dokumentation der Veranstaltung zu erstellen.",
+  "template": "Bitte erstelle eine ansprechend formatierte Zusammenfassung von insgesamt 3000 Wörtern in deutscher Sprache.\n\nDabei sollten folgende Punkte berücksichtigt werden:\n\n- Kurze Zusammenfassung des Vortrags in wenigen Sätzen\n- Die Gliederung und der Aufbau des Vortrags\n- Nenne Kernaussagen und verwende dazu nach Möglichkeit die Formulierung im Vortrag\n- Beschreibe alle Kernaussagen in jeweils einem eigenen Kapitel\n- Handlungsempfehlungen (Call to Actions, Aufrufe, Bitten), die im Verlauf des Vortrags hervorgehoben wurden\n\n# Regeln:\n- Die Zusammenfassung sollte in klarer, prägnanter Sprache verfasst und in gut lesbare Abschnitte unterteilt sein.\n- Die Verwendung von Aufzählungszeichen zur Hervorhebung wichtiger Punkte ist erwünscht.\n- Zitate sollten mit Anführungszeichen und kursiver Formatierung formatiert werden.\n- Aufzählungen sollen mit einem Spiegelstrich \"- ...\" beginnen. Zwischen Spiegelstrichen darf KEINE Leerzeile sein\n- Formatiere das Ergebnis mit maximal zwei Überschriftsebenen und Ebene 3 (###) als oberster Ebene.\n- Formatiere die Dokumentation im Markdown Format\n\n**Allgemeine Informationen zur Veranstaltung:**\n{talk_metadata}\n\n**Transkription(en):**\n{transcriptions}\n\nBitte erstelle die Zusammenfassung auf Deutsch und achte auf eine professionelle, klare Sprache.",
+  "temperature": 0.6,
+  "max_tokens": 3000,
+  "model": "gemma-3-27b-it"
+}

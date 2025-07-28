@@ -1,0 +1,257 @@
+/* MooMoot Scribe Application Styles */
+
+/* Main layout and container styles */
+gradio-app {
+    align-items: center;
+    justify-content: center;
+}
+
+.gradio-container {
+    max-width: 1400px !important;
+    width: 100% !important;
+}
+
+/* Header styles */
+.main-header {
+    position: relative;
+    text-align: center;
+    padding: 25px;
+    background: linear-gradient(35deg, #f39632 20%, #ab87a1 100%);
+    color: white;
+    border-radius: 15px;
+    margin-bottom: 25px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    z-index: 1;
+}
+
+/* Tab and content styles */
+.tab-content {
+    padding: 20px;
+}
+
+.component-section {
+    background: #f39632;
+    padding: 20px;
+    border-radius: 10px;
+    margin: 10px 0;
+    border-left: 4px solid #ab87a1;
+}
+
+/* Custom CSS for vertical radio buttons */
+.file-radio-vertical .wrap {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+}
+
+.file-radio-vertical .wrap>label {
+    width: 100% !important;
+    margin: 2px 0 !important;
+    padding: 8px 12px !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 4px !important;
+    background: #f8f9fa !important;
+    cursor: pointer !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    white-space: normal !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.file-radio-vertical .wrap>label:hover {
+    background: #e9ecef !important;
+    border-color: #007bff !important;
+}
+
+.file-radio-vertical .wrap>label input[type="radio"]:checked+span {
+    color: black !important;
+    border-radius: 3px !important;
+    padding: 2px 6px !important;
+}
+
+.file-radio-vertical .wrap>label span {
+    font-family: monospace !important;
+    font-size: 0.9em !important;
+    word-break: break-all !important;
+    max-width: 100% !important;
+}
+
+/* Custom CSS for vertical checkbox group */
+.file-checkbox-vertical .wrap {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+}
+
+.file-checkbox-vertical .wrap>label {
+    width: 100% !important;
+    margin: 2px 0 !important;
+    padding: 8px 12px !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 4px !important;
+    background: #f8f9fa !important;
+    cursor: pointer !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    white-space: normal !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.file-checkbox-vertical .wrap>label:hover {
+    background: #e9ecef !important;
+    border-color: #28a745 !important;
+}
+
+.file-checkbox-vertical .wrap>label input[type="checkbox"]:checked+span {
+    background: #28a745 !important;
+    color: white !important;
+    border-radius: 3px !important;
+    padding: 2px 6px !important;
+}
+
+.file-checkbox-vertical .wrap>label span {
+    font-family: monospace !important;
+    font-size: 0.9em !important;
+    word-break: break-all !important;
+    max-width: 100% !important;
+}
+
+/* Summary editor styling */
+.summary-editor textarea {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+    line-height: 1.6 !important;
+}
+
+/* Raw output editor styling */
+.raw-output-editor textarea {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
+    line-height: 1.4 !important;
+    background-color: #f8f9fa !important;
+}
+
+/* HTML preview styling */
+.html-preview.block {
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 8px !important;
+    padding: 20px !important;
+    background-color: #ffffff !important;
+    min-height: 400px !important;
+    max-height: 600px !important;
+    overflow-y: auto !important;
+}
+
+.html-preview h1,
+.html-preview h2,
+.html-preview h3 {
+    color: #2c3e50 !important;
+    margin-top: 1.5em !important;
+    margin-bottom: 0.5em !important;
+}
+
+.html-preview p {
+    margin-bottom: 1em !important;
+    line-height: 1.6 !important;
+}
+
+.html-preview ul,
+.html-preview ol {
+    margin-bottom: 1em !important;
+    padding-left: 2em !important;
+}
+
+.html-preview blockquote {
+    border-left: 4px solid #3498db !important;
+    margin: 1em 0 !important;
+    padding-left: 1em !important;
+    font-style: italic !important;
+    color: #555 !important;
+}
+
+.html-preview code {
+    background-color: #f4f4f4 !important;
+    padding: 2px 4px !important;
+    border-radius: 3px !important;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
+}
+
+.html-preview pre {
+    background-color: #f8f9fa !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 5px !important;
+    padding: 1em !important;
+    overflow-x: auto !important;
+}
+
+/* Prompt configuration accordion */
+.prompt-config .gradio-accordion {
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 8px !important;
+}
+
+/* Mermaid diagram styles */
+.mermaid {
+    text-align: center !important;
+    margin: 20px 0 !important;
+    background: white !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    padding: 20px !important;
+    overflow-x: auto !important;
+}
+
+.html-preview .mermaid {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+
+.html-preview .mermaid svg {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+/* Mermaid diagram styles */
+pre.mermaid {
+    background-color: white !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    padding: 20px !important;
+    margin: 20px 0 !important;
+    text-align: center !important;
+    overflow: visible !important;
+}
+
+.mermaid svg {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+/* Ensure mermaid diagrams display properly in HTML preview */
+.html-preview pre.mermaid {
+    background: white !important;
+    border: 2px solid #e0e0e0 !important;
+    border-radius: 10px !important;
+    padding: 25px !important;
+    margin: 25px 0 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Mermaid diagram styles */
+.html-preview .mermaid {
+    text-align: center !important;
+    margin: 20px auto !important;
+    background: white !important;
+    border: 1px solid #ddd !important;
+    border-radius: 8px !important;
+    padding: 20px !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+}
+
+.html-preview .mermaid svg {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+.gdpr-highlight {
+    cursor: help;
+}
