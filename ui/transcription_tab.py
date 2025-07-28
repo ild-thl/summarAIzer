@@ -4,6 +4,7 @@ Upload audio files to generate transcriptions or upload existing transcripts and
 """
 
 import gradio as gr
+from pathlib import Path
 from ui.shared_ui import (
     create_current_talk_display,
     create_component_header,
@@ -85,8 +86,7 @@ class TranscriptionTab:
             with gr.Column(scale=1):
                 gr.Markdown("#### 🎵 Audio-Datei (noch nicht verfügbar)")
                 audio_file_upload = gr.File(
-                    label="Audio-Datei hochladen",
-                    file_types=[".mp3", ".wav", ".m4a", ".ogg", ".flac"],
+                    label="Audio-Datei hochladen (.mp3, .wav, .m4a, .ogg, .flac)",
                     interactive=False,
                 )
 
@@ -115,8 +115,8 @@ class TranscriptionTab:
             with gr.Column(scale=1):
                 gr.Markdown("#### 📝 Transkriptions-Datei")
                 transcription_file_upload = gr.File(
-                    label="Transkriptions-Datei hochladen",
-                    file_types=[".txt", ".vtt", ".srt"],
+                    label="Transkriptions-Datei hochladen (.txt, .vtt, .srt)",
+                    file_count="single",
                     interactive=True,
                 )
 
@@ -247,15 +247,45 @@ class TranscriptionTab:
                     *refresh_file_displays(state),
                 )
 
-            result = self.talk_manager.add_transcription_file(current_talk, file.name)
+            try:
+                # Handle different file object structures between local and hosted environments
+                file_path = getattr(file, "name", str(file))
+                if not file_path:
+                    return (
+                        "❌ Ungültiger Dateipfad.",
+                        *refresh_file_displays(state),
+                    )
 
-            # Get updated displays
-            displays = refresh_file_displays(state)
+                # Validate file extension in backend
+                allowed_extensions = [".txt", ".vtt", ".srt"]
+                file_extension = Path(file_path).suffix.lower()
 
-            if result["success"]:
-                return f"✅ {result['message']}\n📁 {result['file_path']}", *displays
-            else:
-                return f"❌ {result['error']}", *displays
+                if file_extension not in allowed_extensions:
+                    return (
+                        f"❌ Ungültiger Dateityp. Erlaubte Formate: {', '.join(allowed_extensions)}",
+                        *refresh_file_displays(state),
+                    )
+
+                result = self.talk_manager.add_transcription_file(
+                    current_talk, file_path
+                )
+
+                # Get updated displays
+                displays = refresh_file_displays(state)
+
+                if result["success"]:
+                    return (
+                        f"✅ {result['message']}\n📁 {result['file_path']}",
+                        *displays,
+                    )
+                else:
+                    return f"❌ {result['error']}", *displays
+
+            except Exception as e:
+                return (
+                    f"❌ Fehler beim Hochladen der Datei: {str(e)}",
+                    *refresh_file_displays(state),
+                )
 
         def upload_audio_file(file, state):
             """Upload audio file for current talk"""
@@ -272,18 +302,33 @@ class TranscriptionTab:
                     *refresh_file_displays(state),
                 )
 
-            result = self.talk_manager.add_audio_file(current_talk, file.name)
+            try:
+                # Handle different file object structures between local and hosted environments
+                file_path = getattr(file, "name", str(file))
+                if not file_path:
+                    return (
+                        "❌ Ungültiger Dateipfad.",
+                        *refresh_file_displays(state),
+                    )
 
-            # Get updated displays
-            displays = refresh_file_displays(state)
+                result = self.talk_manager.add_audio_file(current_talk, file_path)
 
-            if result["success"]:
+                # Get updated displays
+                displays = refresh_file_displays(state)
+
+                if result["success"]:
+                    return (
+                        f"✅ {result['message']}\n📁 {result['file_path']}\n⚠️ Transkription noch erforderlich.",
+                        *displays,
+                    )
+                else:
+                    return f"❌ {result['error']}", *displays
+
+            except Exception as e:
                 return (
-                    f"✅ {result['message']}\n📁 {result['file_path']}\n⚠️ Transkription noch erforderlich.",
-                    *displays,
+                    f"❌ Fehler beim Hochladen der Audio-Datei: {str(e)}",
+                    *refresh_file_displays(state),
                 )
-            else:
-                return f"❌ {result['error']}", *displays
 
         def delete_file(state, filename, file_type="transcription"):
             """Delete a file from the current talk"""
@@ -423,18 +468,32 @@ class TranscriptionTab:
                 # Get the content of the uploaded file
                 current_talk = state.get("current_talk")
                 if current_talk and file:
-                    # Extract filename from the file
-                    filename = file.name.split("/")[-1].split("\\")[-1]
-                    content_result = self.talk_manager.get_transcription_content(
-                        current_talk, filename
-                    )
+                    try:
+                        # Extract filename more robustly
+                        file_path = getattr(file, "name", str(file))
+                        if file_path:
+                            # Handle both Unix and Windows path separators
+                            filename = file_path.replace("\\", "/").split("/")[-1]
 
-                    if content_result["success"]:
-                        # Perform GDPR analysis
-                        analysis_results = analyze_gdpr_compliance(
-                            content_result["content"]
-                        )
-                        return upload_result + analysis_results
+                            # If still no proper filename, try orig_name attribute
+                            if not filename or filename == file_path:
+                                filename = getattr(file, "orig_name", filename)
+
+                            content_result = (
+                                self.talk_manager.get_transcription_content(
+                                    current_talk, filename
+                                )
+                            )
+
+                            if content_result["success"]:
+                                # Perform GDPR analysis
+                                analysis_results = analyze_gdpr_compliance(
+                                    content_result["content"]
+                                )
+                                return upload_result + analysis_results
+                    except Exception as e:
+                        # If filename extraction fails, continue without analysis
+                        print(f"Error extracting filename for GDPR analysis: {e}")
 
             # Return upload result with empty analysis if auto-check is disabled or failed
             return upload_result + (
