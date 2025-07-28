@@ -70,6 +70,7 @@ class MooMootScribeApp:
             theme=gr.themes.Soft(),
             css=css,
             head=head,
+            analytics_enabled=False,  # Disable analytics
         ) as demo:
             # Main header
             gr.HTML(
@@ -172,4 +173,7 @@ demo.launch(
     show_api=False,  # Disable API documentation generation
     debug=False,  # Disable debug mode
     quiet=True,  # Reduce verbose output
+    enable_queue=False,  # Disable queue to avoid additional API issues
+    show_error=False,  # Hide error details
+    favicon_path=None,  # Avoid favicon issues
 )
