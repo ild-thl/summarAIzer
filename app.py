@@ -168,12 +168,5 @@ print("🚀 Starting MooMoot Scribe Application")
 print("=" * 50)
 
 print("\n📱 Launching web interface...")
-demo = app.create_interface()
-demo.launch(
-    show_api=False,  # Disable API documentation generation
-    debug=False,  # Disable debug mode
-    quiet=True,  # Reduce verbose output
-    enable_queue=False,  # Disable queue to avoid additional API issues
-    show_error=False,  # Hide error details
-    favicon_path=None,  # Avoid favicon issues
-)
+app = app.create_interface()
+app.launch()
