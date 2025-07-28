@@ -168,4 +168,8 @@ print("=" * 50)
 
 print("\n📱 Launching web interface...")
 demo = app.create_interface()
-demo.launch()
+demo.launch(
+    show_api=False,  # Disable API documentation generation
+    debug=False,  # Disable debug mode
+    quiet=True,  # Reduce verbose output
+)
