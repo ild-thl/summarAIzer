@@ -16,6 +16,10 @@ services:
             - ./.env:/app/.env:ro
         env_file:
             - ./.env
+        environment:
+            - PROXY_PATH=/moomootscribe
+            - PROXY_HOST=lab.dlc.sh
+            - PROXY_SCHEME=https
         restart: unless-stopped
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:7860/"]
