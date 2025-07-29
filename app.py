@@ -350,14 +350,12 @@ async def redirect_gradio():
 # Root redirects
 @app.get("/")
 async def redirect_root():
-    # Always use relative redirect to /app to maintain proxy path
-    return RedirectResponse(url="/app", status_code=302)
+    # Always redirect to /app/ with trailing slash to avoid Gradio's 307 redirect
+    return RedirectResponse(url="/app/", status_code=302)
 
 
-# Redirect /app/ with trailing slash to /app
-@app.get("/app/")
-async def redirect_app_slash():
-    return RedirectResponse(url="/app", status_code=302)
+# Note: /app/ with trailing slash is handled by Gradio automatically
+# No need for explicit redirect since Gradio expects the trailing slash
 
 
 # Get configuration from environment variables
