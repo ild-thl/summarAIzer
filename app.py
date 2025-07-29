@@ -350,14 +350,8 @@ async def redirect_gradio():
 # Root redirects
 @app.get("/")
 async def redirect_root():
-    # Check if we're behind a reverse proxy
-    proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-    if proxy_path:
-        # For reverse proxy: redirect to the proxied path + /app
-        return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
-    else:
-        # For local development: redirect to /app
-        return RedirectResponse(url="/app", status_code=302)
+    # Always use relative redirect to /app to maintain proxy path
+    return RedirectResponse(url="/app", status_code=302)
 
 
 # Redirect /app/ with trailing slash to /app
