@@ -178,7 +178,7 @@ class MooMootScribeApp:
                 <h1>🎓 MooMoot Scribe</h1>
                 <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                    <a href="{self.proxy_path}/browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
+                    <a href="./browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
                         📂 Resource Browser
                     </a>
                 </div>
