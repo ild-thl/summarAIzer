@@ -313,7 +313,7 @@ resource_browser = ResourceBrowser()
 
 # Mount Gradio interface to FastAPI app at the correct path
 proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-gradio_mount_path = f"{proxy_path}/app" if proxy_path else "/app"
+gradio_mount_path = proxy_path if proxy_path else "/app"
 app = gr.mount_gradio_app(app, io, path=gradio_mount_path)
 
 # Get proxy path for route registration
@@ -352,30 +352,33 @@ async def serve_temp_image(file_name: str):
     return await resource_browser.serve_temp_image(file_name)
 
 
-# Add redirect from /gradio to /app for backward compatibility
+# Add redirect from /gradio to main interface for backward compatibility
 @app.get(f"{proxy_path}/gradio")
 async def redirect_gradio():
-    return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
+    return RedirectResponse(url=proxy_path if proxy_path else "/app", status_code=302)
 
 
 # Root redirects
 if proxy_path:
-    # Redirect proxy path root to the Gradio app
+    # Redirect proxy path root to the Gradio app (which is now mounted at proxy_path directly)
     @app.get(f"{proxy_path}/")
     async def redirect_proxy_root():
-        return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
+        return RedirectResponse(url=f"{proxy_path}", status_code=302)
 
-    @app.get(f"{proxy_path}")
-    async def redirect_proxy_root_no_slash():
-        return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
+    # For backward compatibility, redirect /app to the main interface
+    @app.get(f"{proxy_path}/app")
+    async def redirect_app():
+        return RedirectResponse(url=f"{proxy_path}", status_code=302)
+
+    @app.get(f"{proxy_path}/app/")
+    async def redirect_app_slash():
+        return RedirectResponse(url=f"{proxy_path}", status_code=302)
 
 
 # Always handle root redirect
 @app.get("/")
 async def redirect_root():
-    return RedirectResponse(
-        url=f"{proxy_path}/app" if proxy_path else "/app", status_code=302
-    )
+    return RedirectResponse(url=proxy_path if proxy_path else "/app", status_code=302)
 
 
 # Get configuration from environment variables
@@ -389,25 +392,24 @@ if not os.getenv("GRADIO_BASE_URL"):
         # For production with reverse proxy
         proxy_host = os.getenv("PROXY_HOST", f"{server_name}:{server_port}")
         proxy_scheme = os.getenv("PROXY_SCHEME", "http")
-        os.environ["GRADIO_BASE_URL"] = f"{proxy_scheme}://{proxy_host}{proxy_path}/app"
+        os.environ["GRADIO_BASE_URL"] = f"{proxy_scheme}://{proxy_host}{proxy_path}"
     else:
         # For local development
         if server_name == "0.0.0.0":
-            os.environ["GRADIO_BASE_URL"] = (
-                f"http://127.0.0.1:{server_port}{proxy_path}/app"
-            )
+            os.environ["GRADIO_BASE_URL"] = f"http://127.0.0.1:{server_port}/app"
         else:
-            os.environ["GRADIO_BASE_URL"] = (
-                f"http://{server_name}:{server_port}{proxy_path}/app"
-            )
+            os.environ["GRADIO_BASE_URL"] = f"http://{server_name}:{server_port}/app"
 
 print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
 if proxy_path:
     print(f"🔗 Proxy configuration: {proxy_path}")
+    print(f"🔗 Main app mounted at: {proxy_path}")
+else:
+    print(f"🔗 Main app mounted at: /app")
 print(f"🔗 Base URL for Gallery images: {os.getenv('GRADIO_BASE_URL')}")
-base_url = os.getenv("GRADIO_BASE_URL", f"http://{server_name}:{server_port}").replace(
-    "/app", ""
-)
+base_url = os.getenv("GRADIO_BASE_URL", f"http://{server_name}:{server_port}")
+if not proxy_path and base_url.endswith("/app"):
+    base_url = base_url.replace("/app", "")
 print(f"🔗 Resources browser: {base_url}/browse/")
 print(f"🔗 Static files: {base_url}/static/")
 print(f"🔗 Mermaid.js should be accessible at: {base_url}/static/js/mermaid.min.js")

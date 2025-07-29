@@ -41,7 +41,8 @@ class ResourceBrowser:
         proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
         parts = file_path.split("/") if file_path else []
-        breadcrumb_parts = [f'<a href="{proxy_path}/app">🎓 MooMoot Scribe</a>']
+        main_app_url = proxy_path if proxy_path else "/app"
+        breadcrumb_parts = [f'<a href="{main_app_url}">🎓 MooMoot Scribe</a>']
         breadcrumb_parts.append(f'<a href="{proxy_path}/browse/">Resources</a>')
 
         current_path = ""
