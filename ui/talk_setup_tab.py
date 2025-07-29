@@ -6,7 +6,11 @@ import gradio as gr
 
 from core.app_state import AppState
 
-from ui.shared_ui import create_component_header, create_current_talk_selector
+from ui.shared_ui import (
+    create_component_header,
+    create_current_talk_selector,
+    refresh_talk_selector_choices,
+)
 
 
 class TalkSetupTab:
@@ -119,8 +123,26 @@ class TalkSetupTab:
             "Erstellen Sie einen neuen Talk oder wählen Sie einen bestehenden aus",
         )
 
-        # Create the dropdown component
+        # Create a refresh function for the talk selector
+        def refresh_talk_selector():
+            """Refresh the talk selector with current talks"""
+            choices = refresh_talk_selector_choices(self.talk_manager)
+            return gr.Dropdown(choices=choices, value="Neu")
+
+        # Create the dropdown component with initial refresh
         current_talk_selector = create_current_talk_selector(self.talk_manager)
+
+        # Add a refresh button with clear instructions
+        with gr.Row():
+            with gr.Column(scale=2):
+                refresh_btn = gr.Button(
+                    "🔄 Talk-Liste aktualisieren",
+                    variant="secondary",
+                )
+            with gr.Column(scale=3):
+                gr.HTML(
+                    "<p style='margin: auto 0; color: #666; font-size: 0.9em;'>Klicken Sie hier, wenn neu erstellte Talks nicht angezeigt werden</p>"
+                )
 
         gr.Markdown("---")
 
@@ -176,12 +198,21 @@ class TalkSetupTab:
                 )
 
         # Wire up event handlers
-        current_talk_selector.change(
-            lambda selected_talk, state: AppState.from_json(state).set(
+
+        # Refresh button to update talk list
+        refresh_btn.click(fn=refresh_talk_selector, outputs=[current_talk_selector])
+
+        # Update app state when talk selection changes
+        def update_app_state(selected_talk, current_state):
+            """Update the app state with the selected talk"""
+            return AppState.from_gradio_state(current_state).set(
                 "current_talk", selected_talk
-            ),
-            [current_talk_selector, self.app_state],
-            self.app_state,
+            )
+
+        current_talk_selector.change(
+            fn=update_app_state,
+            inputs=[current_talk_selector, self.app_state],
+            outputs=[self.app_state],
         )
 
         current_talk_selector.change(

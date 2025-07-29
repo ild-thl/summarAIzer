@@ -5,6 +5,7 @@ services:
         image: pascalhuerten/moomootscribe:latest
         container_name: moomootscribe
         build: .
+        user: "1000:1000" # Ensure proper user mapping for file permissions
         ports:
             - "7860:7860"
         volumes:

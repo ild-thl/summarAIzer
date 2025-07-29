@@ -52,16 +52,31 @@ def create_current_talk_selector(talk_manager, initial_selection="Neu") -> gr.Dr
 
         return choices
 
+    # Get fresh choices every time this function is called
+    choices = get_talk_choices()
+
     # Create the dropdown component
     current_talk_selector = gr.Dropdown(
         label="🎯 Aktueller Talk",
-        choices=get_talk_choices(),
+        choices=choices,
         value=initial_selection,
         interactive=True,
         info="Wählen Sie einen Talk aus der Liste oder erstellen Sie einen neuen",
     )
 
     return current_talk_selector
+
+
+def refresh_talk_selector_choices(talk_manager):
+    """Refresh talk selector with current talks - returns choices for gr.Dropdown.update()"""
+    talks = talk_manager.get_all_talks()
+    choices = [("Neuer Talk", "Neu")]  # Default option
+
+    for talk in talks:
+        choice_text = f"{talk.get('name', 'Unbekannt')} - {talk.get('speaker', '')}"
+        choices.append((choice_text, talk["safe_name"]))
+
+    return choices
 
 
 def create_current_talk_display(app_state: gr.State, talk_manager) -> gr.HTML:
