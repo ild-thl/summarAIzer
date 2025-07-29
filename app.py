@@ -280,34 +280,17 @@ app = FastAPI(
 static_dir = Path(__file__).parent / "static"
 resources_dir = Path(__file__).parent / "resources"
 
-# Get proxy path for mounting
-proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-if proxy_path:
-    # For production: reverse proxy maps external proxy_path to internal /app/
-    internal_prefix = "/app"
-else:
-    # For local development: no prefix needed
-    internal_prefix = ""
-
 # Mount static files directory
 if static_dir.exists():
-    static_mount_path = f"{internal_prefix}/static" if internal_prefix else "/static"
-    app.mount(static_mount_path, StaticFiles(directory=str(static_dir)), name="static")
-    print(f"✅ Static files mounted at {static_mount_path} from: {static_dir}")
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    print(f"✅ Static files mounted at /static from: {static_dir}")
 else:
     print(f"⚠️  Static directory not found: {static_dir}")
 
 # Mount resources directory to serve generated content including images
 if resources_dir.exists():
-    resources_mount_path = (
-        f"{internal_prefix}/resources" if internal_prefix else "/resources"
-    )
-    app.mount(
-        resources_mount_path,
-        StaticFiles(directory=str(resources_dir)),
-        name="resources",
-    )
-    print(f"✅ Resources mounted at {resources_mount_path} from: {resources_dir}")
+    app.mount("/resources", StaticFiles(directory=str(resources_dir)), name="resources")
+    print(f"✅ Resources mounted at /resources from: {resources_dir}")
 else:
     print(f"⚠️  Resources directory not found: {resources_dir}")
 
@@ -319,86 +302,61 @@ io = moomoot_app.create_interface()
 # Create resource browser
 resource_browser = ResourceBrowser()
 
-# Mount Gradio interface to FastAPI app at the correct path
-proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-if proxy_path:
-    # For production: reverse proxy maps external proxy_path to internal /app/
-    gradio_mount_path = "/app"
-    internal_prefix = "/app"
-else:
-    # For local development: mount directly
-    gradio_mount_path = "/app"
-    internal_prefix = ""
-
-app = gr.mount_gradio_app(app, io, path=gradio_mount_path)
+# Mount Gradio interface to FastAPI app at /app
+app = gr.mount_gradio_app(app, io, path="/app")
 
 # Get proxy path for route registration
 proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-if proxy_path:
-    # For production: reverse proxy maps external proxy_path to internal /app/
-    internal_prefix = "/app"
-else:
-    # For local development: no prefix needed
-    internal_prefix = ""
 
 
 # Add markdown rendering endpoint
-@app.get(f"{internal_prefix}/markdown/{{file_path:path}}")
+@app.get("/markdown/{file_path:path}")
 async def render_markdown(file_path: str):
     """Render markdown files as HTML"""
     return await resource_browser.render_markdown(file_path)
 
 
 # Add directory browsing for resources
-@app.get(f"{internal_prefix}/browse/")
+@app.get("/browse/")
 async def browse_root():
     """Browse root resources directory"""
     return await resource_browser.browse_directory("")
 
 
-@app.get(f"{internal_prefix}/browse/{{dir_path:path}}")
+@app.get("/browse/{dir_path:path}")
 async def browse_directory(dir_path: str = ""):
     """Browse resources directory with nice HTML interface"""
     return await resource_browser.browse_directory(dir_path)
 
 
 # Add redirect for resources root to browser
-@app.get(f"{internal_prefix}/resources/")
+@app.get("/resources/")
 async def redirect_resources():
-    return RedirectResponse(url=f"{internal_prefix}/browse/", status_code=302)
+    return RedirectResponse(url="/browse/", status_code=302)
 
 
-@app.get(f"{internal_prefix}/resources/temp_images/{{file_name}}")
+@app.get("/resources/temp_images/{file_name}")
 async def serve_temp_image(file_name: str):
     """Serve temporary images from resources directory"""
     return await resource_browser.serve_temp_image(file_name)
 
 
 # Add redirect from /gradio to main interface for backward compatibility
-@app.get(f"{internal_prefix}/gradio")
+@app.get("/gradio")
 async def redirect_gradio():
-    return RedirectResponse(
-        url=f"{internal_prefix}/app" if internal_prefix else "/app", status_code=302
-    )
+    return RedirectResponse(url="/app", status_code=302)
 
 
 # Root redirects
-if internal_prefix:
-    # For production with reverse proxy
-    @app.get("/")
-    async def redirect_root():
-        return RedirectResponse(url="/app", status_code=302)
+@app.get("/")
+async def redirect_root():
+    return RedirectResponse(url="/app", status_code=302)
 
-    # Redirect /app/ with trailing slash to /app
-    @app.get("/app/")
-    async def redirect_app_slash():
-        return RedirectResponse(url="/app", status_code=302)
 
-else:
-    # For local development
-    @app.get("/")
-    async def redirect_root():
-        return RedirectResponse(url="/app", status_code=302)
+# Redirect /app/ with trailing slash to /app
+@app.get("/app/")
+async def redirect_app_slash():
+    return RedirectResponse(url="/app", status_code=302)
 
 
 # Get configuration from environment variables
