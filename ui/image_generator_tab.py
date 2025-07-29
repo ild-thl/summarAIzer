@@ -256,7 +256,9 @@ class ImageGeneratorTab(BaseGeneratorTab):
                 content,
             )
 
-        def generate_images(description, width, height, num_imgs, img_model, cookie):
+        def generate_images(
+            state, description, width, height, num_imgs, img_model, cookie
+        ):
             """Generate images from description"""
             if not description or not description.strip():
                 return (
@@ -300,106 +302,90 @@ class ImageGeneratorTab(BaseGeneratorTab):
                     images = result["images"]
 
                     # Get current talk from app state
-                    current_state = AppState.from_gradio_state(self.app_state)
-                    current_talk = current_state.get("current_talk", "Neu")
+                    current_talk = state.get("current_talk")
+                    print(f"Current talk: {current_talk}")
 
                     if current_talk and current_talk != "Neu":
                         # Try to save images to talk's generated_content folder
-                        safe_name = self.talk_manager.get_talk_by_name(current_talk)
-                        if safe_name and safe_name.get("success"):
-                            talk_metadata = safe_name["talk"]
-                            safe_folder_name = talk_metadata["safe_name"]
+                        talk_metadata = self.talk_manager.get_talk(current_talk)
 
-                            # Get talk folder path
-                            talk_folder_path = self.talk_manager.get_talk_folder_path(
-                                safe_folder_name
-                            )
-
-                            if talk_folder_path:
-                                # Save images persistently to talk folder
-                                save_result = self.image_generator.save_images_to_talk(
-                                    images, talk_folder_path, "generated_image"
-                                )
-
-                                if save_result["success"]:
-                                    # Use absolute URLs for Gallery (recommended by Gradio)
-                                    gallery_images = []
-                                    for img in save_result["saved_images"]:
-                                        if "web_url" in img:
-                                            # Convert relative web_url to absolute URL
-                                            absolute_url = get_absolute_url(
-                                                img["web_url"]
-                                            )
-                                            gallery_images.append(absolute_url)
-                                        else:
-                                            # Fallback to constructing URL from filename
-                                            filename = Path(img["local_path"]).name
-                                            talk_name = safe_folder_name
-                                            relative_url = f"/resources/talks/{talk_name}/generated_content/images/{filename}"
-                                            absolute_url = get_absolute_url(
-                                                relative_url
-                                            )
-                                            gallery_images.append(absolute_url)
-
-                                    return (
-                                        f"✅ {save_result['total_saved']} Bild(er) erfolgreich generiert und gespeichert in Talk '{current_talk}'",
-                                        gr.Gallery(value=gallery_images, visible=True),
-                                    )
-
-                    # If no talk selected or talk save failed, save to resources/temp_images with absolute URLs
-                    import tempfile
-                    import shutil
-                    import os
-
-                    try:
-                        # Save to resources/temp_images for web accessibility
-                        temp_dir = Path("resources") / "temp_images"
-                        temp_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Use the image generator's batch save with web URLs
-                        web_base_path = "/resources/temp_images"
-                        temp_result = self.image_generator.save_images_batch(
-                            images=images,
-                            save_path=temp_dir,
-                            base_filename="temp_img",
-                            generate_web_urls=True,
-                            web_base_path=web_base_path,
-                        )
-
-                        if temp_result["success"]:
-                            # Use absolute URLs for Gallery (recommended by Gradio)
-                            gallery_images = []
-                            for img in temp_result["saved_images"]:
-                                if "web_url" in img:
-                                    # Convert relative web_url to absolute URL
-                                    absolute_url = get_absolute_url(img["web_url"])
-                                    gallery_images.append(absolute_url)
-                                else:
-                                    # Fallback: construct URL from filename
-                                    filename = Path(img["local_path"]).name
-                                    relative_url = f"/resources/temp_images/{filename}"
-                                    absolute_url = get_absolute_url(relative_url)
-                                    gallery_images.append(absolute_url)
-
-                            # Determine status message based on context
-                            if current_talk and current_talk != "Neu":
-                                status_msg = f"⚠️ {temp_result['total_saved']} Bild(er) generiert, aber nicht in Talk gespeichert - in temporärem Speicher"
-                            else:
-                                status_msg = f"✅ {temp_result['total_saved']} Bild(er) generiert (bitte Talk auswählen für permanente Speicherung)"
-
+                        if not talk_metadata:
                             return (
-                                status_msg,
-                                gr.Gallery(value=gallery_images, visible=True),
-                            )
-                        else:
-                            return (
-                                f"❌ Fehler beim Speichern der Bilder: {temp_result.get('error', 'Unknown error')}",
+                                f"❌ Talk '{current_talk}' nicht gefunden",
                                 gr.Gallery(visible=False),
                             )
 
-                    except Exception as temp_error:
+                        safe_folder_name = talk_metadata.get("safe_name")
+
+                        # Get talk folder path
+                        talk_folder_path = self.talk_manager.get_talk_folder_path(
+                            safe_folder_name
+                        )
+
+                        if talk_folder_path:
+                            print(f"Saving images to talk folder: {talk_folder_path}")
+
+                            # Ensure the images folder exists
+                            images_folder = (
+                                talk_folder_path / "generated_content" / "images"
+                            )
+                            images_folder.mkdir(parents=True, exist_ok=True)
+                            print(f"Images folder created/verified: {images_folder}")
+
+                            # Save images persistently to talk folder
+                            save_result = self.image_generator.save_images_to_talk(
+                                images, talk_folder_path, "generated_image"
+                            )
+
+                            if save_result["success"]:
+                                print(
+                                    f"Successfully saved {save_result['total_saved']} images to talk"
+                                )
+                                # Use absolute URLs for Gallery (recommended by Gradio)
+                                gallery_images = []
+                                for img in save_result["saved_images"]:
+                                    if "web_url" in img:
+                                        print(
+                                            f"Image {img['local_path']} saved with web_url: {img['web_url']}"
+                                        )
+                                        # Convert relative web_url to absolute URL
+                                        absolute_url = get_absolute_url(img["web_url"])
+                                        gallery_images.append(absolute_url)
+                                    else:
+                                        print(
+                                            f"Warning: Image {img['local_path']} has no web_url"
+                                        )
+                                        # Fallback to constructing URL from filename
+                                        filename = Path(img["local_path"]).name
+                                        talk_name = safe_folder_name
+                                        relative_url = f"/resources/talks/{talk_name}/generated_content/images/{filename}"
+                                        absolute_url = get_absolute_url(relative_url)
+                                        gallery_images.append(absolute_url)
+
+                                return (
+                                    f"✅ {save_result['total_saved']} Bild(er) erfolgreich generiert und gespeichert in Talk '{current_talk}'",
+                                    gr.Gallery(value=gallery_images, visible=True),
+                                )
+                            else:
+                                # Return error if saving to talk failed
+                                error_msg = save_result.get("error", "Unknown error")
+                                print(f"Failed to save images to talk: {error_msg}")
+                                return (
+                                    f"❌ Fehler beim Speichern der Bilder in Talk '{current_talk}': {error_msg}",
+                                    gr.Gallery(visible=False),
+                                )
+                        else:
+                            print(
+                                f"Talk folder path not found for safe_folder_name: {safe_folder_name}"
+                            )
+                            return (
+                                f"❌ Talk-Ordner nicht gefunden für '{current_talk}'",
+                                gr.Gallery(visible=False),
+                            )
+                    else:
+                        print("No current talk selected or talk is 'Neu'")
                         return (
-                            f"❌ Fehler beim Speichern der Bilder: {temp_error}",
+                            "❌ Bitte wählen Sie einen Talk aus, um Bilder zu speichern",
                             gr.Gallery(visible=False),
                         )
 
@@ -462,6 +448,7 @@ class ImageGeneratorTab(BaseGeneratorTab):
         generate_images_btn.click(
             generate_images,
             inputs=[
+                self.app_state,
                 image_description,
                 image_width,
                 image_height,

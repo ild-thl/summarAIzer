@@ -485,83 +485,43 @@ class GeneratorTab(BaseGeneratorTab):
             return f"<p><b>Fehler beim Rendern:</b> {str(e)}</p>"
 
     def _render_with_mermaid(self, content: str) -> str:
-        """Render markdown content with mermaid diagram support"""
+        """Render markdown content with mermaid diagram support - same as resource browser"""
         try:
-            # Pattern to find mermaid code blocks
-            mermaid_pattern = r"```mermaid\s*(.*?)\s*```"
+            # Pattern to match mermaid code blocks (case insensitive, with optional whitespace)
+            mermaid_pattern = r"```\s*mermaid\s*\n(.*?)\n\s*```"
 
-            # Replace mermaid blocks with properly formatted divs
-            def replace_mermaid_block(match):
-                mermaid_code = match.group(1).strip()
-                # Create a unique ID for each diagram
-                import uuid
+            def replace_mermaid(match):
+                mermaid_content = match.group(1).strip()
+                # Ensure we have actual content
+                if mermaid_content:
+                    return f'<div class="mermaid">\n{mermaid_content}\n</div>'
+                else:
+                    return '<div class="mermaid-error">Empty Mermaid diagram</div>'
 
-                diagram_id = f"mermaid-{uuid.uuid4().hex[:8]}"
-
-                return f"""
-                    <div class="mermaid-container" style="text-align: center; margin: 20px 0;">
-                        <div class="mermaid" id="{diagram_id}" style="max-width: 100%; height: auto;">
-                            {mermaid_code}
-                        </div>
-                    </div>
-                    """
-
-            # Replace all mermaid blocks
+            # Replace all mermaid code blocks (case insensitive, multiline)
             processed_content = re.sub(
-                mermaid_pattern, replace_mermaid_block, content, flags=re.DOTALL
+                mermaid_pattern,
+                replace_mermaid,
+                content,
+                flags=re.DOTALL | re.IGNORECASE,
             )
 
-            # Process the rest as markdown (removing any remaining mermaid blocks)
-            # Split content into mermaid and non-mermaid parts
-            parts = re.split(mermaid_pattern, content, flags=re.DOTALL)
+            # Convert the rest as markdown
+            html_content = markdown.markdown(
+                processed_content,
+                extensions=[
+                    "tables",
+                    "fenced_code",
+                    "toc",
+                    "codehilite",
+                    "attr_list",
+                    "def_list",
+                ],
+            )
 
-            # If we have mermaid content, process it specially
-            if len(parts) > 1:
-                # Process non-mermaid markdown parts
-                markdown_parts = []
-                for i, part in enumerate(parts):
-                    if i % 2 == 0:  # Even indices are markdown content
-                        if part.strip():
-                            markdown_parts.append(
-                                markdown.markdown(part, extensions=["extra", "toc"])
-                            )
-
-                # Combine markdown parts with mermaid divs
-                final_content = processed_content
-
-                # Replace the original markdown parts with processed ones
-                mermaid_blocks = re.findall(
-                    r'<div class="mermaid-container".*?</div>', final_content, re.DOTALL
-                )
-                markdown_only = re.sub(
-                    mermaid_pattern, "MERMAID_PLACEHOLDER", content, flags=re.DOTALL
-                )
-                processed_markdown = markdown.markdown(
-                    markdown_only, extensions=["extra", "toc"]
-                )
-
-                # Replace placeholders with mermaid blocks
-                for i, mermaid_block in enumerate(mermaid_blocks):
-                    processed_markdown = processed_markdown.replace(
-                        "MERMAID_PLACEHOLDER", mermaid_block, 1
-                    )
-
-                return processed_markdown
-            else:
-                # No mermaid content, just process as regular markdown
-                return markdown.markdown(content, extensions=["extra", "toc"])
+            return html_content
 
         except Exception as e:
             print(f"Error processing mermaid content: {e}")
-            # Fallback to simple replacement
-            mermaid_pattern = r"```mermaid\s*(.*?)\s*```"
-            mermaid_code = re.findall(mermaid_pattern, content, re.DOTALL)
-            if mermaid_code:
-                return f"""
-                    <div class="mermaid-container" style="text-align: center; margin: 20px 0;">
-                        <div class="mermaid" style="max-width: 100%; height: auto;">
-                            {mermaid_code[0].strip()}
-                        </div>
-                    </div>
-                    """
+            # Fallback: just convert to markdown without mermaid
             return markdown.markdown(content, extensions=["extra", "toc"])

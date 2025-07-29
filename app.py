@@ -2,15 +2,17 @@ import gradio as gr
 import os
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.requests import Request
 import uvicorn
 
 from core.talk_manager import TalkManager
 from core.app_state import AppState
 from core.openai_client import OpenAIClient
 from core.image_generator import ImageGenerator
+from core.resource_browser import ResourceBrowser
 
 from ui.talk_setup_tab import TalkSetupTab
 from ui.transcription_tab import TranscriptionTab
@@ -48,33 +50,52 @@ class MooMootScribeApp:
 
         head = """
         <script type="module">
-            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+            // Robust mermaid loading with proper handling
+            let mermaid;
             
-            // Configure mermaid with better settings
-            mermaid.initialize({ 
-                startOnLoad: false,
-                theme: 'default',
-                themeVariables: {
-                    fontFamily: 'Arial, sans-serif'
-                },
-                mindmap: {
-                    maxNodeSizeX: 200,
-                    maxNodeSizeY: 100
-                },
-                flowchart: {
-                    useMaxWidth: true,
-                    htmlLabels: true
-                }
-            });
+            // Fallback to CDN
+            const mermaidModule = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
+            mermaid = mermaidModule.default || mermaidModule;
+            
+            // Ensure mermaid is properly initialized
+            if (mermaid && typeof mermaid.initialize === 'function') {
+                // Configure mermaid with better settings
+                mermaid.initialize({ 
+                    startOnLoad: false,
+                    theme: 'default',
+                    themeVariables: {
+                        fontFamily: 'Arial, sans-serif'
+                    },
+                    mindmap: {
+                        maxNodeSizeX: 200,
+                        maxNodeSizeY: 100
+                    },
+                    flowchart: {
+                        useMaxWidth: true,
+                        htmlLabels: true
+                    }
+                });
+                console.log('Mermaid initialized successfully');
+            } else {
+                console.error('Mermaid initialize function not found');
+            }
             
             // Function to render mermaid diagrams
             async function renderMermaidDiagrams() {
+                if (!mermaid || typeof mermaid.render !== 'function') {
+                    console.warn('Mermaid not available for rendering');
+                    return;
+                }
+                
                 const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+                console.log(`Found ${mermaidElements.length} mermaid elements to process in Gradio`);
                 
                 for (const element of mermaidElements) {
                     try {
                         const graphDefinition = element.textContent || element.innerText;
                         if (graphDefinition.trim()) {
+                            console.log('Processing mermaid diagram:', graphDefinition.substring(0, 50) + '...');
+                            
                             // Clear the element
                             element.innerHTML = '';
                             
@@ -97,10 +118,12 @@ class MooMootScribeApp:
                                 svgElement.removeAttribute('width');
                                 svgElement.removeAttribute('height');
                             }
+                            
+                            console.log('Successfully rendered mermaid diagram');
                         }
                     } catch (error) {
                         console.error('Error rendering mermaid diagram:', error);
-                        element.innerHTML = '<p style="color: red;">Error rendering diagram: ' + error.message + '</p>';
+                        element.innerHTML = '<div style="color: red; border: 1px solid red; padding: 10px; border-radius: 5px; background: #ffe6e6;"><strong>Mermaid Error:</strong> ' + error.message + '</div>';
                         element.setAttribute('data-processed', 'true');
                     }
                 }
@@ -118,10 +141,22 @@ class MooMootScribeApp:
             });
             
             // Initial render
-            document.addEventListener('DOMContentLoaded', renderMermaidDiagrams);
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('DOM loaded, rendering mermaid diagrams in Gradio...');
+                renderMermaidDiagrams();
+            });
             
             // Also run after a short delay to catch any dynamically added content
-            setTimeout(renderMermaidDiagrams, 1000);
+            setTimeout(function() {
+                console.log('Running delayed mermaid render in Gradio...');
+                renderMermaidDiagrams();
+            }, 1000);
+            
+            // Additional triggers for Gradio's dynamic content
+            setTimeout(function() {
+                console.log('Running extended delayed mermaid render for Gradio tabs...');
+                renderMermaidDiagrams();
+            }, 3000);
         </script>
         """
 
@@ -138,6 +173,11 @@ class MooMootScribeApp:
             <div class="main-header">
                 <h1>🎓 MooMoot Scribe</h1>
                 <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+                    <a href="/browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
+                        📂 Resource Browser
+                    </a>
+                </div>
             </div>
             """
             )
@@ -255,14 +295,49 @@ else:
 moomoot_app = MooMootScribeApp()
 io = moomoot_app.create_interface()
 
+# Create resource browser
+resource_browser = ResourceBrowser()
+
 # Mount Gradio interface to FastAPI app at /app
 app = gr.mount_gradio_app(app, io, path="/app")
+
+
+# Add markdown rendering endpoint
+@app.get("/markdown/{file_path:path}")
+async def render_markdown(file_path: str):
+    """Render markdown files as HTML"""
+    return await resource_browser.render_markdown(file_path)
+
+
+# Add directory browsing for resources
+@app.get("/browse/")
+async def browse_root():
+    """Browse root resources directory"""
+    return await resource_browser.browse_directory("")
+
+
+@app.get("/browse/{dir_path:path}")
+async def browse_directory(dir_path: str = ""):
+    """Browse resources directory with nice HTML interface"""
+    return await resource_browser.browse_directory(dir_path)
 
 
 # Redirect root to the Gradio app
 @app.get("/")
 async def redirect_root():
     return RedirectResponse(url="/app", status_code=302)
+
+
+# Add redirect for resources root to browser
+@app.get("/resources/")
+async def redirect_resources():
+    return RedirectResponse(url="/browse/", status_code=302)
+
+
+@app.get("/resources/temp_images/{file_name}")
+async def serve_temp_image(file_name: str):
+    """Serve temporary images from resources directory"""
+    return await resource_browser.serve_temp_image(file_name)
 
 
 # Add redirect from /gradio to /app for backward compatibility
@@ -275,8 +350,22 @@ async def redirect_gradio():
 server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
 server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
 
+# Set up base URL for absolute URL generation in Gallery components
+if not os.getenv("GRADIO_BASE_URL"):
+    if server_name == "0.0.0.0":
+        # For local development
+        os.environ["GRADIO_BASE_URL"] = f"http://127.0.0.1:{server_port}/app"
+    else:
+        os.environ["GRADIO_BASE_URL"] = f"http://{server_name}:{server_port}/app"
+
 print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
 print(f"🔗 Base URL for Gallery images: {os.getenv('GRADIO_BASE_URL')}")
+print(
+    f"🔗 Resources browser: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/browse/')}"
+)
+print(
+    f"🔗 Static files: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/static/')}"
+)
 print(
     f"🔗 Mermaid.js should be accessible at: http://{server_name}:{server_port}/static/js/mermaid.min.js"
 )

@@ -29,9 +29,9 @@ def create_text_editor(
 def create_component_header(title: str, description: str) -> gr.HTML:
     """Create a component header with title and description"""
     html = f"""
-    <div style='text-align: center; padding: 20px; background: linear-gradient(90deg, #667eea, #764ba2); color: white; border-radius: 10px; margin-bottom: 20px;'>
-        <h2 style='margin: 0; font-size: 24px;'>{title}</h2>
-        <p style='margin: 10px 0 0 0; font-size: 16px; opacity: 0.9;'>{description}</p>
+    <div class='component-header' style='text-align: center; padding: 20px; background: linear-gradient(90deg, #667eea, #764ba2); color: white; border-radius: 10px; margin-bottom: 20px;'>
+        <h2 style='margin: 0; font-size: 24px; color: white;'>{title}</h2>
+        <p style='margin: 10px 0 0 0; font-size: 16px; opacity: 0.9; color: white;'>{description}</p>
     </div>
     """
     return gr.HTML(html)
@@ -89,17 +89,17 @@ def create_current_talk_display(app_state: gr.State, talk_manager) -> gr.HTML:
 
             if not current_talk or current_talk == "Neu":
                 return """
-                <div style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107;'>
-                    <h4 style='margin: 0 0 10px 0; color: #333;'>📋 Aktueller Talk</h4>
-                    <p style='margin: 0; color: #666;'>Kein Talk ausgewählt - wählen Sie einen bestehenden Talk oder erstellen Sie einen neuen.</p>
+                <div class='talk-display talk-display-warning' style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #ffc107; color: #212529;'>
+                    <h4 style='margin: 0 0 10px 0; color: #212529;'>📋 Aktueller Talk</h4>
+                    <p style='margin: 0; color: #6c757d;'>Kein Talk ausgewählt - wählen Sie einen bestehenden Talk oder erstellen Sie einen neuen.</p>
                 </div>
                 """
 
             talk = talk_manager.get_talk(current_talk)
             if not talk:
                 return """
-                <div style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #dc3545;'>
-                    <h4 style='margin: 0 0 10px 0; color: #333;'>📋 Aktueller Talk</h4>
+                <div class='talk-display talk-display-error' style='background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #dc3545; color: #212529;'>
+                    <h4 style='margin: 0 0 10px 0; color: #212529;'>📋 Aktueller Talk</h4>
                     <p style='margin: 0; color: #dc3545;'>Talk nicht gefunden.</p>
                 </div>
                 """
@@ -111,9 +111,9 @@ def create_current_talk_display(app_state: gr.State, talk_manager) -> gr.HTML:
             link = talk.get("link", "Nicht angegeben")
 
             return f"""
-            <div style='background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745;'>
-                <h4 style='margin: 0 0 15px 0; color: #333;'>📋 Aktueller Talk</h4>
-                <div style='display: grid; gap: 8px;'>
+            <div class='talk-display talk-display-success' style='background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745; color: #212529;'>
+                <h4 style='margin: 0 0 15px 0; color: #212529;'>📋 Aktueller Talk</h4>
+                <div style='display: grid; gap: 8px; color: #212529;'>
                     <div><strong>🎤 Name:</strong> {talk.get("name", "Unbekannt")}</div>
                     <div><strong>👤 Sprecher:</strong> {speaker}</div>
                     <div><strong>📅 Datum:</strong> {date}</div>

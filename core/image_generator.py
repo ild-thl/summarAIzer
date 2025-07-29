@@ -136,13 +136,54 @@ class ImageGenerator:
             # Ensure save directory exists
             save_path.mkdir(parents=True, exist_ok=True)
 
+            # Verify directory creation
+            if not save_path.exists():
+                return {
+                    "success": False,
+                    "error": f"Failed to create directory: {save_path}",
+                }
+
             # Decode base64 data
-            image_bytes = base64.b64decode(image_data["base64"])
+            try:
+                image_bytes = base64.b64decode(image_data["base64"])
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to decode base64 data: {str(e)}",
+                }
 
             # Save to file
             file_path = save_path / filename
-            with open(file_path, "wb") as f:
-                f.write(image_bytes)
+            try:
+                with open(file_path, "wb") as f:
+                    f.write(image_bytes)
+
+                # Verify file was created and has correct size
+                if not file_path.exists():
+                    return {
+                        "success": False,
+                        "error": f"File was not created: {file_path}",
+                    }
+
+                actual_size = file_path.stat().st_size
+                if actual_size != len(image_bytes):
+                    return {
+                        "success": False,
+                        "error": f"File size mismatch. Expected {len(image_bytes)}, got {actual_size}",
+                    }
+
+                print(f"Successfully saved image: {file_path} ({actual_size} bytes)")
+
+            except PermissionError as e:
+                return {
+                    "success": False,
+                    "error": f"Permission denied when saving file: {str(e)}",
+                }
+            except OSError as e:
+                return {
+                    "success": False,
+                    "error": f"OS error when saving file: {str(e)}",
+                }
 
             return {
                 "success": True,
@@ -240,19 +281,38 @@ class ImageGenerator:
             images_folder = talk_folder_path / "generated_content" / "images"
             images_folder.mkdir(parents=True, exist_ok=True)
 
+            # Verify the folder was created successfully
+            if not images_folder.exists():
+                return {
+                    "success": False,
+                    "error": f"Failed to create images folder: {images_folder}",
+                }
+
+            print(f"Images folder ready: {images_folder}")
+
             # Generate web base path
             # Extract the relative path from the talk folder
             talk_name = talk_folder_path.name
             web_base_path = f"/resources/talks/{talk_name}/generated_content/images"
 
             # Use the batch save method with web URL generation
-            return self.save_images_batch(
+            result = self.save_images_batch(
                 images=images,
                 save_path=images_folder,
                 base_filename=base_filename,
                 generate_web_urls=True,
                 web_base_path=web_base_path,
             )
+
+            # Add additional debug information
+            if result["success"]:
+                print(
+                    f"Successfully saved {result['total_saved']} images to {images_folder}"
+                )
+            else:
+                print(f"Failed to save images: {result.get('error', 'Unknown error')}")
+
+            return result
 
         except Exception as e:
             return {"success": False, "error": f"Error saving images to talk: {str(e)}"}

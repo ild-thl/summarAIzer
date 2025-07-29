@@ -24,6 +24,49 @@ gradio-app {
     z-index: 1;
 }
 
+/* Navigation links styles */
+.nav-link {
+    transition: all 0.3s ease !important;
+}
+
+.nav-link:hover {
+    background: rgba(255, 255, 255, 0.3) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Mermaid diagram styles */
+.mermaid {
+    text-align: center;
+    margin: 20px 0;
+    background: #fafafa;
+    border: 1px solid #eee;
+    border-radius: 5px;
+    padding: 20px;
+    min-height: 50px;
+    overflow: auto;
+}
+
+.mermaid svg {
+    max-width: 100% !important;
+    height: auto !important;
+}
+
+.mermaid-container {
+    text-align: center;
+    margin: 20px 0;
+}
+
+.mermaid-error {
+    text-align: center;
+    margin: 20px 0;
+    background: #ffe6e6;
+    border: 1px solid #ffcccc;
+    border-radius: 5px;
+    padding: 20px;
+    color: #cc0000;
+}
+
 /* Tab and content styles */
 .tab-content {
     padding: 20px;
@@ -56,11 +99,15 @@ gradio-app {
     white-space: normal !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
+    color: #212529 !important;
+    /* Force dark text for readability */
 }
 
 .file-radio-vertical .wrap>label:hover {
     background: #e9ecef !important;
     border-color: #007bff !important;
+    color: #212529 !important;
+    /* Force dark text on hover */
 }
 
 .file-radio-vertical .wrap>label input[type="radio"]:checked+span {
@@ -74,6 +121,8 @@ gradio-app {
     font-size: 0.9em !important;
     word-break: break-all !important;
     max-width: 100% !important;
+    color: #212529 !important;
+    /* Force dark text in labels */
 }
 
 /* Custom CSS for vertical checkbox group */
@@ -95,11 +144,15 @@ gradio-app {
     white-space: normal !important;
     max-width: 100% !important;
     box-sizing: border-box !important;
+    color: #212529 !important;
+    /* Force dark text for readability */
 }
 
 .file-checkbox-vertical .wrap>label:hover {
     background: #e9ecef !important;
     border-color: #28a745 !important;
+    color: #212529 !important;
+    /* Force dark text on hover */
 }
 
 .file-checkbox-vertical .wrap>label input[type="checkbox"]:checked+span {
@@ -114,6 +167,8 @@ gradio-app {
     font-size: 0.9em !important;
     word-break: break-all !important;
     max-width: 100% !important;
+    color: #212529 !important;
+    /* Force dark text in labels */
 }
 
 /* Summary editor styling */
@@ -127,6 +182,8 @@ gradio-app {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
     line-height: 1.4 !important;
     background-color: #f8f9fa !important;
+    color: #212529 !important;
+    /* Force dark text for readability */
 }
 
 /* HTML preview styling */
@@ -291,4 +348,249 @@ pre.mermaid {
 
 .gdpr-highlight {
     cursor: help;
+}
+
+/* Dark mode compatibility - Force dark text on light backgrounds */
+/* These styles ensure readability regardless of theme */
+
+/* Force dark text in elements with light backgrounds in dark mode */
+.dark .file-radio-vertical .wrap>label,
+.dark .file-radio-vertical .wrap>label span,
+.dark .file-checkbox-vertical .wrap>label,
+.dark .file-checkbox-vertical .wrap>label span {
+    color: #212529 !important;
+}
+
+/* Ensure hover states maintain dark text */
+.dark .file-radio-vertical .wrap>label:hover,
+.dark .file-checkbox-vertical .wrap>label:hover {
+    color: #212529 !important;
+}
+
+/* Force dark text in raw output editor in dark mode */
+.dark .raw-output-editor textarea {
+    color: #212529 !important;
+    background-color: #f8f9fa !important;
+}
+
+/* Mermaid diagrams should maintain white background and dark text in both modes */
+.dark .mermaid,
+.dark .html-preview .mermaid,
+.dark pre.mermaid,
+.dark .html-preview pre.mermaid {
+    background: white !important;
+    color: #000000 !important;
+}
+
+/* Ensure code blocks maintain proper contrast */
+.dark .html-preview code {
+    background-color: #f4f4f4 !important;
+    color: #212529 !important;
+}
+
+.dark .html-preview pre {
+    background-color: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+/* Summary editor - maintain good readability */
+.dark .summary-editor textarea {
+    color: inherit;
+    /* Use default text color for this */
+}
+
+/* HTML preview should maintain white background and dark text */
+.dark .html-preview.block {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+}
+
+/* Component sections should adapt to dark mode */
+.dark .component-section {
+    background: #6c4a37;
+    /* Darker orange for dark mode */
+    color: white;
+    border-left-color: #8b6a8b;
+    /* Darker purple for dark mode */
+}
+
+/* Additional dark mode compatibility for different implementations */
+/* Support for data-theme="dark" and other common dark mode patterns */
+[data-theme="dark"] .file-radio-vertical .wrap>label,
+[data-theme="dark"] .file-radio-vertical .wrap>label span,
+[data-theme="dark"] .file-checkbox-vertical .wrap>label,
+[data-theme="dark"] .file-checkbox-vertical .wrap>label span,
+html.dark .file-radio-vertical .wrap>label,
+html.dark .file-radio-vertical .wrap>label span,
+html.dark .file-checkbox-vertical .wrap>label,
+html.dark .file-checkbox-vertical .wrap>label span {
+    color: #212529 !important;
+}
+
+[data-theme="dark"] .raw-output-editor textarea,
+html.dark .raw-output-editor textarea {
+    color: #212529 !important;
+    background-color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .html-preview.block,
+html.dark .html-preview.block {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+}
+
+[data-theme="dark"] .mermaid,
+[data-theme="dark"] .html-preview .mermaid,
+html.dark .mermaid,
+html.dark .html-preview .mermaid {
+    background: white !important;
+    color: #000000 !important;
+}
+
+/* Media query for system dark mode preference */
+@media (prefers-color-scheme: dark) {
+
+    /* Only apply if no explicit theme is set */
+    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label,
+    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label span,
+    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label,
+    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label span {
+        color: #212529 !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .raw-output-editor textarea {
+        color: #212529 !important;
+        background-color: #f8f9fa !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .html-preview.block {
+        background-color: #ffffff !important;
+        color: #212529 !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .mermaid,
+    body:not(.light):not([data-theme="light"]) .html-preview .mermaid {
+        background: white !important;
+        color: #000000 !important;
+    }
+}
+
+/* Talk display components - maintain readability in all modes */
+.talk-display {
+    color: #212529 !important;
+}
+
+.talk-display h4 {
+    color: #212529 !important;
+}
+
+.talk-display strong {
+    color: #212529 !important;
+}
+
+.talk-display-warning {
+    background: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+.talk-display-warning p {
+    color: #6c757d !important;
+}
+
+.talk-display-warning strong {
+    color: #212529 !important;
+}
+
+.talk-display-error {
+    background: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+.talk-display-error p {
+    color: #dc3545 !important;
+}
+
+.talk-display-error strong {
+    color: #212529 !important;
+}
+
+.talk-display-success {
+    background: #e8f5e8 !important;
+    color: #212529 !important;
+}
+
+.talk-display-success div {
+    color: #212529 !important;
+}
+
+.talk-display-success strong {
+    color: #212529 !important;
+}
+
+/* Component header - ensure visibility in all modes */
+.component-header {
+    background: linear-gradient(90deg, #667eea, #764ba2) !important;
+}
+
+.component-header h2,
+.component-header p {
+    color: white !important;
+}
+
+/* Dark mode overrides for talk displays */
+.dark .talk-display,
+[data-theme="dark"] .talk-display,
+html.dark .talk-display {
+    color: #212529 !important;
+}
+
+.dark .talk-display h4,
+[data-theme="dark"] .talk-display h4,
+html.dark .talk-display h4 {
+    color: #212529 !important;
+}
+
+.dark .talk-display strong,
+[data-theme="dark"] .talk-display strong,
+html.dark .talk-display strong {
+    color: #212529 !important;
+}
+
+.dark .talk-display-warning,
+[data-theme="dark"] .talk-display-warning,
+html.dark .talk-display-warning {
+    background: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+.dark .talk-display-warning strong,
+[data-theme="dark"] .talk-display-warning strong,
+html.dark .talk-display-warning strong {
+    color: #212529 !important;
+}
+
+.dark .talk-display-error,
+[data-theme="dark"] .talk-display-error,
+html.dark .talk-display-error {
+    background: #f8f9fa !important;
+    color: #212529 !important;
+}
+
+.dark .talk-display-error strong,
+[data-theme="dark"] .talk-display-error strong,
+html.dark .talk-display-error strong {
+    color: #212529 !important;
+}
+
+.dark .talk-display-success,
+[data-theme="dark"] .talk-display-success,
+html.dark .talk-display-success {
+    background: #e8f5e8 !important;
+    color: #212529 !important;
+}
+
+.dark .talk-display-success strong,
+[data-theme="dark"] .talk-display-success strong,
+html.dark .talk-display-success strong {
+    color: #212529 !important;
 }
