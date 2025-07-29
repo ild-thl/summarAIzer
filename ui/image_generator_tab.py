@@ -275,14 +275,6 @@ class ImageGeneratorTab(BaseGeneratorTab):
             # Helper function to construct absolute URLs for Gallery
             def get_absolute_url(relative_path: str) -> str:
                 """Convert relative path to absolute URL for Gallery"""
-                import os
-
-                # Get the base URL from environment or use default
-                base_url = os.getenv("GRADIO_BASE_URL", "http://127.0.0.1:7860")
-
-                # Remove /app suffix if present to get the base
-                if base_url.endswith("/app"):
-                    base_url = base_url[:-4]
 
                 # Ensure relative_path starts with /
                 if not relative_path.startswith("/"):

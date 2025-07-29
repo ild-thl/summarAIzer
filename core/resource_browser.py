@@ -41,9 +41,17 @@ class ResourceBrowser:
         proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
         parts = file_path.split("/") if file_path else []
-        main_app_url = proxy_path if proxy_path else "/app"
+        if proxy_path:
+            # For production: main app is at proxy_path, browse is at proxy_path/browse
+            main_app_url = proxy_path
+            browse_base_url = f"{proxy_path}/browse/"
+        else:
+            # For local development: main app is at /app, browse is at /browse
+            main_app_url = "/app"
+            browse_base_url = "/browse/"
+
         breadcrumb_parts = [f'<a href="{main_app_url}">🎓 MooMoot Scribe</a>']
-        breadcrumb_parts.append(f'<a href="{proxy_path}/browse/">Resources</a>')
+        breadcrumb_parts.append(f'<a href="{browse_base_url}">Resources</a>')
 
         current_path = ""
         for i, part in enumerate(parts):
@@ -51,17 +59,27 @@ class ResourceBrowser:
                 current_path += part
                 if i < len(parts) - 1:  # Not the last part
                     current_path += "/"
-                    breadcrumb_parts.append(
-                        f'<a href="{proxy_path}/browse/{current_path.rstrip("/")}">{part}</a>'
-                    )
+                    if proxy_path:
+                        breadcrumb_parts.append(
+                            f'<a href="{proxy_path}/browse/{current_path.rstrip("/")}">{part}</a>'
+                        )
+                    else:
+                        breadcrumb_parts.append(
+                            f'<a href="/browse/{current_path.rstrip("/")}">{part}</a>'
+                        )
                 else:  # Last part (current file/folder)
                     if is_markdown:
                         # For markdown files, make the parent folder clickable
                         parent_path = "/".join(parts[:-1])
                         if parent_path:
-                            breadcrumb_parts.append(
-                                f'<a href="{proxy_path}/browse/{parent_path}">{part}</a>'
-                            )
+                            if proxy_path:
+                                breadcrumb_parts.append(
+                                    f'<a href="{proxy_path}/browse/{parent_path}">{part}</a>'
+                                )
+                            else:
+                                breadcrumb_parts.append(
+                                    f'<a href="/browse/{parent_path}">{part}</a>'
+                                )
                         else:
                             breadcrumb_parts.append(part)
                     else:
@@ -350,7 +368,7 @@ class ResourceBrowser:
                 {html_content}
                 
                 <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                    <a href="{proxy_path}/browse/{'/'.join(file_path.split('/')[:-1])}" class="back-button">
+                    <a href="{browse_base_url}{'/'.join(file_path.split('/')[:-1])}" class="back-button">
                         ← Back to folder
                     </a>
                 </div>
@@ -397,11 +415,15 @@ class ResourceBrowser:
                     continue
 
                 if item.is_dir():
+                    if proxy_path:
+                        dir_url = f"{proxy_path}/browse/{relative_path}"
+                    else:
+                        dir_url = f"/browse/{relative_path}"
                     items.append(
                         {
                             "name": item.name + "/",
                             "type": "directory",
-                            "url": f"{proxy_path}/browse/{relative_path}",
+                            "url": dir_url,
                             "size": "-",
                         }
                     )
