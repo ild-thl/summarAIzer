@@ -11,6 +11,7 @@ services:
         volumes:
             # Persistent storage for resources folder
             - ./resources:/app/resources
+            - ./prompts:/app/prompts
             # Optional: Mount .env file for environment variables
             - ./.env:/app/.env:ro
         environment:

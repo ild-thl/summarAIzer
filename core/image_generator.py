@@ -154,7 +154,12 @@ class ImageGenerator:
             return {"success": False, "error": f"Error saving image: {str(e)}"}
 
     def save_images_batch(
-        self, images: List[Dict[str, Any]], save_path: Path, base_filename: str
+        self,
+        images: List[Dict[str, Any]],
+        save_path: Path,
+        base_filename: str,
+        generate_web_urls: bool = False,
+        web_base_path: str = "",
     ) -> Dict[str, Any]:
         """
         Save multiple images with numbered filenames
@@ -163,6 +168,8 @@ class ImageGenerator:
             images: List of image data dictionaries
             save_path: Path to save directory
             base_filename: Base filename (will be numbered)
+            generate_web_urls: Whether to generate web URLs for the saved images
+            web_base_path: Base path for web URLs (e.g., "/resources/talks/talk_name/generated_content/images")
 
         Returns:
             Dict with success status and list of saved files or error message
@@ -172,26 +179,33 @@ class ImageGenerator:
             errors = []
 
             for i, image_data in enumerate(images, 1):
-                # Create numbered filename
-                filename = f"{base_filename}_{i:02d}.png"
+                # Create filename with timestamp to avoid conflicts
+                from datetime import datetime
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{base_filename}_{timestamp}_{i:02d}.png"
 
                 result = self.save_image(image_data, save_path, filename)
 
                 if result["success"]:
-                    saved_files.append(
-                        {
-                            "filename": filename,
-                            "path": result["file_path"],
-                            "size": result["size"],
-                        }
-                    )
+                    file_info = {
+                        "filename": filename,
+                        "local_path": result["file_path"],
+                        "size": result["size"],
+                    }
+
+                    # Add web URL if requested
+                    if generate_web_urls and web_base_path:
+                        file_info["web_url"] = f"{web_base_path}/{filename}"
+
+                    saved_files.append(file_info)
                 else:
                     errors.append(f"Image {i}: {result['error']}")
 
             if saved_files:
                 return {
                     "success": True,
-                    "saved_files": saved_files,
+                    "saved_images": saved_files,
                     "errors": errors,
                     "total_saved": len(saved_files),
                 }
@@ -203,3 +217,42 @@ class ImageGenerator:
 
         except Exception as e:
             return {"success": False, "error": f"Batch save error: {str(e)}"}
+
+    def save_images_to_talk(
+        self,
+        images: List[Dict[str, Any]],
+        talk_folder_path: Path,
+        base_filename: str = "generated_image",
+    ) -> Dict[str, Any]:
+        """
+        Save images to a talk's generated_content/images folder with web URLs
+
+        Args:
+            images: List of image data dictionaries with base64 data
+            talk_folder_path: Path to the talk's folder (e.g., resources/talks/talk_name)
+            base_filename: Base filename for the images
+
+        Returns:
+            Dict with success status and image URLs
+        """
+        try:
+            # Create images subdirectory if it doesn't exist
+            images_folder = talk_folder_path / "generated_content" / "images"
+            images_folder.mkdir(parents=True, exist_ok=True)
+
+            # Generate web base path
+            # Extract the relative path from the talk folder
+            talk_name = talk_folder_path.name
+            web_base_path = f"/resources/talks/{talk_name}/generated_content/images"
+
+            # Use the batch save method with web URL generation
+            return self.save_images_batch(
+                images=images,
+                save_path=images_folder,
+                base_filename=base_filename,
+                generate_web_urls=True,
+                web_base_path=web_base_path,
+            )
+
+        except Exception as e:
+            return {"success": False, "error": f"Error saving images to talk: {str(e)}"}

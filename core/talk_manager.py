@@ -589,6 +589,19 @@ class TalkManager:
         except Exception as e:
             return {"success": False, "error": f"Fehler beim Laden der Datei: {str(e)}"}
 
+    def get_talk_folder_path(self, safe_name):
+        """
+        Get the full path to a talk's folder
+
+        Args:
+            safe_name (str): Safe folder name of the talk
+
+        Returns:
+            Path: Path object to the talk folder, or None if not found
+        """
+        talk_folder = self.talks_path / safe_name
+        return talk_folder if talk_folder.exists() else None
+
     def delete_talk(self, safe_name):
         """
         Delete a talk and all its files

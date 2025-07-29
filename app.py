@@ -234,6 +234,7 @@ app = FastAPI(
 
 # Get static directory path
 static_dir = Path(__file__).parent / "static"
+resources_dir = Path(__file__).parent / "resources"
 
 # Mount static files directory (this will serve files at /static/*)
 if static_dir.exists():
@@ -241,6 +242,13 @@ if static_dir.exists():
     print(f"✅ Static files mounted from: {static_dir}")
 else:
     print(f"⚠️  Static directory not found: {static_dir}")
+
+# Mount resources directory to serve generated content including images
+if resources_dir.exists():
+    app.mount("/resources", StaticFiles(directory=str(resources_dir)), name="resources")
+    print(f"✅ Resources mounted from: {resources_dir}")
+else:
+    print(f"⚠️  Resources directory not found: {resources_dir}")
 
 
 # Create Gradio app

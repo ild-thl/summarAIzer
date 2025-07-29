@@ -32,7 +32,7 @@ class ImageGeneratorTab(BaseGeneratorTab):
         prompt_id: str = "image",
         tab_title: str = "🎨 Bild-Generator",
         tab_description: str = "Generiere Bildbeschreibungen und daraus Bilder",
-        content_type: str = "image_description",
+        content_type: str = "image",
     ):
         super().__init__(
             talk_manager,
@@ -50,15 +50,44 @@ class ImageGeneratorTab(BaseGeneratorTab):
     def cleanup_temp_images(self):
         """Clean up old temporary image files"""
         try:
-            temp_dir = Path(tempfile.gettempdir()) / "moomoot_temp_images"
-            if temp_dir.exists():
+            # Clean up resources temp directory
+            resources_temp_dir = Path("resources") / "temp_images"
+            if resources_temp_dir.exists():
                 current_time = time.time()
-                # Remove files older than 1 hour
-                for file_path in temp_dir.glob("temp_img_*.png"):
+                for file_path in resources_temp_dir.glob("temp_img_*.png"):
                     if current_time - file_path.stat().st_mtime > 3600:  # 1 hour
                         file_path.unlink()
+
+            # Clean up legacy system temp directory if it exists
+            system_temp_dir = Path(tempfile.gettempdir()) / "moomoot_temp_images"
+            if system_temp_dir.exists():
+                current_time = time.time()
+                for file_path in system_temp_dir.glob("temp_img_*.png"):
+                    if current_time - file_path.stat().st_mtime > 3600:  # 1 hour
+                        file_path.unlink()
+
         except Exception as e:
             print(f"Warning: Could not cleanup temp images: {e}")
+
+    def save_prompt_config(self, sys_msg, user_prompt_text, temp, max_tok, model_name):
+        """Save the current prompt configuration"""
+        prompt_data = {
+            "name": self.get_prompt_config().get("name", "Image Description"),
+            "description": self.get_prompt_config().get(
+                "description", "Generate image descriptions from content"
+            ),
+            "system_message": sys_msg,
+            "template": user_prompt_text,
+            "temperature": temp,
+            "max_tokens": int(max_tok),
+            "model": model_name,
+        }
+
+        success = self.prompt_library.update_prompt(self.prompt_id, prompt_data)
+        if success:
+            return "✅ Prompt-Konfiguration gespeichert"
+        else:
+            return "❌ Fehler beim Speichern der Prompt-Konfiguration"
 
     def create_tab(self):
         """Create the tab UI components"""
@@ -163,7 +192,7 @@ class ImageGeneratorTab(BaseGeneratorTab):
             )
 
         image_generation_status = gr.Textbox(
-            label="Bild-Generierung Status", interactive=False, lines=2, visible=False
+            label="Bild-Generierung Status", interactive=False, lines=2, visible=True
         )
 
         # Generated images display
@@ -240,30 +269,76 @@ class ImageGeneratorTab(BaseGeneratorTab):
                 if result["success"]:
                     images = result["images"]
 
-                    # Save images to temporary files for display in Gallery
-                    gallery_images = []
-                    temp_dir = Path(tempfile.gettempdir()) / "moomoot_temp_images"
-                    temp_dir.mkdir(exist_ok=True)
+                    # Get current talk from app state
+                    current_state = AppState.from_gradio_state(self.app_state)
+                    current_talk = current_state.get("current_talk", "Neu")
 
-                    for i, img_data in enumerate(images):
-                        if "base64" in img_data:
-                            # Create temporary file with short name
-                            timestamp = int(time.time() * 1000)
-                            temp_filename = f"temp_img_{timestamp}_{i}.png"
-                            temp_path = temp_dir / temp_filename
+                    if current_talk and current_talk != "Neu":
+                        # Try to save images to talk's generated_content folder
+                        safe_name = self.talk_manager.get_talk_by_name(current_talk)
+                        if safe_name and safe_name.get("success"):
+                            talk_metadata = safe_name["talk"]
+                            safe_folder_name = talk_metadata["safe_name"]
 
-                            # Save image to temporary file
-                            temp_result = self.image_generator.save_image(
-                                img_data, temp_dir, temp_filename
+                            # Get talk folder path
+                            talk_folder_path = self.talk_manager.get_talk_folder_path(
+                                safe_folder_name
                             )
 
-                            if temp_result["success"]:
-                                gallery_images.append(str(temp_path))
+                            if talk_folder_path:
+                                # Save images persistently to talk folder
+                                save_result = self.image_generator.save_images_to_talk(
+                                    images, talk_folder_path, "generated_image"
+                                )
 
-                    return (
-                        f"✅ {len(images)} Bild(er) erfolgreich generiert",
-                        gr.Gallery(value=gallery_images, visible=True),
+                                if save_result["success"]:
+                                    # For Gradio Gallery, use local file paths so Gradio can serve them properly
+                                    gallery_images = [
+                                        img["local_path"]
+                                        for img in save_result["saved_images"]
+                                    ]
+
+                                    return (
+                                        f"✅ {save_result['total_saved']} Bild(er) erfolgreich generiert und gespeichert in Talk '{current_talk}'",
+                                        gr.Gallery(value=gallery_images, visible=True),
+                                    )
+
+                    # If no talk selected or talk save failed, save to resources/temp_images
+                    temp_dir = Path("resources") / "temp_images"
+                    temp_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Use the image generator's batch save with web URLs
+                    web_base_path = "/resources/temp_images"
+                    temp_result = self.image_generator.save_images_batch(
+                        images=images,
+                        save_path=temp_dir,
+                        base_filename="temp_img",
+                        generate_web_urls=True,
+                        web_base_path=web_base_path,
                     )
+
+                    if temp_result["success"]:
+                        # For Gradio Gallery, use local file paths so Gradio can serve them properly
+                        gallery_images = [
+                            img["local_path"] for img in temp_result["saved_images"]
+                        ]
+
+                        # Determine status message based on context
+                        if current_talk and current_talk != "Neu":
+                            status_msg = f"⚠️ {temp_result['total_saved']} Bild(er) generiert, aber nicht in Talk gespeichert - in temporärem Speicher"
+                        else:
+                            status_msg = f"✅ {temp_result['total_saved']} Bild(er) generiert (bitte Talk auswählen für permanente Speicherung)"
+
+                        return (
+                            status_msg,
+                            gr.Gallery(value=gallery_images, visible=True),
+                        )
+                    else:
+                        return (
+                            f"❌ Fehler beim Speichern der Bilder: {temp_result['error']}",
+                            gr.Gallery(visible=False),
+                        )
+
                 else:
                     return (
                         f"❌ Fehler bei der Bildgenerierung: {result['error']}",
@@ -275,26 +350,6 @@ class ImageGeneratorTab(BaseGeneratorTab):
                     f"❌ Fehler bei der Bildgenerierung: {str(e)}",
                     gr.Gallery(visible=False),
                 )
-
-        def save_prompt_config(sys_msg, user_prompt_text, temp, max_tok, model_name):
-            """Save the current prompt configuration"""
-            prompt_data = {
-                "name": self.get_prompt_config().get("name", "Image Description"),
-                "description": self.get_prompt_config().get(
-                    "description", "Generate image descriptions from content"
-                ),
-                "system_message": sys_msg,
-                "template": user_prompt_text,
-                "temperature": temp,
-                "max_tokens": int(max_tok),
-                "model": model_name,
-            }
-
-            success = self.prompt_library.update_prompt(self.prompt_id, prompt_data)
-            if success:
-                return "✅ Prompt-Konfiguration gespeichert"
-            else:
-                return "❌ Fehler beim Speichern der Prompt-Konfiguration"
 
         # Setup common event handlers using base class
         components_for_common_handlers = (

@@ -1,4 +1,5 @@
 venv
-resources
+resources/talks/*
 .env
 __pycache__
+resources/temp_images/*
