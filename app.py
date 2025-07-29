@@ -31,6 +31,10 @@ class MooMootScribeApp:
         self.openai_client = OpenAIClient()
         self.image_generator = ImageGenerator()
 
+        # Get proxy path from environment
+        self.proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+        print(f"🔗 Proxy path configured: '{self.proxy_path}'")
+
     def load_css(self):
         """Load CSS from external file"""
         css_path = Path(__file__).parent / "ui" / "css" / "app.css"
@@ -52,7 +56,7 @@ class MooMootScribeApp:
         <script type="module">
             // Robust mermaid loading with proper handling
             let mermaid;
-            
+
             // Fallback to CDN
             const mermaidModule = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
             mermaid = mermaidModule.default || mermaidModule;
@@ -169,12 +173,12 @@ class MooMootScribeApp:
         ) as demo:
             # Main header
             gr.HTML(
-                """
+                f"""
             <div class="main-header">
                 <h1>🎓 MooMoot Scribe</h1>
                 <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                    <a href="/browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
+                    <a href="{self.proxy_path}/browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
                         📂 Resource Browser
                     </a>
                 </div>
@@ -325,13 +329,15 @@ async def browse_directory(dir_path: str = ""):
 # Redirect root to the Gradio app
 @app.get("/")
 async def redirect_root():
-    return RedirectResponse(url="/app", status_code=302)
+    proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+    return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
 
 
 # Add redirect for resources root to browser
 @app.get("/resources/")
 async def redirect_resources():
-    return RedirectResponse(url="/browse/", status_code=302)
+    proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+    return RedirectResponse(url=f"{proxy_path}/browse/", status_code=302)
 
 
 @app.get("/resources/temp_images/{file_name}")
@@ -343,31 +349,38 @@ async def serve_temp_image(file_name: str):
 # Add redirect from /gradio to /app for backward compatibility
 @app.get("/gradio")
 async def redirect_gradio():
-    return RedirectResponse(url="/app", status_code=302)
+    proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+    return RedirectResponse(url=f"{proxy_path}/app", status_code=302)
 
 
 # Get configuration from environment variables
 server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
 server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
 # Set up base URL for absolute URL generation in Gallery components
 if not os.getenv("GRADIO_BASE_URL"):
-    if server_name == "0.0.0.0":
-        # For local development
-        os.environ["GRADIO_BASE_URL"] = f"http://127.0.0.1:{server_port}/app"
+    if proxy_path:
+        # For production with reverse proxy
+        proxy_host = os.getenv("PROXY_HOST", f"{server_name}:{server_port}")
+        proxy_scheme = os.getenv("PROXY_SCHEME", "http")
+        os.environ["GRADIO_BASE_URL"] = f"{proxy_scheme}://{proxy_host}{proxy_path}/app"
     else:
-        os.environ["GRADIO_BASE_URL"] = f"http://{server_name}:{server_port}/app"
+        # For local development
+        if server_name == "0.0.0.0":
+            os.environ["GRADIO_BASE_URL"] = f"http://127.0.0.1:{server_port}/app"
+        else:
+            os.environ["GRADIO_BASE_URL"] = f"http://{server_name}:{server_port}/app"
 
 print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
+if proxy_path:
+    print(f"🔗 Proxy configuration: {proxy_path}")
 print(f"🔗 Base URL for Gallery images: {os.getenv('GRADIO_BASE_URL')}")
-print(
-    f"🔗 Resources browser: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/browse/')}"
+base_url = os.getenv("GRADIO_BASE_URL", f"http://{server_name}:{server_port}").replace(
+    "/app", ""
 )
-print(
-    f"🔗 Static files: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/static/')}"
-)
-print(
-    f"🔗 Mermaid.js should be accessible at: http://{server_name}:{server_port}/static/js/mermaid.min.js"
-)
+print(f"🔗 Resources browser: {base_url}/browse/")
+print(f"🔗 Static files: {base_url}/static/")
+print(f"🔗 Mermaid.js should be accessible at: {base_url}/static/js/mermaid.min.js")
 
 uvicorn.run(app, host=server_name, port=server_port, log_level="info")
