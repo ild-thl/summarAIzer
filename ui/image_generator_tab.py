@@ -7,6 +7,7 @@ import markdown
 import re
 import tempfile
 import time
+import shutil
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 from ui.shared_ui import (
@@ -65,6 +66,20 @@ class ImageGeneratorTab(BaseGeneratorTab):
                 for file_path in system_temp_dir.glob("temp_img_*.png"):
                     if current_time - file_path.stat().st_mtime > 3600:  # 1 hour
                         file_path.unlink()
+
+            # Clean up old Gradio temp directories
+            import glob
+
+            temp_pattern = str(Path(tempfile.gettempdir()) / "moomoot_images_*")
+            current_time = time.time()
+            for temp_dir_path in glob.glob(temp_pattern):
+                temp_dir = Path(temp_dir_path)
+                if (
+                    temp_dir.is_dir() and current_time - temp_dir.stat().st_mtime > 3600
+                ):  # 1 hour
+                    import shutil
+
+                    shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             print(f"Warning: Could not cleanup temp images: {e}")
@@ -255,6 +270,21 @@ class ImageGeneratorTab(BaseGeneratorTab):
                     gr.Gallery(visible=False),
                 )
 
+            # Helper function to construct absolute URLs for Gallery
+            def get_absolute_url(relative_path: str) -> str:
+                """Convert relative path to absolute URL for Gallery"""
+                import os
+
+                # Get the base URL from environment or use default
+                base_url = os.getenv("GRADIO_BASE_URL", "http://127.0.0.1:7860")
+
+                # Ensure relative_path starts with /
+                if not relative_path.startswith("/"):
+                    relative_path = "/" + relative_path
+
+                # Construct the full URL
+                return f"{base_url}{relative_path}"
+
             try:
                 # Generate images using the image generator
                 result = self.image_generator.generate_images(
@@ -292,50 +322,84 @@ class ImageGeneratorTab(BaseGeneratorTab):
                                 )
 
                                 if save_result["success"]:
-                                    # For Gradio Gallery, use local file paths so Gradio can serve them properly
-                                    gallery_images = [
-                                        img["local_path"]
-                                        for img in save_result["saved_images"]
-                                    ]
+                                    # Use absolute URLs for Gallery (recommended by Gradio)
+                                    gallery_images = []
+                                    for img in save_result["saved_images"]:
+                                        if "web_url" in img:
+                                            # Convert relative web_url to absolute URL
+                                            absolute_url = get_absolute_url(
+                                                img["web_url"]
+                                            )
+                                            gallery_images.append(absolute_url)
+                                        else:
+                                            # Fallback to constructing URL from filename
+                                            filename = Path(img["local_path"]).name
+                                            talk_name = safe_folder_name
+                                            relative_url = f"/resources/talks/{talk_name}/generated_content/images/{filename}"
+                                            absolute_url = get_absolute_url(
+                                                relative_url
+                                            )
+                                            gallery_images.append(absolute_url)
 
                                     return (
                                         f"✅ {save_result['total_saved']} Bild(er) erfolgreich generiert und gespeichert in Talk '{current_talk}'",
                                         gr.Gallery(value=gallery_images, visible=True),
                                     )
 
-                    # If no talk selected or talk save failed, save to resources/temp_images
-                    temp_dir = Path("resources") / "temp_images"
-                    temp_dir.mkdir(parents=True, exist_ok=True)
+                    # If no talk selected or talk save failed, save to resources/temp_images with absolute URLs
+                    import tempfile
+                    import shutil
+                    import os
 
-                    # Use the image generator's batch save with web URLs
-                    web_base_path = "/resources/temp_images"
-                    temp_result = self.image_generator.save_images_batch(
-                        images=images,
-                        save_path=temp_dir,
-                        base_filename="temp_img",
-                        generate_web_urls=True,
-                        web_base_path=web_base_path,
-                    )
+                    try:
+                        # Save to resources/temp_images for web accessibility
+                        temp_dir = Path("resources") / "temp_images"
+                        temp_dir.mkdir(parents=True, exist_ok=True)
 
-                    if temp_result["success"]:
-                        # For Gradio Gallery, use local file paths so Gradio can serve them properly
-                        gallery_images = [
-                            img["local_path"] for img in temp_result["saved_images"]
-                        ]
-
-                        # Determine status message based on context
-                        if current_talk and current_talk != "Neu":
-                            status_msg = f"⚠️ {temp_result['total_saved']} Bild(er) generiert, aber nicht in Talk gespeichert - in temporärem Speicher"
-                        else:
-                            status_msg = f"✅ {temp_result['total_saved']} Bild(er) generiert (bitte Talk auswählen für permanente Speicherung)"
-
-                        return (
-                            status_msg,
-                            gr.Gallery(value=gallery_images, visible=True),
+                        # Use the image generator's batch save with web URLs
+                        web_base_path = "/resources/temp_images"
+                        temp_result = self.image_generator.save_images_batch(
+                            images=images,
+                            save_path=temp_dir,
+                            base_filename="temp_img",
+                            generate_web_urls=True,
+                            web_base_path=web_base_path,
                         )
-                    else:
+
+                        if temp_result["success"]:
+                            # Use absolute URLs for Gallery (recommended by Gradio)
+                            gallery_images = []
+                            for img in temp_result["saved_images"]:
+                                if "web_url" in img:
+                                    # Convert relative web_url to absolute URL
+                                    absolute_url = get_absolute_url(img["web_url"])
+                                    gallery_images.append(absolute_url)
+                                else:
+                                    # Fallback: construct URL from filename
+                                    filename = Path(img["local_path"]).name
+                                    relative_url = f"/resources/temp_images/{filename}"
+                                    absolute_url = get_absolute_url(relative_url)
+                                    gallery_images.append(absolute_url)
+
+                            # Determine status message based on context
+                            if current_talk and current_talk != "Neu":
+                                status_msg = f"⚠️ {temp_result['total_saved']} Bild(er) generiert, aber nicht in Talk gespeichert - in temporärem Speicher"
+                            else:
+                                status_msg = f"✅ {temp_result['total_saved']} Bild(er) generiert (bitte Talk auswählen für permanente Speicherung)"
+
+                            return (
+                                status_msg,
+                                gr.Gallery(value=gallery_images, visible=True),
+                            )
+                        else:
+                            return (
+                                f"❌ Fehler beim Speichern der Bilder: {temp_result.get('error', 'Unknown error')}",
+                                gr.Gallery(visible=False),
+                            )
+
+                    except Exception as temp_error:
                         return (
-                            f"❌ Fehler beim Speichern der Bilder: {temp_result['error']}",
+                            f"❌ Fehler beim Speichern der Bilder: {temp_error}",
                             gr.Gallery(visible=False),
                         )
 

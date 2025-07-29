@@ -276,6 +276,7 @@ server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
 server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
 
 print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
+print(f"🔗 Base URL for Gallery images: {os.getenv('GRADIO_BASE_URL')}")
 print(
     f"🔗 Mermaid.js should be accessible at: http://{server_name}:{server_port}/static/js/mermaid.min.js"
 )
