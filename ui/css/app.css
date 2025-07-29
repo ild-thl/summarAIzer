@@ -199,6 +199,43 @@ gradio-app {
     overflow-x: auto !important;
 }
 
+
+/* Mermaid diagram styles */
+.mermaid-container {
+    text-align: center !important;
+    margin: 20px 0 !important;
+    padding: 0 !important;
+}
+
+.mermaid {
+    display: block !important;
+    margin: 0 auto !important;
+    background: white !important;
+    border: 2px solid #e0e0e0 !important;
+    border-radius: 10px !important;
+    padding: 20px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    min-height: 100px !important;
+}
+
+.mermaid svg {
+    max-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    margin: 0 auto !important;
+}
+
+/* Remove fixed width/height constraints */
+.mermaid svg[width] {
+    width: auto !important;
+}
+
+.mermaid svg[height] {
+    height: auto !important;
+}
+
 .html-preview .mermaid {
     max-width: 100% !important;
     overflow-x: auto !important;

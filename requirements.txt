@@ -8,3 +8,5 @@ markdown>=3.8.2
 presidio_analyzer
 presidio_anonymizer
 pydantic==2.10.6
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0

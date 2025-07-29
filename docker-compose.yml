@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+    moomootscribe:
+        build: .
+        ports:
+            - "7860:7860"
+        volumes:
+            # Persistent storage for resources folder
+            - ./resources:/app/resources
+            # Optional: Mount .env file for environment variables
+            - ./.env:/app/.env:ro
+        environment:
+            - GRADIO_SERVER_NAME=0.0.0.0
+            - GRADIO_SERVER_PORT=7860
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 40s
+        # Optional: Resource limits
+        deploy:
+            resources:
+                limits:
+                    memory: 2G
+                reservations:
+                    memory: 1G
+
+# Persistent volumes
+volumes:
+    moomootscribe_data:
+        driver: local

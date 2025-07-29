@@ -30,7 +30,7 @@ def load_spacy_models():
 
     # German model
     model = None
-    model_name = os.getenv("SPACY_DE_MODEL", "de_core_news_sm")
+    model_name = os.getenv("SPACY_DE_MODEL", "de_core_news_lg")
     try:
         model = spacy.load(model_name)
         print(f"Loaded German model: {model_name}")
@@ -189,7 +189,6 @@ class GDPRChecker:
                             suggestion=suggestion,
                         )
                     )
-
 
             # Deduplicate matches by text content (case-insensitive)
             unique_matches = []

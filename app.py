@@ -1,9 +1,11 @@
 import gradio as gr
 import os
-import subprocess
-import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+import uvicorn
 
 from core.talk_manager import TalkManager
 from core.app_state import AppState
@@ -47,21 +49,79 @@ class MooMootScribeApp:
         head = """
         <script type="module">
             import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-            mermaid.initialize({ startOnLoad: false });
             
-            // Simple mutation observer to trigger mermaid.run() when new content appears
-            const observer = new MutationObserver(() => {
-                mermaid.run();
+            // Configure mermaid with better settings
+            mermaid.initialize({ 
+                startOnLoad: false,
+                theme: 'default',
+                themeVariables: {
+                    fontFamily: 'Arial, sans-serif'
+                },
+                mindmap: {
+                    maxNodeSizeX: 200,
+                    maxNodeSizeY: 100
+                },
+                flowchart: {
+                    useMaxWidth: true,
+                    htmlLabels: true
+                }
             });
             
-            // Watch for changes in the document
+            // Function to render mermaid diagrams
+            async function renderMermaidDiagrams() {
+                const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
+                
+                for (const element of mermaidElements) {
+                    try {
+                        const graphDefinition = element.textContent || element.innerText;
+                        if (graphDefinition.trim()) {
+                            // Clear the element
+                            element.innerHTML = '';
+                            
+                            // Generate unique ID
+                            const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
+                            element.id = id;
+                            
+                            // Render the diagram
+                            const { svg } = await mermaid.render(id + '-svg', graphDefinition);
+                            element.innerHTML = svg;
+                            
+                            // Mark as processed
+                            element.setAttribute('data-processed', 'true');
+                            
+                            // Ensure SVG is properly sized
+                            const svgElement = element.querySelector('svg');
+                            if (svgElement) {
+                                svgElement.style.maxWidth = '100%';
+                                svgElement.style.height = 'auto';
+                                svgElement.removeAttribute('width');
+                                svgElement.removeAttribute('height');
+                            }
+                        }
+                    } catch (error) {
+                        console.error('Error rendering mermaid diagram:', error);
+                        element.innerHTML = '<p style="color: red;">Error rendering diagram: ' + error.message + '</p>';
+                        element.setAttribute('data-processed', 'true');
+                    }
+                }
+            }
+            
+            // Mutation observer to watch for new mermaid elements
+            const observer = new MutationObserver(() => {
+                renderMermaidDiagrams();
+            });
+            
+            // Start observing
             observer.observe(document.body, {
                 childList: true,
                 subtree: true
             });
             
-            // Run once on page load
-            mermaid.run();
+            // Initial render
+            document.addEventListener('DOMContentLoaded', renderMermaidDiagrams);
+            
+            // Also run after a short delay to catch any dynamically added content
+            setTimeout(renderMermaidDiagrams, 1000);
         </script>
         """
 
@@ -161,12 +221,55 @@ class MooMootScribeApp:
         return demo
 
 
-app = MooMootScribeApp()
-"""Launch the application with setup feedback"""
 print("\n" + "=" * 50)
-print("🚀 Starting MooMoot Scribe Application")
+print("🚀 Starting MooMoot Scribe Application with FastAPI + Uvicorn")
 print("=" * 50)
 
-print("\n📱 Launching web interface...")
-app = app.create_interface()
-app.launch()
+
+# Create FastAPI app
+app = FastAPI(
+    title="MooMoot Scribe",
+    description="AI Content Generator für Moodle Moot DACH Vorträge",
+)
+
+# Get static directory path
+static_dir = Path(__file__).parent / "static"
+
+# Mount static files directory (this will serve files at /static/*)
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    print(f"✅ Static files mounted from: {static_dir}")
+else:
+    print(f"⚠️  Static directory not found: {static_dir}")
+
+
+# Create Gradio app
+moomoot_app = MooMootScribeApp()
+io = moomoot_app.create_interface()
+
+# Mount Gradio interface to FastAPI app at /app
+app = gr.mount_gradio_app(app, io, path="/app")
+
+
+# Redirect root to the Gradio app
+@app.get("/")
+async def redirect_root():
+    return RedirectResponse(url="/app", status_code=302)
+
+
+# Add redirect from /gradio to /app for backward compatibility
+@app.get("/gradio")
+async def redirect_gradio():
+    return RedirectResponse(url="/app", status_code=302)
+
+
+# Get configuration from environment variables
+server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+
+print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
+print(
+    f"🔗 Mermaid.js should be accessible at: http://{server_name}:{server_port}/static/js/mermaid.min.js"
+)
+
+uvicorn.run(app, host=server_name, port=server_port, log_level="info")
