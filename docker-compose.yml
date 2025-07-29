@@ -2,6 +2,8 @@ version: "3.8"
 
 services:
     moomootscribe:
+        image: pascalhuerten/moomootscribe:latest
+        container_name: moomootscribe
         build: .
         ports:
             - "7860:7860"
