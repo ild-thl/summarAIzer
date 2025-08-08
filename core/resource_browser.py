@@ -4,6 +4,7 @@ Resource Browser - Web interface for browsing and rendering files
 
 import markdown
 import re
+import os
 from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
@@ -36,9 +37,20 @@ class ResourceBrowser:
 
     def get_breadcrumb_html(self, file_path: str, is_markdown: bool = False) -> str:
         """Generate clickable breadcrumb navigation"""
+        proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+
         parts = file_path.split("/") if file_path else []
-        breadcrumb_parts = ['<a href="/app">🎓 MooMoot Scribe</a>']
-        breadcrumb_parts.append('<a href="/browse/">Resources</a>')
+        if proxy_path:
+            # For production: main app is at proxy_path, browse is at proxy_path/browse
+            main_app_url = proxy_path
+            browse_base_url = f"{proxy_path}/browse/"
+        else:
+            # For local development: main app is at /app, browse is at /browse
+            main_app_url = "/app"
+            browse_base_url = "/browse/"
+
+        breadcrumb_parts = [f'<a href="{main_app_url}">🎓 MooMoot Scribe</a>']
+        breadcrumb_parts.append(f'<a href="{browse_base_url}">Resources</a>')
 
         current_path = ""
         for i, part in enumerate(parts):
@@ -46,17 +58,27 @@ class ResourceBrowser:
                 current_path += part
                 if i < len(parts) - 1:  # Not the last part
                     current_path += "/"
-                    breadcrumb_parts.append(
-                        f'<a href="/browse/{current_path.rstrip("/")}">{part}</a>'
-                    )
+                    if proxy_path:
+                        breadcrumb_parts.append(
+                            f'<a href="{proxy_path}/browse/{current_path.rstrip("/")}">{part}</a>'
+                        )
+                    else:
+                        breadcrumb_parts.append(
+                            f'<a href="/browse/{current_path.rstrip("/")}">{part}</a>'
+                        )
                 else:  # Last part (current file/folder)
                     if is_markdown:
                         # For markdown files, make the parent folder clickable
                         parent_path = "/".join(parts[:-1])
                         if parent_path:
-                            breadcrumb_parts.append(
-                                f'<a href="/browse/{parent_path}">{part}</a>'
-                            )
+                            if proxy_path:
+                                breadcrumb_parts.append(
+                                    f'<a href="{proxy_path}/browse/{parent_path}">{part}</a>'
+                                )
+                            else:
+                                breadcrumb_parts.append(
+                                    f'<a href="/browse/{parent_path}">{part}</a>'
+                                )
                         else:
                             breadcrumb_parts.append(part)
                     else:
@@ -78,27 +100,30 @@ class ResourceBrowser:
         }
         return icons.get(file_type, "📄")
 
-    def determine_file_type(self, item_path: Path) -> tuple[str, str]:
+    def determine_file_type(
+        self, item_path: Path, proxy_path: str = ""
+    ) -> tuple[str, str]:
         """Determine file type and appropriate URL"""
         suffix = item_path.suffix.lower()
-        relative_path = item_path.relative_to(self.base_resources)
+        relative_path = item_path.relative_to(self.base_resources).as_posix()
 
+        base = f"{proxy_path}" if proxy_path else ""
         if suffix in [".md", ".markdown"]:
-            return "markdown", f"/markdown/{relative_path}"
+            return "markdown", f"{base}/markdown/{relative_path}"
         elif suffix in [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]:
-            return "image", f"/resources/{relative_path}"
+            return "image", f"{base}/resources/{relative_path}"
         elif suffix in [".mp3", ".wav", ".ogg", ".m4a"]:
-            return "audio", f"/resources/{relative_path}"
+            return "audio", f"{base}/resources/{relative_path}"
         elif suffix in [".mp4", ".webm", ".ogg"]:
-            return "video", f"/resources/{relative_path}"
+            return "video", f"{base}/resources/{relative_path}"
         elif suffix == ".json":
-            return "json", f"/resources/{relative_path}"
+            return "json", f"{base}/resources/{relative_path}"
         elif suffix == ".csv":
-            return "csv", f"/resources/{relative_path}"
+            return "csv", f"{base}/resources/{relative_path}"
         elif suffix in [".txt", ".log"]:
-            return "text", f"/resources/{relative_path}"
+            return "text", f"{base}/resources/{relative_path}"
         else:
-            return "file", f"/resources/{relative_path}"
+            return "file", f"{base}/resources/{relative_path}"
 
     async def render_markdown(self, file_path: str) -> HTMLResponse:
         """Render markdown files as HTML with enhanced features"""
@@ -142,6 +167,10 @@ class ResourceBrowser:
 
             # Generate breadcrumb
             breadcrumb = self.get_breadcrumb_html(file_path, is_markdown=True)
+
+            # Compute browse base URL for back button
+            proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+            browse_base_url = f"{proxy_path}/browse/" if proxy_path else "/browse/"
 
             # Wrap in a nice HTML template with Mermaid support
             full_html = f"""
@@ -339,7 +368,7 @@ class ResourceBrowser:
                 {html_content}
                 
                 <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                    <a href="/browse/{'/'.join(file_path.split('/')[:-1])}" class="back-button">
+                    <a href="{browse_base_url}{'/'.join(file_path.split('/')[:-1])}" class="back-button">
                         ← Back to folder
                     </a>
                 </div>
@@ -371,6 +400,8 @@ class ResourceBrowser:
             if not safe_path.is_dir():
                 raise HTTPException(status_code=400, detail="Not a directory")
 
+            proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+
             # Get directory contents
             items = []
             for item in sorted(safe_path.iterdir()):
@@ -382,17 +413,20 @@ class ResourceBrowser:
                     continue
 
                 if item.is_dir():
+                    base = f"{proxy_path}" if proxy_path else ""
                     items.append(
                         {
                             "name": item.name + "/",
                             "type": "directory",
-                            "url": f"/browse/{relative_path}",
+                            "url": f"{base}/browse/{relative_path.as_posix()}",
                             "size": "-",
                         }
                     )
                 else:
                     # Determine file type and appropriate URL
-                    file_type, url = self.determine_file_type(item)
+                    file_type, url = self.determine_file_type(
+                        item, proxy_path=proxy_path
+                    )
 
                     # Get file size
                     try:

@@ -30,7 +30,7 @@ class TranscriptionTab:
     def _format_color_legend(self):
         """Format color legend as HTML"""
         html = """
-        <div style='padding: 10px; border: 1px solid #ddd; border-radius: 8px; background-color: #f8f9fa; margin: 10px 0;'>
+        <div style='padding: 10px; border: 1px solid #ddd; border-radius: 8px; margin: 10px 0;'>
             <h4 style='margin-top: 0; margin-bottom: 10px;'>🎨 Farblegende</h4>
             <div style='display: flex; flex-wrap: wrap; gap: 15px;'>
                 <div style='display: flex; align-items: center; gap: 5px;'>
@@ -455,7 +455,7 @@ class TranscriptionTab:
             return (
                 recommendations_html,
                 legend_html,
-                f"<div style='font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 8px; background-color: #fff;'>{highlighted}</div>",
+                f"<div style='font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 8px;'>{highlighted}</div>",
             )
 
         def auto_analyze_on_upload(file, state, auto_check):

@@ -14,10 +14,6 @@ services:
             - ./prompts:/app/prompts
             # Optional: Mount .env file for environment variables
             - ./.env:/app/.env:ro
-        environment:
-            - GRADIO_SERVER_NAME=0.0.0.0
-            - GRADIO_SERVER_PORT=7860
-            - GRADIO_BASE_URL=http://127.0.0.1:7860
         restart: unless-stopped
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:7860/"]
@@ -32,6 +28,12 @@ services:
                     memory: 2G
                 reservations:
                     memory: 1G
+        networks:
+            - tls_proxy_network
+
+networks:
+    tls_proxy_network:
+        external: true
 
 # Persistent volumes
 volumes:

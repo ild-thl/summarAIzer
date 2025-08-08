@@ -31,6 +31,10 @@ class MooMootScribeApp:
         self.openai_client = OpenAIClient()
         self.image_generator = ImageGenerator()
 
+        # Get proxy path from environment
+        self.proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+        print(f"🔗 Proxy path configured: '{self.proxy_path}'")
+
     def load_css(self):
         """Load CSS from external file"""
         css_path = Path(__file__).parent / "ui" / "css" / "app.css"
@@ -52,7 +56,7 @@ class MooMootScribeApp:
         <script type="module">
             // Robust mermaid loading with proper handling
             let mermaid;
-            
+
             // Fallback to CDN
             const mermaidModule = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
             mermaid = mermaidModule.default || mermaidModule;
@@ -169,12 +173,12 @@ class MooMootScribeApp:
         ) as demo:
             # Main header
             gr.HTML(
-                """
+                f"""
             <div class="main-header">
                 <h1>🎓 MooMoot Scribe</h1>
                 <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-                    <a href="/browse/" target="_blank" class="nav-link" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;">
+                <div style=\"display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;\">
+                    <a href=\"{self.proxy_path + '/browse/' if self.proxy_path else '/browse/'}\" target=\"_blank\" class=\"nav-link\" style=\"color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;\">
                         📂 Resource Browser
                     </a>
                 </div>
@@ -266,27 +270,33 @@ print("🚀 Starting MooMoot Scribe Application with FastAPI + Uvicorn")
 print("=" * 50)
 
 
+# Get proxy path for route registration
+proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+
 # Create FastAPI app
 app = FastAPI(
     title="MooMoot Scribe",
     description="AI Content Generator für Moodle Moot DACH Vorträge",
+    root_path=proxy_path,  # Set root path for proxy compatibility
 )
+
+print(f"🔗 FastAPI app created")
 
 # Get static directory path
 static_dir = Path(__file__).parent / "static"
 resources_dir = Path(__file__).parent / "resources"
 
-# Mount static files directory (this will serve files at /static/*)
+# Mount static files directory
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-    print(f"✅ Static files mounted from: {static_dir}")
+    print(f"✅ Static files mounted at /static from: {static_dir}")
 else:
     print(f"⚠️  Static directory not found: {static_dir}")
 
 # Mount resources directory to serve generated content including images
+# Use dynamic route instead of StaticFiles to avoid directory index 404 and allow proxy-friendly redirects
 if resources_dir.exists():
-    app.mount("/resources", StaticFiles(directory=str(resources_dir)), name="resources")
-    print(f"✅ Resources mounted from: {resources_dir}")
+    print(f"ℹ️ Using dynamic route for /resources from: {resources_dir}")
 else:
     print(f"⚠️  Resources directory not found: {resources_dir}")
 
@@ -322,16 +332,22 @@ async def browse_directory(dir_path: str = ""):
     return await resource_browser.browse_directory(dir_path)
 
 
-# Redirect root to the Gradio app
-@app.get("/")
-async def redirect_root():
-    return RedirectResponse(url="/app", status_code=302)
-
-
-# Add redirect for resources root to browser
+# Add redirect for resources root to browser (relative for proxy-friendliness)
 @app.get("/resources/")
-async def redirect_resources():
-    return RedirectResponse(url="/browse/", status_code=302)
+async def redirect_resources(request: Request):
+    # Use relative redirect to respect proxy prefixes
+    return RedirectResponse(url="../browse/", status_code=302)
+
+
+# Also handle no-trailing-slash variants explicitly
+@app.get("/resources")
+async def redirect_resources_noslash(request: Request):
+    return RedirectResponse(url="./browse/", status_code=302)
+
+
+@app.get("/browse")
+async def redirect_browse_noslash(request: Request):
+    return RedirectResponse(url="./", status_code=302)
 
 
 @app.get("/resources/temp_images/{file_name}")
@@ -340,34 +356,63 @@ async def serve_temp_image(file_name: str):
     return await resource_browser.serve_temp_image(file_name)
 
 
-# Add redirect from /gradio to /app for backward compatibility
+# Serve resources via dynamic file route (after temp_images so that route remains effective)
+@app.get("/resources/{file_path:path}")
+async def serve_resource_file(file_path: str):
+    """Serve files from the resources directory securely"""
+    try:
+        # Normalize and secure path
+        safe_rel = file_path.lstrip("/")
+        safe_path = (resources_dir / safe_rel).resolve()
+        base_path = resources_dir.resolve()
+        # Ensure the requested path is within the resources directory
+        if not str(safe_path).startswith(str(base_path)):
+            raise HTTPException(status_code=403, detail="Access denied")
+        # Ensure file exists and is a file
+        if not safe_path.exists() or not safe_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        from fastapi.responses import FileResponse
+
+        return FileResponse(str(safe_path))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error serving resource: {e}")
+
+
+# Add redirect from /gradio to main interface for backward compatibility
 @app.get("/gradio")
-async def redirect_gradio():
-    return RedirectResponse(url="/app", status_code=302)
+async def redirect_gradio(request: Request):
+    return RedirectResponse(url="app", status_code=302)
+
+
+# Root redirects
+@app.get("/")
+async def redirect_root(request: Request):
+    # Redirect to app/ with trailing slash using relative URL (proxy-friendly)
+    return RedirectResponse(url="app/", status_code=302)
+
+
+# Note: /app/ with trailing slash is handled by Gradio automatically
+# No need for explicit redirect since Gradio expects the trailing slash
 
 
 # Get configuration from environment variables
 server_name = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
 server_port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
-
-# Set up base URL for absolute URL generation in Gallery components
-if not os.getenv("GRADIO_BASE_URL"):
-    if server_name == "0.0.0.0":
-        # For local development
-        os.environ["GRADIO_BASE_URL"] = f"http://127.0.0.1:{server_port}/app"
-    else:
-        os.environ["GRADIO_BASE_URL"] = f"http://{server_name}:{server_port}/app"
+proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
 print(f"\n📱 Launching FastAPI web interface on {server_name}:{server_port}...")
+if proxy_path:
+    print(f"🔗 Proxy configuration: {proxy_path}")
+    print(f"🔗 Main app mounted at: /app (internal)")
+    print(f"🔗 External URL: {proxy_path}")
+else:
+    print(f"🔗 Main app mounted at: /app")
 print(f"🔗 Base URL for Gallery images: {os.getenv('GRADIO_BASE_URL')}")
-print(
-    f"🔗 Resources browser: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/browse/')}"
-)
-print(
-    f"🔗 Static files: {os.getenv('GRADIO_BASE_URL', f'http://{server_name}:{server_port}').replace('/app', '/static/')}"
-)
-print(
-    f"🔗 Mermaid.js should be accessible at: http://{server_name}:{server_port}/static/js/mermaid.min.js"
-)
+base_url = os.getenv("GRADIO_BASE_URL", f"http://{server_name}:{server_port}")
+print(f"🔗 Resources browser: {base_url}/browse/")
+print(f"🔗 Static files: {base_url}/static/")
+print(f"🔗 Mermaid.js should be accessible at: {base_url}/static/js/mermaid.min.js")
 
 uvicorn.run(app, host=server_name, port=server_port, log_level="info")
