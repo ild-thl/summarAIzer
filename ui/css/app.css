@@ -463,7 +463,8 @@ html.dark .html-preview .mermaid {
         background-color: #f8f9fa !important;
     }
 
-    body:not(.light):not([data-theme="light"]) .html-preview.block {
+    body:not(.light):not([data-theme="light"]) .html-preview.block,
+    body:not(.light):not([data-theme="light"]) .html-preview.prose * {
         background-color: #ffffff !important;
         color: #212529 !important;
     }

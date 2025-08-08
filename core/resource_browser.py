@@ -16,6 +16,11 @@ class ResourceBrowser:
     def __init__(self, base_resources_path: str = "resources"):
         self.base_resources = Path(base_resources_path)
 
+    def get_browse_base_url(self) -> str:
+        """Return the correct base URL for the browser, proxy-aware."""
+        proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
+        return f"{proxy_path}/browse/" if proxy_path else "/browse/"
+
     def process_mermaid_content(self, content: str) -> str:
         """Process markdown content to convert mermaid code blocks to proper div elements"""
         # Pattern to match mermaid code blocks (case insensitive, with optional whitespace)
@@ -169,8 +174,9 @@ class ResourceBrowser:
             breadcrumb = self.get_breadcrumb_html(file_path, is_markdown=True)
 
             # Compute browse base URL for back button
-            proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
-            browse_base_url = f"{proxy_path}/browse/" if proxy_path else "/browse/"
+            browse_base_url = self.get_browse_base_url()
+            parent_path = "/".join(file_path.split("/")[:-1])
+            back_link = f"{browse_base_url}{parent_path}"
 
             # Wrap in a nice HTML template with Mermaid support
             full_html = f"""
@@ -368,7 +374,7 @@ class ResourceBrowser:
                 {html_content}
                 
                 <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                    <a href="{browse_base_url}{'/'.join(file_path.split('/')[:-1])}" class="back-button">
+                    <a href="{back_link}" class="back-button">
                         ← Back to folder
                     </a>
                 </div>
