@@ -206,6 +206,7 @@ gradio-app {
 }
 
 .html-preview p {
+    color: #2c3e50 !important;
     margin-bottom: 1em !important;
     line-height: 1.6 !important;
 }
@@ -463,8 +464,7 @@ html.dark .html-preview .mermaid {
         background-color: #f8f9fa !important;
     }
 
-    body:not(.light):not([data-theme="light"]) .html-preview.block,
-    body:not(.light):not([data-theme="light"]) .html-preview.prose * {
+    body:not(.light):not([data-theme="light"]) .html-preview.block {
         background-color: #ffffff !important;
         color: #212529 !important;
     }
