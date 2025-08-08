@@ -400,19 +400,20 @@ class TranscriptionTab:
                 )
 
         def save_transcription_edits(state, filename, content):
-            """Save edited transcription content to file"""
+            """Save edited transcription content to file and trigger refresh in other tabs via state update"""
             current_talk = state.get("current_talk")
             if not current_talk:
-                return "❌ Kein Talk ausgewählt."
+                return state, "❌ Kein Talk ausgewählt."
 
             result = self.talk_manager.save_transcription_content(
                 current_talk, filename, content
             )
 
             if result["success"]:
-                return f"✅ {result['message']}"
+                # Return updated state so other tabs (e.g., Generator) refresh inputs
+                return state.updated(), f"✅ {result['message']}"
             else:
-                return f"❌ {result['error']}"
+                return state, f"❌ {result['error']}"
 
         def revert_transcription_edits(state, filename):
             """Revert transcription to original content"""
@@ -459,12 +460,20 @@ class TranscriptionTab:
             )
 
         def auto_analyze_on_upload(file, state, auto_check):
-            """Automatically analyze GDPR compliance when file is uploaded"""
+            """Automatically analyze GDPR compliance when file is uploaded; update state to refresh Generator tabs"""
             # First upload the file normally
             upload_result = upload_transcription_file(file, state)
 
+            # Determine if upload succeeded to decide on state update
+            success = (
+                isinstance(upload_result, (list, tuple))
+                and len(upload_result) > 0
+                and str(upload_result[0]).startswith("✅")
+            )
+            new_state = state.updated() if success else state
+
             # If auto-check is enabled and upload was successful, analyze the file
-            if auto_check and upload_result[0].startswith("✅"):
+            if auto_check and success:
                 # Get the content of the uploaded file
                 current_talk = state.get("current_talk")
                 if current_talk and file:
@@ -490,16 +499,25 @@ class TranscriptionTab:
                                 analysis_results = analyze_gdpr_compliance(
                                     content_result["content"]
                                 )
-                                return upload_result + analysis_results
+                                # Return: state + original upload outputs + analysis outputs
+                                return (
+                                    (new_state,)
+                                    + tuple(upload_result)
+                                    + tuple(analysis_results)
+                                )
                     except Exception as e:
                         # If filename extraction fails, continue without analysis
                         print(f"Error extracting filename for GDPR analysis: {e}")
 
             # Return upload result with empty analysis if auto-check is disabled or failed
-            return upload_result + (
-                "<p><i>Automatische GDPR-Analyse deaktiviert oder fehlgeschlagen.</i></p>",
-                "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
-                "<p><i>Kein Text analysiert.</i></p>",
+            return (
+                (new_state,)
+                + tuple(upload_result)
+                + (
+                    "<p><i>Automatische GDPR-Analyse deaktiviert oder fehlgeschlagen.</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Kein Text analysiert.</i></p>",
+                )
             )
 
         def analyze_current_transcription(state, selected_file):
@@ -550,6 +568,7 @@ class TranscriptionTab:
             auto_analyze_on_upload,
             inputs=[transcription_file_upload, self.app_state, auto_check_gdpr],
             outputs=[
+                self.app_state,  # updated state to trigger refresh in other tabs
                 file_upload_status,
                 audio_files_selection,
                 delete_audio_btn,
@@ -615,7 +634,7 @@ class TranscriptionTab:
                 transcription_files_selection,
                 transcription_preview,
             ],
-            outputs=transcription_edit_status,
+            outputs=[self.app_state, transcription_edit_status],
         )
 
         revert_transcription_btn.click(
