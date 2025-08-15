@@ -4,9 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.requests import Request
 import uvicorn
+import time
 
 from core.talk_manager import TalkManager
 from core.app_state import AppState
@@ -48,12 +49,48 @@ class MooMootScribeApp:
             print(f"⚠️  Error loading CSS: {e}")
             return ""
 
+    def load_js(self):
+        """Load and concatenate JS files from static/js for inlining in the page head.
+
+        This gathers project-specific client scripts (for development convenience)
+        and returns a single string that can be embedded into the page head.
+        It intentionally skips mermaid bundles because mermaid is loaded via CDN
+        in the head module script above.
+        """
+        js_dir = Path(__file__).parent / "static" / "js"
+        if not js_dir.exists() or not js_dir.is_dir():
+            return ""
+
+        parts = []
+        for p in sorted(js_dir.iterdir()):
+            if not p.is_file():
+                continue
+            # Only include .js and .mjs files, but skip mermaid bundles that are
+            # intentionally loaded from CDN in the module head script.
+            if p.suffix.lower() not in (".js", ".mjs"):
+                continue
+            if p.name.lower().startswith("mermaid"):
+                continue
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    content = f.read()
+                parts.append(
+                    f"// Begin inline: {p.name}\n"
+                    + content
+                    + f"\n// End inline: {p.name}\n"
+                )
+            except Exception as e:
+                print(f"⚠️ Error loading JS {p}: {e}")
+
+        return "\n".join(parts)
+
     def create_interface(self):
         # Load CSS from external file
         css = self.load_css()
 
+        cachebust = int(time.time())
         head = """
-        <script type="module">
+        <script type='module'>
             // Robust mermaid loading with proper handling
             let mermaid;
 
@@ -127,7 +164,7 @@ class MooMootScribeApp:
                         }
                     } catch (error) {
                         console.error('Error rendering mermaid diagram:', error);
-                        element.innerHTML = '<div style="color: red; border: 1px solid red; padding: 10px; border-radius: 5px; background: #ffe6e6;"><strong>Mermaid Error:</strong> ' + error.message + '</div>';
+                        element.innerHTML = '<div style='color: red; border: 1px solid red; padding: 10px; border-radius: 5px; background: #ffe6e6;'><strong>Mermaid Error:</strong> ' + error.message + '</div>';
                         element.setAttribute('data-processed', 'true');
                     }
                 }
@@ -163,6 +200,15 @@ class MooMootScribeApp:
             }, 3000);
         </script>
         """
+        # Inline learning_aids.js into the head (same pattern as CSS) so Gradio pages
+        # have the client logic available without relying on external static routes.
+        js_content = self.load_js()
+        if js_content:
+            # Embed the JS directly. Using an inline script avoids the static file
+            # routing issues during development.
+            head += "\n" + "<script>\n" + js_content + "\n</script>\n"
+
+        # All project JS under static/js is loaded via load_js() and inlined above.
 
         with gr.Blocks(
             title="MooMoot Scribe - AI Content Generator",
@@ -209,8 +255,8 @@ class MooMootScribeApp:
                         openai_client=self.openai_client,
                         app_state=self.app_state,
                         prompt_id="summary",
-                        tab_title="📋 Zusammenfassungs-Generator",
-                        tab_description="Generiere KI-gestützte Zusammenfassungen aus ausgewählten Transkriptionen",
+                        tab_title="📋 Zusammenfassung",
+                        tab_description="Kombinierte strukturierte Dokumentation: Zusammenfassung, Lernziele, Kompetenzen, Tags, Zitate, Ressourcen, Konzepte",
                     )
                     summary_tab.create_tab()
 
@@ -225,17 +271,6 @@ class MooMootScribeApp:
                         tab_description="Generiere strukturierte Mermaid-Diagramme aus Transkriptionsinhalten",
                     )
                     summary_tab.create_tab()
-
-                with gr.Tab("🗃️ Metadata"):
-                    metadata_tab = GeneratorTab(
-                        talk_manager=self.talk_manager,
-                        openai_client=self.openai_client,
-                        app_state=self.app_state,
-                        prompt_id="metadata",
-                        tab_title="📋 Metadata-Generator",
-                        tab_description="Generiere strukturierte Metadaten aus Transkriptionsinhalten",
-                    )
-                    metadata_tab.create_tab()
 
                 # Social Media Tab
                 with gr.Tab("📱 Social Media"):
@@ -310,6 +345,13 @@ resource_browser = ResourceBrowser()
 
 # Mount Gradio interface to FastAPI app at /app
 app = gr.mount_gradio_app(app, io, path="/app")
+
+# After Gradio is mounted we also mount the same static directory under /app/static
+# This ensures the Gradio-served pages can fetch repository static files without Gradio
+# shadowing the FastAPI static mount.
+if static_dir.exists():
+    app.mount("/app/static", StaticFiles(directory=str(static_dir)), name="app_static")
+    print(f"✅ Static files additionally mounted at /app/static from: {static_dir}")
 
 
 # Add markdown rendering endpoint
@@ -415,4 +457,5 @@ print(f"🔗 Resources browser: {base_url}/browse/")
 print(f"🔗 Static files: {base_url}/static/")
 print(f"🔗 Mermaid.js should be accessible at: {base_url}/static/js/mermaid.min.js")
 
-uvicorn.run(app, host=server_name, port=server_port, log_level="info")
+if __name__ == "__main__":
+    uvicorn.run(app, host=server_name, port=server_port, log_level="info")

@@ -193,6 +193,43 @@ class TranscriptionTab:
                 label="Handlungsempfehlungen",
             )
 
+            # Help text explaining the editor usage
+            gdpr_help = gr.HTML(
+                value=(
+                    "<p><strong>Wie das Interface funktioniert:</strong> Bearbeiten Sie nur die Spalte <em>Replacement</em> um Rechtschreibfehler zu korrigieren oder kritische Daten zu pseudonymisieren. "
+                    "Klicken Sie anschließend auf <em>Änderungen anwenden</em>, um alle Vorkommen im aktuellen Transkript zu ersetzen und zu speichern. Nur die Replacement-Spalte wird beim Anwenden berücksichtigt.</p>"
+                ),
+                visible=True,
+                label="Hilfe",
+            )
+
+            # Instead of an editable DataFrame (which causes ambiguous truth
+            # value issues), present a single-entity selector and one
+            # replacement input. The user selects an entity from the dropdown
+            # and types the replacement in the single textbox below.
+            gdpr_entity_selector = gr.Dropdown(
+                choices=[],
+                label="Gefundene Entitäten",
+                elem_id="gdpr_entity_selector",
+                interactive=True,
+                visible=False,
+            )
+
+            gdpr_replacement_input = gr.Textbox(
+                label="Replacement",
+                placeholder="Ersatztext für die ausgewählte Entität eingeben...",
+                visible=False,
+                elem_id="gdpr_replacement_input",
+            )
+
+            apply_replacements_btn = gr.Button(
+                "Änderungen anwenden",
+                variant="primary",
+                visible=False,
+            )
+
+            replacement_status = gr.Textbox(visible=False, label="Status")
+
         # Highlighted text display with legend
         with gr.Accordion("🎨 Text mit Markierungen", open=True):
             color_legend = gr.HTML(
@@ -212,8 +249,15 @@ class TranscriptionTab:
 
             return self.talk_manager.get_uploaded_files(current_talk, file_type)
 
-        def refresh_file_displays(state):
-            """Refresh file displays and selection options"""
+        def refresh_file_displays(
+            state, selected_audio=None, selected_transcription=None
+        ):
+            """Refresh file displays and selection options.
+
+            If selected_audio/selected_transcription provided and present in the
+            choices, that value will be selected. Otherwise the first file (if
+            any) will be selected so the editor auto-loads something.
+            """
             audio_files = get_uploaded_files(state, "audio")
             transcription_files = get_uploaded_files(state, "transcription")
 
@@ -221,12 +265,32 @@ class TranscriptionTab:
             audio_radio_visible = len(audio_files) > 0
             transcription_radio_visible = len(transcription_files) > 0
 
+            # Decide which values to pre-select
+            audio_value = None
+            if audio_radio_visible:
+                if selected_audio and selected_audio in audio_files:
+                    audio_value = selected_audio
+                else:
+                    audio_value = audio_files[0]
+
+            transcription_value = None
+            if transcription_radio_visible:
+                if (
+                    selected_transcription
+                    and selected_transcription in transcription_files
+                ):
+                    transcription_value = selected_transcription
+                else:
+                    transcription_value = transcription_files[0]
+
             return (
-                gr.Radio(choices=audio_files, value=None, visible=audio_radio_visible),
+                gr.Radio(
+                    choices=audio_files, value=audio_value, visible=audio_radio_visible
+                ),
                 gr.Button(visible=audio_radio_visible),
                 gr.Radio(
                     choices=transcription_files,
-                    value=None,
+                    value=transcription_value,
                     visible=transcription_radio_visible,
                 ),
                 gr.Button(visible=transcription_radio_visible),
@@ -270,8 +334,18 @@ class TranscriptionTab:
                     current_talk, file_path
                 )
 
-                # Get updated displays
-                displays = refresh_file_displays(state)
+                # Extract uploaded filename for selection
+                uploaded_name = None
+                if result.get("success") and result.get("file_path"):
+                    try:
+                        uploaded_name = Path(result["file_path"]).name
+                    except Exception:
+                        uploaded_name = None
+
+                # Get updated displays and pre-select the uploaded file if available
+                displays = refresh_file_displays(
+                    state, selected_transcription=uploaded_name
+                )
 
                 if result["success"]:
                     return (
@@ -366,37 +440,99 @@ class TranscriptionTab:
         def show_transcription_preview(state, filename):
             """Show preview of selected transcription file"""
             if not filename:
+                # Reset GDPR UI when no file selected
+                dropdown_update = gr.update(choices=[], visible=False)
+                replacement_input_update = gr.update(value="", visible=False)
+                apply_btn_update = gr.update(visible=False)
+                help_update = gr.update(
+                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                    visible=False,
+                )
                 return (
                     "",
                     gr.Button(visible=False),
                     gr.Button(visible=False),
                     gr.Textbox(visible=False),
+                    "<p><i>Keine Empfehlungen verfügbar.</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>",
+                    dropdown_update,
+                    replacement_input_update,
+                    apply_btn_update,
+                    "",
+                    help_update,
                 )
 
             current_talk = state.get("current_talk")
             if not current_talk:
+                dropdown_update = gr.update(choices=[], visible=False)
+                replacement_input_update = gr.update(value="", visible=False)
+                apply_btn_update = gr.update(visible=False)
+                help_update = gr.update(
+                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                    visible=False,
+                )
                 return (
                     "",
                     gr.Button(visible=False),
                     gr.Button(visible=False),
                     gr.Textbox(visible=False),
+                    "<p><i>Keine Empfehlungen verfügbar.</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>",
+                    dropdown_update,
+                    replacement_input_update,
+                    apply_btn_update,
+                    "",
+                    help_update,
                 )
 
             result = self.talk_manager.get_transcription_content(current_talk, filename)
 
             if result["success"]:
+                # When switching files, reset GDPR UI until user triggers analysis
+                dropdown_update = gr.update(choices=[], visible=False)
+                replacement_input_update = gr.update(value="", visible=False)
+                apply_btn_update = gr.update(visible=False)
+                help_update = gr.update(
+                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                    visible=False,
+                )
                 return (
                     result["content"],
                     gr.Button(visible=True),  # save button
                     gr.Button(visible=True),  # revert button
                     gr.Textbox(visible=True, value=result["message"]),
+                    "<p><i>Empfehlungen werden nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>",
+                    dropdown_update,
+                    replacement_input_update,
+                    apply_btn_update,
+                    "",
+                    help_update,
                 )
             else:
+                dropdown_update = gr.update(choices=[], visible=False)
+                replacement_input_update = gr.update(value="", visible=False)
+                apply_btn_update = gr.update(visible=False)
+                help_update = gr.update(
+                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                    visible=False,
+                )
                 return (
                     f"Fehler beim Laden der Datei: {result['error']}",
                     gr.Button(visible=False),
                     gr.Button(visible=False),
                     gr.Textbox(visible=True, value=f"Fehler: {result['error']}"),
+                    "<p><i>Keine Empfehlungen verfügbar.</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>",
+                    dropdown_update,
+                    replacement_input_update,
+                    apply_btn_update,
+                    "",
+                    help_update,
                 )
 
         def save_transcription_edits(state, filename, content):
@@ -433,10 +569,26 @@ class TranscriptionTab:
         def analyze_gdpr_compliance(text):
             """Analyze text for GDPR compliance"""
             if not text or not text.strip():
+                # Return values matching the outputs expected by the caller:
+                # recommendations_html, legend_html, highlighted_html,
+                # dropdown_update, replacement_input_update,
+                # apply_btn_update, replacement_status, help_update
+                dropdown_update = gr.update(choices=[], visible=False)
+                replacement_input_update = gr.update(value="", visible=False)
+                apply_btn_update = gr.update(visible=False)
+                help_update = gr.update(
+                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                    visible=False,
+                )
                 return (
                     "<p><i>Keine Empfehlungen verfügbar.</i></p>",
                     "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
                     "<p><i>Kein Text zur Markierung vorhanden.</i></p>",
+                    dropdown_update,
+                    replacement_input_update,
+                    apply_btn_update,
+                    "",
+                    help_update,
                 )
 
             # Perform GDPR analysis
@@ -452,11 +604,150 @@ class TranscriptionTab:
 
             # Create highlighted text
             highlighted = self.gdpr_checker.highlight_text(text, analysis["matches"])
+            # Build choices for the dropdown from detected matches
+            entity_choices = []
+            for m in analysis["matches"]:
+                entity_text = m.text
+                if entity_text not in entity_choices:
+                    entity_choices.append(entity_text)
 
+            highlighted_html = f"<div style='font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 8px;'>{highlighted}</div>"
+
+            # Update the dropdown choices, show selector + replacement input
+            dropdown_update = gr.update(
+                choices=entity_choices, visible=bool(entity_choices)
+            )
+            replacement_input_update = gr.update(value="", visible=bool(entity_choices))
+            apply_btn_update = gr.update(visible=bool(entity_choices))
+            help_update = gr.update(
+                value=gdpr_help.value if hasattr(gdpr_help, "value") else None,
+                visible=bool(entity_choices),
+            )
+
+            # We'll return the dropdown update and the replacement input update
             return (
                 recommendations_html,
                 legend_html,
-                f"<div style='font-family: monospace; white-space: pre-wrap; line-height: 1.6; padding: 15px; border: 1px solid #ddd; border-radius: 8px;'>{highlighted}</div>",
+                highlighted_html,
+                dropdown_update,
+                replacement_input_update,
+                apply_btn_update,
+                "",
+                help_update,
+            )
+
+        def apply_replacements(state, selected_file, selected_entity, replacement_text):
+            """Apply a single replacement for the selected entity in the file.
+
+            This avoids ambiguous truth-value checks associated with DataFrame
+            objects by using a single selected entity and one replacement input.
+            """
+            # Basic validation
+            if not selected_file:
+                return (
+                    "",
+                    gr.Button(visible=False),
+                    gr.Button(visible=False),
+                    "<p style='color: orange;'>⚠️ Bitte wählen Sie zuerst eine Transkriptionsdatei aus.</p>",
+                    "<p><i>Keine Farblegende vorhanden.</i></p>",
+                    "<p><i>Kein Text zur Markierung vorhanden.</i></p>",
+                    gr.update(choices=[], visible=False),
+                    gr.update(value="", visible=False),
+                    gr.update(visible=False),
+                    "❌ Keine Datei ausgewählt.",
+                )
+
+            current_talk = state.get("current_talk")
+            if not current_talk:
+                return (
+                    "",
+                    gr.Button(visible=False),
+                    gr.Button(visible=False),
+                    "<p style='color: red;'>❌ Kein Talk ausgewählt.</p>",
+                    "<p><i>Keine Farblegende vorhanden.</i></p>",
+                    "<p><i>Kein Text zur Markierung vorhanden.</i></p>",
+                    gr.update(choices=[], visible=False),
+                    gr.update(value="", visible=False),
+                    gr.update(visible=False),
+                    "❌ Kein Talk ausgewählt.",
+                )
+
+            # Load content
+            content_result = self.talk_manager.get_transcription_content(
+                current_talk, selected_file
+            )
+            if not content_result.get("success"):
+                return (
+                    "",
+                    gr.Button(visible=False),
+                    gr.Button(visible=False),
+                    "<p style='color: red;'>❌ Fehler beim Laden der Datei.</p>",
+                    "<p><i>Keine Farblegende vorhanden.</i></p>",
+                    "<p><i>Kein Text zur Markierung vorhanden.</i></p>",
+                    gr.update(choices=[], visible=False),
+                    gr.update(value="", visible=False),
+                    gr.update(visible=False),
+                    f"Fehler: {content_result.get('error')}",
+                )
+
+            content = content_result.get("content", "")
+
+            import re
+
+            replacements_done = 0
+            if (
+                selected_entity
+                and replacement_text
+                and replacement_text.strip()
+                and replacement_text != selected_entity
+            ):
+                try:
+                    pattern = re.compile(
+                        r"\b" + re.escape(selected_entity) + r"\b", flags=re.IGNORECASE
+                    )
+                    new_content, n = pattern.subn(replacement_text, content)
+                    if n > 0:
+                        content = new_content
+                        replacements_done = n
+                except Exception:
+                    replacements_done = 0
+
+            # Save updated content if changes were made
+            if replacements_done > 0:
+                save_result = self.talk_manager.save_transcription_content(
+                    current_talk, selected_file, content
+                )
+                if not save_result.get("success"):
+                    status = f"❌ Fehler beim Speichern: {save_result.get('error')}"
+                else:
+                    status = f"✅ {replacements_done} Ersetzungen angewendet und gespeichert."
+            else:
+                status = "ℹ️ Keine Ersetzungen vorgenommen."
+
+            # Re-run GDPR analysis to refresh UI
+            (
+                recommendations_html,
+                legend_html,
+                highlighted_html,
+                dropdown_update,
+                replacement_input_update,
+                apply_btn_update,
+                _,
+                help_update,
+            ) = analyze_gdpr_compliance(content)
+
+            # Return updated preview + buttons + gdpr outputs
+            return (
+                content,
+                gr.Button(visible=True),
+                gr.Button(visible=True),
+                recommendations_html,
+                legend_html,
+                highlighted_html,
+                dropdown_update,
+                replacement_input_update,
+                apply_btn_update,
+                status,
             )
 
         def auto_analyze_on_upload(file, state, auto_check):
@@ -560,6 +851,11 @@ class TranscriptionTab:
                 gdpr_recommendations,
                 color_legend,
                 highlighted_text,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+                apply_replacements_btn,
+                replacement_status,
+                gdpr_help,
             ],
         )
 
@@ -577,6 +873,11 @@ class TranscriptionTab:
                 gdpr_recommendations,
                 color_legend,
                 highlighted_text,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+                apply_replacements_btn,
+                replacement_status,
+                gdpr_help,
             ],
         )
 
@@ -624,6 +925,14 @@ class TranscriptionTab:
                 save_transcription_btn,
                 revert_transcription_btn,
                 transcription_edit_status,
+                gdpr_recommendations,
+                color_legend,
+                highlighted_text,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+                apply_replacements_btn,
+                replacement_status,
+                gdpr_help,
             ],
         )
 
@@ -641,6 +950,29 @@ class TranscriptionTab:
             revert_transcription_edits,
             inputs=[self.app_state, transcription_files_selection],
             outputs=[transcription_preview, transcription_edit_status],
+        )
+
+        # Apply replacements from the GDPR matches editor
+        apply_replacements_btn.click(
+            apply_replacements,
+            inputs=[
+                self.app_state,
+                transcription_files_selection,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+            ],
+            outputs=[
+                transcription_preview,
+                save_transcription_btn,
+                revert_transcription_btn,
+                gdpr_recommendations,
+                color_legend,
+                highlighted_text,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+                apply_replacements_btn,
+                replacement_status,
+            ],
         )
 
         # Refresh file displays when talk changes
@@ -668,4 +1000,9 @@ class TranscriptionTab:
             "highlighted_text": highlighted_text,
             "check_gdpr_btn": check_gdpr_btn,
             "auto_check_gdpr": auto_check_gdpr,
+            "gdpr_entity_selector": gdpr_entity_selector,
+            "gdpr_replacement_input": gdpr_replacement_input,
+            "apply_replacements_btn": apply_replacements_btn,
+            "replacement_status": replacement_status,
+            "gdpr_help": gdpr_help,
         }

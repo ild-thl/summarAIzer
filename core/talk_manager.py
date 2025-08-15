@@ -266,28 +266,77 @@ class TalkManager:
             if not talk_folder.exists():
                 return {"success": False, "error": "Talk nicht gefunden"}
 
-            # Copy transcription file to talk folder
+            transcription_folder.mkdir(parents=True, exist_ok=True)
+
             transcription_file = Path(transcription_file_path)
-            target_path = transcription_folder / transcription_file.name
 
-            import shutil
+            # Determine extension and target filename. For .srt/.vtt we convert to .txt
+            ext = transcription_file.suffix.lower()
+            try:
+                if ext in (".srt", ".vtt"):
+                    # Read original content
+                    try:
+                        with open(transcription_file_path, "r", encoding="utf-8") as f:
+                            raw = f.read()
+                    except Exception:
+                        # fallback with latin-1
+                        with open(
+                            transcription_file_path, "r", encoding="latin-1"
+                        ) as f:
+                            raw = f.read()
 
-            shutil.copy2(transcription_file_path, target_path)
+                    text = self._convert_subtitle_to_text(raw)
 
-            # Update metadata
-            self.update_talk_metadata(
-                safe_name,
-                {
-                    "transcription_file": transcription_file.name,
-                    "status": "transcription_available",
-                },
-            )
+                    target_name = transcription_file.stem + ".txt"
+                    target_path = transcription_folder / target_name
 
-            return {
-                "success": True,
-                "file_path": str(target_path),
-                "message": "Transkriptions-Datei erfolgreich hinzugefügt",
-            }
+                    with open(target_path, "w", encoding="utf-8") as f:
+                        f.write(text)
+
+                else:
+                    # For .txt or unknown, try to format plain text for readability
+                    target_path = transcription_folder / transcription_file.name
+                    try:
+                        try:
+                            with open(
+                                transcription_file_path, "r", encoding="utf-8"
+                            ) as f:
+                                raw = f.read()
+                        except Exception:
+                            with open(
+                                transcription_file_path, "r", encoding="latin-1"
+                            ) as f:
+                                raw = f.read()
+
+                        formatted = self._format_plain_text(raw)
+                        with open(target_path, "w", encoding="utf-8") as f:
+                            f.write(formatted)
+                    except Exception:
+                        # fallback: raw copy
+                        import shutil
+
+                        shutil.copy2(transcription_file_path, target_path)
+
+                # Update metadata to point to the saved transcription file
+                self.update_talk_metadata(
+                    safe_name,
+                    {
+                        "transcription_file": target_path.name,
+                        "status": "transcription_available",
+                    },
+                )
+
+                return {
+                    "success": True,
+                    "file_path": str(target_path),
+                    "message": "Transkriptions-Datei erfolgreich hinzugefügt",
+                }
+
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Fehler beim Hinzufügen der Transkriptions-Datei: {str(e)}",
+                }
 
         except Exception as e:
             return {
@@ -394,6 +443,146 @@ class TalkManager:
             safe_name = safe_name[:50].rstrip("_")
 
         return safe_name
+
+    def _convert_subtitle_to_text(self, raw_text: str) -> str:
+        """
+        Convert subtitle-style content (.srt, .vtt) to a plain text string.
+
+        Removes cue numbers, timecodes, WEBVTT headers and NOTE/STYLE blocks.
+        Joins cue lines into paragraphs and inserts line breaks after sentences
+        to make long texts easier to read.
+        """
+        import re
+
+        # Normalize line endings and split
+        lines = [ln.strip() for ln in raw_text.replace("\r\n", "\n").split("\n")]
+
+        cleaned_lines = []
+        for line in lines:
+            if not line:
+                # keep an explicit paragraph break marker
+                cleaned_lines.append("")
+                continue
+
+            # Remove WEBVTT header
+            if line.upper().startswith("WEBVTT"):
+                continue
+
+            # Skip numeric cue indexes
+            if line.isdigit():
+                continue
+
+            # Skip typical subtitle timecode lines
+            # e.g. 00:00:01,000 --> 00:00:03,000 or 00:00:01.000 --> 00:00:03.000
+            if "-->" in line:
+                continue
+
+            # Skip NOTE, STYLE, REGION blocks headers
+            if (
+                line.startswith("NOTE")
+                or line.startswith("STYLE")
+                or line.startswith("REGION")
+            ):
+                continue
+
+            cleaned_lines.append(line)
+
+        # Join consecutive non-empty lines into paragraphs
+        paragraphs = []
+        buffer = []
+        for l in cleaned_lines:
+            if l == "":
+                if buffer:
+                    paragraphs.append(" ".join(buffer))
+                    buffer = []
+            else:
+                buffer.append(l)
+        if buffer:
+            paragraphs.append(" ".join(buffer))
+
+        text = " ".join(paragraphs)
+
+        # Insert sentence breaks aware of German abbreviations
+        text = self._split_sentences_german(text)
+
+        # Collapse multiple blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        return text
+
+    def _split_sentences_german(self, text: str) -> str:
+        """
+        Insert line breaks after sentence-ending punctuation, but avoid splitting
+        at common German abbreviations (e.g., 'z. B.', 'u. a.', 'Dr.').
+        """
+        import re
+
+        # common German abbreviations (case-insensitive)
+        abbrev_list = [
+            r"z\.\s?B\.",
+            r"bzw\.",
+            r"u\.a\.",
+            r"d\.h\.",
+            r"vgl\.",
+            r"z\.\s?T\.",
+            r"u\.U\.",
+            r"Hr\.",
+            r"Dr\.",
+            r"Prof\.",
+            r"St\.",
+            r"S\.",
+            r"usw\.",
+            r"ca\.",
+            r"b\.|bspw\.",
+        ]
+        abbrev_regexes = [re.compile(r + r"$", re.IGNORECASE) for r in abbrev_list]
+
+        # Use a callback to decide per match if we should split
+        def repl(m):
+            punct = m.group(1)
+            # look back up to 40 chars to check for abbreviation
+            start = max(0, m.start() - 40)
+            prev = text[start : m.start() + 1]
+            for rx in abbrev_regexes:
+                if rx.search(prev):
+                    # keep original spacing
+                    return m.group(0)
+            return punct + "\n"
+
+        return re.sub(r"([\.\!\?])(\s+)", repl, text)
+
+    def _format_plain_text(self, raw_text: str) -> str:
+        """
+        Basic formatting for plain .txt files: normalize line endings, join
+        short lines into paragraphs, then insert sentence breaks using German rules.
+        """
+        import re
+
+        # Normalize line endings
+        lines = [ln.strip() for ln in raw_text.replace("\r\n", "\n").split("\n")]
+
+        # Join consecutive non-empty lines into paragraphs
+        paragraphs = []
+        buffer = []
+        for l in lines:
+            if l == "":
+                if buffer:
+                    paragraphs.append(" ".join(buffer))
+                    buffer = []
+            else:
+                buffer.append(l)
+        if buffer:
+            paragraphs.append(" ".join(buffer))
+
+        text = "\n\n".join(paragraphs)
+
+        # Insert sentence breaks aware of German abbreviations
+        text = self._split_sentences_german(text)
+
+        # Collapse multiple blank lines
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        return text
 
     def get_uploaded_files(self, safe_name, file_type="transcription"):
         """

@@ -171,16 +171,18 @@ gradio-app {
     /* Force dark text in labels */
 }
 
+textarea {
+    line-height: 1.6 !important;
+}
+
 /* Summary editor styling */
 .summary-editor textarea {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
-    line-height: 1.6 !important;
 }
 
 /* Raw output editor styling */
 .raw-output-editor textarea {
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important;
-    line-height: 1.4 !important;
     background-color: #f8f9fa !important;
     color: #212529 !important;
     /* Force dark text for readability */
@@ -188,6 +190,7 @@ gradio-app {
 
 /* HTML preview styling */
 .html-preview.block {
+    color: #2c3e50 !important;
     border: 1px solid #e0e0e0 !important;
     border-radius: 8px !important;
     padding: 20px !important;
@@ -199,7 +202,10 @@ gradio-app {
 
 .html-preview h1,
 .html-preview h2,
-.html-preview h3 {
+.html-preview h3,
+.html-preview h4,
+.html-preview h5,
+.html-preview h6 {
     color: #2c3e50 !important;
     margin-top: 1.5em !important;
     margin-bottom: 0.5em !important;
@@ -213,6 +219,7 @@ gradio-app {
 
 .html-preview ul,
 .html-preview ol {
+    color: #2c3e50 !important;
     margin-bottom: 1em !important;
     padding-left: 2em !important;
 }
@@ -226,6 +233,7 @@ gradio-app {
 }
 
 .html-preview code {
+    color: #2c3e50 !important;
     background-color: #f4f4f4 !important;
     padding: 2px 4px !important;
     border-radius: 3px !important;
@@ -233,11 +241,16 @@ gradio-app {
 }
 
 .html-preview pre {
+    color: #2c3e50 !important;
     background-color: #f8f9fa !important;
     border: 1px solid #e0e0e0 !important;
     border-radius: 5px !important;
     padding: 1em !important;
     overflow-x: auto !important;
+}
+
+.html-preview .prose * {
+    color: #2c3e50 !important;
 }
 
 /* Prompt configuration accordion */

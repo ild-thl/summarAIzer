@@ -5,6 +5,7 @@ GDPR Compliance Checker using Microsoft Presidio - Detects potentially sensitive
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_anonymizer import AnonymizerEngine
 from typing import Dict, List, Any
+import html
 from dataclasses import dataclass
 from enum import Enum
 from presidio_analyzer.nlp_engine import SpacyNlpEngine
@@ -30,7 +31,7 @@ def load_spacy_models():
 
     # German model
     model = None
-    model_name = os.getenv("SPACY_DE_MODEL", "de_core_news_lg")
+    model_name = os.getenv("SPACY_DE_MODEL", "de_core_news_sm")
     try:
         model = spacy.load(model_name)
         print(f"Loaded German model: {model_name}")
@@ -42,8 +43,8 @@ def load_spacy_models():
     return {"de": model}
 
 
-# Load both models
-nlp_models = load_spacy_models()
+# Note: do not load models at import time to avoid blocking startup during builds.
+nlp_models = None
 
 
 class SensitivityLevel(Enum):
@@ -79,11 +80,22 @@ class GDPRChecker:
         self.language = language
 
         try:
-            # Try different approaches for NLP engine setup
-            # Option 1: Use our custom loaded engine with both models
-            loaded_nlp_engine = LoadedSpacyNlpEngine(loaded_spacy_models=nlp_models)
-            self.analyzer = AnalyzerEngine(nlp_engine=loaded_nlp_engine)
-            print(f"Using custom NLP engine with models: {list(nlp_models.keys())}")
+            # Try to lazily load spaCy models if not already loaded
+            global nlp_models
+            if nlp_models is None:
+                try:
+                    nlp_models = load_spacy_models()
+                except Exception as e_load:
+                    print(f"Warning: failed to load spaCy models at init: {e_load}")
+                    nlp_models = None
+
+            # Option 1: Use our custom loaded engine with both models (if available)
+            if nlp_models:
+                loaded_nlp_engine = LoadedSpacyNlpEngine(loaded_spacy_models=nlp_models)
+                self.analyzer = AnalyzerEngine(nlp_engine=loaded_nlp_engine)
+                print(f"Using custom NLP engine with models: {list(nlp_models.keys())}")
+            else:
+                raise RuntimeError("spaCy models not available; falling back")
         except Exception as e:
             print(f"Failed to use custom NLP engine: {e}")
             try:
@@ -280,10 +292,14 @@ class GDPRChecker:
 
         for match in sorted_matches:
             color = colors[match.sensitivity]
+            # Make the highlighted spans clickable by adding a class and
+            # data-entity attribute. Use html.escape to ensure attribute
+            # safety for entities containing quotes or special chars.
+            entity_attr = html.escape(match.text)
             replacement = (
-                f'<span class="gdpr-highlight" style="background-color: {color}; padding: 2px; border-radius: 3px; '
-                f'font-weight: bold;" title="{match.description}">'
-                f"{match.text}</span>"
+                f'<span class="gdpr-highlight gdpr-entity-link" data-entity="{entity_attr}" role="button" tabindex="0" '
+                f'style="background-color: {color}; padding: 2px; border-radius: 3px; font-weight: bold;" '
+                f'title="{html.escape(match.description)}">{html.escape(match.text)}</span>'
             )
 
             highlighted_text = (

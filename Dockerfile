@@ -10,22 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     GRADIO_SERVER_NAME=0.0.0.0 \
     GRADIO_SERVER_PORT=7860
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    software-properties-common \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy German model for GDPR checker
-RUN python -m spacy download de_core_news_lg
+# Note: defer spaCy model download to container start to speed up image builds
 
 # Copy application code
 COPY . .
@@ -39,9 +30,15 @@ RUN mkdir -p /app/resources && \
     chmod 755 /app/resources
 
 # Create a non-root user for security
-RUN useradd --create-home --shell /bin/bash app && \
-    chown -R app:app /app
-USER app
+# Create non-root user but do not switch; compose may run container as host UID
+RUN useradd --create-home --shell /bin/bash app || true
+RUN chown -R app:app /app || true
+
+# Copy entrypoint script
+COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # Expose port
 EXPOSE 7860

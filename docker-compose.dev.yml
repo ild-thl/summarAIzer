@@ -1,0 +1,48 @@
+version: "3.8"
+services:
+    moomootscribe-dev:
+        build:
+            context: .
+            dockerfile: Dockerfile.dev
+        container_name: moomootscribe-dev
+        user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+        ports:
+            - "7860:7860"
+        environment:
+            GRADIO_SERVER_NAME: 0.0.0.0
+            GRADIO_SERVER_PORT: 7860
+            PYTHONUNBUFFERED: "1"
+            HOST_UID: ${HOST_UID:-1000}
+            HOST_GID: ${HOST_GID:-1000}
+        volumes:
+            - ./:/app:rw
+            - ./static:/app/static:rw
+            - ./ui:/app/ui:rw
+            - ./core:/app/core:rw
+            - /app/.venv
+            - ./resources:/app/resources:rw
+            - ./prompts:/app/prompts:rw
+            - ./.env:/app/.env:ro
+        command:
+            [
+                "uvicorn",
+                "app:app",
+                "--host",
+                "0.0.0.0",
+                "--port",
+                "7860",
+                "--reload",
+            ]
+        stdin_open: true
+        tty: true
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+        networks:
+            - tls_proxy_network
+
+networks:
+    tls_proxy_network:
+        external: true

@@ -322,7 +322,16 @@ class GeneratorTab(BaseGeneratorTab):
                 )
 
                 if result["success"]:
-                    content = result["content"]
+                    # If result contains ```markdown``` blocks, extract content from inside
+                    if "```markdown" in result["content"]:
+                        # Extract content between ```markdown``` blocks
+                        markdown_blocks = re.findall(
+                            r"```markdown\s*(.*?)\s*```", result["content"], re.DOTALL
+                        )
+                        if markdown_blocks:
+                            content = "\n".join(markdown_blocks)
+                        else:
+                            content = result["content"]
                     html_content = self._render_markdown(content)
                     return (
                         "✅ Inhalt erfolgreich generiert",

@@ -1,11 +1,9 @@
-version: "3.8"
-
 services:
     moomootscribe:
         image: pascalhuerten/moomootscribe:latest
         container_name: moomootscribe
         build: .
-        user: "1000:1000" # Ensure proper user mapping for file permissions
+        user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Ensure proper user mapping for file permissions
         ports:
             - "7860:7860"
         volumes:
@@ -14,6 +12,9 @@ services:
             - ./prompts:/app/prompts
             # Optional: Mount .env file for environment variables
             - ./.env:/app/.env:ro
+        environment:
+            HOST_UID: ${HOST_UID:-1000}
+            HOST_GID: ${HOST_GID:-1000}
         restart: unless-stopped
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:7860/"]
