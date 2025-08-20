@@ -135,3 +135,49 @@ class OpenAIClient:
             error_msg += "- Die Internetverbindung funktioniert"
 
             return {"success": False, "error": error_msg}
+
+    def transcribe_audio(
+        self,
+        file_path: str,
+        response_format: str = "text",
+        language: Optional[str] = None,
+        model: str = "whisper-1",
+    ) -> Dict[str, Any]:
+        """Transcribe an audio file via OpenAI API.
+
+        Returns: { success: bool, text: str } or { success: False, error: str }
+        """
+        if not self.is_configured():
+            return {
+                "success": False,
+                "error": "❌ OpenAI API-Key nicht konfiguriert. Bitte setzen Sie den API-Key.",
+            }
+
+        try:
+            # The OpenAI python client supports audio transcriptions via
+            # client.audio.transcriptions.create
+            with open(file_path, "rb") as f:
+                params: Dict[str, Any] = {
+                    "model": model,
+                    "file": f,
+                    "response_format": response_format or "text",
+                }
+                if language:
+                    params["language"] = language
+
+                # Some servers expose the same under /v1/audio/transcriptions
+                # The SDK should target the configured base_url.
+                resp = self.client.audio.transcriptions.create(**params)
+
+            # Normalize response depending on format
+            # For response_format="text" the SDK typically returns an object with .text
+            text = getattr(resp, "text", None)
+            if text is None:
+                # Fallback: serialize to string
+                try:
+                    text = str(resp)
+                except Exception:
+                    text = ""
+            return {"success": True, "text": text}
+        except Exception as e:
+            return {"success": False, "error": f"Fehler bei der Transkription: {e}"}

@@ -5,12 +5,18 @@ Upload audio files to generate transcriptions or upload existing transcripts and
 
 import gradio as gr
 from pathlib import Path
+import subprocess
+import tempfile
+import os
 from ui.shared_ui import (
     create_current_talk_display,
     create_component_header,
     create_text_editor,
 )
 from core.gdpr_checker import GDPRChecker, SensitivityLevel
+from core.app_state import AppState
+from core.openai_client import OpenAIClient
+from core.transcription_service import TranscriptionService
 
 
 class TranscriptionTab:
@@ -26,6 +32,14 @@ class TranscriptionTab:
 
         # Initialize GDPR checker
         self.gdpr_checker = GDPRChecker()
+        # Initialize transcription service
+        try:
+            self.openai_client = OpenAIClient()
+        except Exception:
+            self.openai_client = None
+        self.transcription_service = (
+            TranscriptionService(self.openai_client) if self.openai_client else None
+        )
 
     def _format_color_legend(self):
         """Format color legend as HTML"""
@@ -76,6 +90,25 @@ class TranscriptionTab:
             "📝 Transcription", "Transcribe audio files for the selected talk"
         )
 
+        # Inline help: usage and internals
+
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                #### Wie benutze ich diesen Tab?
+                1) Laden Sie eine Audiodatei hoch oder wählen Sie eine vorhandene aus.
+                2) Klicken Sie auf "Audio transkribieren" oder laden Sie eine vorhandene Text-Transkription (.txt/.md).
+                3) Bearbeiten Sie das Transkript im Editor und speichern Sie es im aktuellen Talk.
+                4) Optional: Führen Sie die GDPR-Prüfung aus, um sensible Daten zu erkennen/zu anonymisieren.
+
+                #### Was passiert unter der Haube?
+                - Audio wird bei Bedarf per ffmpeg in FLAC konvertiert und anschließend mit OpenAI Whisper (Modell: "whisper-1") transkribiert. Das Modell wird von [KISSKI Voice-AI](https://kisski.gwdg.de/en/leistungen/6-09-voice-ai/) bereitgestellt. Konfiguration erfolgt über die Umgebungsvariablen in `.env` via `OpenAIClient` (Base-URL/API-Key).
+                - Transkripte werden im Ordner des aktuellen Talks (`resources/talks/<safe_name>/transcription/`) abgelegt und später von den Generator-Tabs verwendet.
+                - Die Datenschutzprüfung verwendet Microsoft Presidio mit einem lokal geladenen deutschen spaCy-Modell (`de_core_news_lg`). Die Verarbeitung erfolgt vollständig selbst-gehostet – keine Cloud-Übertragung der Texte durch den GDPR-Checker.
+                - Gefundene Entitäten werden farbig markiert (kritisch/hoch/mittel/niedrig) und können nach Bedarf anonymisiert oder korrigiert werden.
+                """
+            )
+
         # Create the current talk display component
         current_talk_display = create_current_talk_display(
             self.app_state, self.talk_manager
@@ -84,17 +117,26 @@ class TranscriptionTab:
         # File upload section
         with gr.Row():
             with gr.Column(scale=1):
-                gr.Markdown("#### 🎵 Audio-Datei (noch nicht verfügbar)")
+                gr.Markdown("#### 🎵 Audio-Datei")
                 audio_file_upload = gr.File(
                     label="Audio-Datei hochladen (.mp3, .wav, .m4a, .ogg, .flac)",
-                    interactive=False,
+                    interactive=True,
+                    file_count="single",
                 )
 
-                transcribe_audio_btn = gr.Button(
-                    "🎯 Audio transkribieren",
-                    variant="secondary",
-                    interactive=False,  # Disabled for now
-                )
+                # # Minimal API controls on top of the audio section
+                # with gr.Row():
+                #     api_resp_format = gr.Dropdown(
+                #         label="Antwortformat",
+                #         choices=["text", "srt", "vtt"],
+                #         value="text",
+                #         interactive=False,
+                #     )
+                #     api_language = gr.Textbox(
+                #         label="Sprache (optional, z. B. de, en)",
+                #         value="de",
+                #         interactive=True,
+                #     )
 
                 # Audio files display
                 gr.Markdown("##### 🎵 Hochgeladene Audio-Dateien")
@@ -111,6 +153,37 @@ class TranscriptionTab:
                     size="sm",
                     visible=False,
                 )
+
+                transcribe_audio_btn = gr.Button(
+                    "🎯 Audio transkribieren",
+                    variant="primary",
+                    interactive=True,
+                )
+
+                # Tutorial: Use AcademicCloud Voice-AI to create a transcription
+                with gr.Accordion(
+                    "🎓 Anleitung: Transkription mit AcademicCloud Voice‑AI", open=False
+                ):
+                    gr.Markdown(
+                        (
+                            """
+                            Nutzen Sie als Alternative zur Audio-Verarbeitung hier den Dienst der AcademicCloud, um eine Transkription zu erzeugen:
+
+                            1. Öffnen Sie die Website: <a href="https://voice-ai.academiccloud.de" target="_blank">https://voice-ai.academiccloud.de</a>
+                            2. Melden Sie sich mit Ihrer Hochschulkennung/Academic ID an.
+                            3. Erstellen Sie eine neue Transkription und laden Sie Ihre Audio- oder Videodatei (z. B. MP3/MP4) hoch.
+                            4. Wählen Sie die Sprache des Vortrags (z. B. Deutsch).
+                            5. Starten Sie die Transkription und warten Sie, bis sie abgeschlossen ist.
+                            6. Exportieren bzw. laden Sie das Ergebnis als <strong>.txt</strong> herunter.
+                            7. Kehren Sie hierher zurück und laden Sie die <strong>.txt</strong> unter <em>„Transkriptions-Datei hochladen“</em> (rechte Spalte) hoch.
+
+                            <div class="alert alert-warning">
+                            <strong>Wichtiger DSGVO‑Hinweis:</strong> Laden Sie <em>keine</em> Audioinhalte hoch, die besonders schützenswerte oder personenbezogene Daten enthalten. Prüfen Sie die erzeugte Transkription vor dem Upload und nutzen Sie bei Bedarf die GDPR‑Prüfung unten, um sensible Inhalte zu erkennen und zu pseudonymisieren.
+                            </div>
+                            """
+                        ),
+                        elem_id="voice_ai_tutorial",
+                    )
 
             with gr.Column(scale=1):
                 gr.Markdown("#### 📝 Transkriptions-Datei")
@@ -402,6 +475,186 @@ class TranscriptionTab:
                 return (
                     f"❌ Fehler beim Hochladen der Audio-Datei: {str(e)}",
                     *refresh_file_displays(state),
+                )
+
+        def _ffmpeg_convert_to_flac(src_path: str) -> tuple[bool, str, str]:
+            """Convert given audio to FLAC using ffmpeg. Returns (ok, out_path, msg)."""
+            try:
+                if not os.path.isfile(src_path):
+                    return False, src_path, "Quelldatei nicht gefunden"
+                base = Path(src_path).stem
+                out_dir = Path(tempfile.mkdtemp(prefix="mm_flac_"))
+                out_path = out_dir / f"{base}.flac"
+                # -y overwrite, -i input, map audio only, encode flac
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    src_path,
+                    "-map",
+                    "a",
+                    "-c:a",
+                    "flac",
+                    str(out_path),
+                ]
+                proc = subprocess.run(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                if proc.returncode == 0 and out_path.exists():
+                    return True, str(out_path), "Konvertierung erfolgreich"
+                return False, src_path, f"ffmpeg fehlgeschlagen ({proc.returncode})"
+            except FileNotFoundError:
+                return (
+                    False,
+                    src_path,
+                    "ffmpeg nicht gefunden (bitte installieren und in PATH aufnehmen)",
+                )
+            except Exception as ex:
+                return False, src_path, f"Fehler bei der Konvertierung: {ex}"
+
+        def transcribe_via_api(
+            api_file,
+            state,
+            auto_check_gdpr_value,
+            resp_format="text",
+            language="de",
+        ):
+            """Use TranscriptionService (OpenAI SDK) to create a transcript and import it."""
+
+            def _empty_gdpr_outputs():
+                return (
+                    "<p><i>Automatische GDPR-Analyse deaktiviert oder fehlgeschlagen.</i></p>",
+                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                    "<p><i>Kein Text analysiert.</i></p>",
+                    gr.update(choices=[], visible=False),
+                    gr.update(value="", visible=False),
+                    gr.update(visible=False),
+                    "",
+                    gr.update(visible=False),
+                )
+
+            if not state or not state.get("current_talk"):
+                return (
+                    state,
+                    "❌ Kein Talk ausgewählt.",
+                    *refresh_file_displays(state),
+                    *_empty_gdpr_outputs(),
+                )
+
+            current_talk = state.get("current_talk")
+            if not api_file:
+                return (
+                    state,
+                    "❌ Bitte wählen Sie eine Audio-Datei für die API aus.",
+                    *refresh_file_displays(state),
+                    *_empty_gdpr_outputs(),
+                )
+
+            try:
+                src_path = getattr(api_file, "name", str(api_file))
+                # If a filename (from radio) was passed, try to resolve it within the current talk's audio folder
+                if isinstance(src_path, str):
+                    is_existing = os.path.isfile(src_path)
+                    if not is_existing and state and state.get("current_talk"):
+                        try:
+                            audio_candidate = (
+                                self.talk_manager.talks_path
+                                / state.get("current_talk")
+                                / "audio"
+                                / src_path
+                            )
+                            if audio_candidate.exists():
+                                src_path = str(audio_candidate)
+                        except Exception:
+                            pass
+                if not self.transcription_service:
+                    return (
+                        state,
+                        "❌ OpenAI Client/TranscriptionService nicht verfügbar.",
+                        *refresh_file_displays(state),
+                        *_empty_gdpr_outputs(),
+                    )
+
+                # Use service to get text
+                svc_res = self.transcription_service.transcribe(
+                    src_path, response_format=resp_format or "text", language=language
+                )
+                if not svc_res.get("success"):
+                    return (
+                        state,
+                        f"❌ {svc_res.get('error')}",
+                        *refresh_file_displays(state),
+                        *_empty_gdpr_outputs(),
+                    )
+
+                text = svc_res.get("text", "")
+                conv_msg = svc_res.get("conv_msg", "")
+                # Save response to a temp file
+                ext_map = {"text": ".txt", "srt": ".srt", "vtt": ".vtt"}
+                ext = ext_map.get((resp_format or "text").lower(), ".txt")
+                tmp_dir = Path(tempfile.mkdtemp(prefix="mm_transcript_"))
+                base_name = Path(src_path).stem
+                out_file = tmp_dir / (base_name + ext)
+                out_file.write_text(text, encoding="utf-8")
+
+                # Import into talk folder using talk_manager
+                add_res = self.talk_manager.add_transcription_file(
+                    current_talk, str(out_file)
+                )
+                uploaded_name = None
+                if add_res.get("success") and add_res.get("file_path"):
+                    try:
+                        uploaded_name = Path(add_res["file_path"]).name
+                    except Exception:
+                        uploaded_name = None
+
+                displays = refresh_file_displays(
+                    state, selected_transcription=uploaded_name
+                )
+
+                # GDPR analysis optional
+                if auto_check_gdpr_value:
+                    content_result = (
+                        self.talk_manager.get_transcription_content(
+                            current_talk, uploaded_name
+                        )
+                        if uploaded_name
+                        else {"success": False}
+                    )
+                    if content_result.get("success"):
+                        analysis = analyze_gdpr_compliance(content_result["content"])
+                        analysis_tuple = tuple(analysis)
+                    else:
+                        analysis_tuple = (
+                            "<p><i>Automatische GDPR-Analyse deaktiviert oder fehlgeschlagen.</i></p>",
+                            "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
+                            "<p><i>Kein Text analysiert.</i></p>",
+                            gr.update(choices=[], visible=False),
+                            gr.update(value="", visible=False),
+                            gr.update(visible=False),
+                            "",
+                            gr.update(visible=False),
+                        )
+                else:
+                    analysis_tuple = _empty_gdpr_outputs()
+
+                status_msg = f"✅ Transkription erfolgreich importiert: {uploaded_name}"
+                if conv_msg:
+                    status_msg += f"\nℹ️ {conv_msg}"
+
+                return (
+                    state,
+                    status_msg,
+                    *displays,
+                    *analysis_tuple,
+                )
+
+            except Exception as e:
+                return (
+                    state,
+                    f"❌ Fehler bei der API-Transkription: {e}",
+                    *refresh_file_displays(state),
+                    *_empty_gdpr_outputs(),
                 )
 
         def delete_file(state, filename, file_type="transcription"):
@@ -865,6 +1118,32 @@ class TranscriptionTab:
             inputs=[transcription_file_upload, self.app_state, auto_check_gdpr],
             outputs=[
                 self.app_state,  # updated state to trigger refresh in other tabs
+                file_upload_status,
+                audio_files_selection,
+                delete_audio_btn,
+                transcription_files_selection,
+                delete_transcription_btn,
+                gdpr_recommendations,
+                color_legend,
+                highlighted_text,
+                gdpr_entity_selector,
+                gdpr_replacement_input,
+                apply_replacements_btn,
+                replacement_status,
+                gdpr_help,
+            ],
+        )
+
+        # API transcription trigger on the audio section (use selected audio from list)
+        transcribe_audio_btn.click(
+            transcribe_via_api,
+            inputs=[
+                audio_files_selection,
+                self.app_state,
+                auto_check_gdpr,
+            ],
+            outputs=[
+                self.app_state,  # updated state (unchanged reference but triggers listeners)
                 file_upload_status,
                 audio_files_selection,
                 delete_audio_btn,

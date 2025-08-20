@@ -56,9 +56,19 @@ class BaseGeneratorTab:
         """Create file selection components"""
         gr.Markdown("### 📝 Eingabedateien auswählen")
 
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                Wählen Sie Transkriptionen und/oder bereits generierte Inhalte, die als Kontext für die Modellantwort dienen.
+                - Unterstützte Formate: .md, .txt
+                - Dateien stammen aus dem aktuellen Talkordner und werden für den Prompt zusammengeführt.
+                - Die Auswahl beeinflusst direkt, welche Inhalte das Sprachmodell sieht.
+                """
+            )
+
         # File selection (checkboxes) - supports both transcriptions and generated content
         input_files_selection = gr.CheckboxGroup(
-            label="Eingabedateien auswählen (Transkriptionen und generierte Inhalte)",
+            label="Eingabedateien auswählen (nur .md und .txt)",
             choices=[],
             value=[],
             visible=False,
@@ -77,6 +87,19 @@ class BaseGeneratorTab:
     ):
         """Create prompt configuration components"""
         gr.Markdown(section_title)
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                Parameter-Erklärung:
+                - System Message: Setzt Rolle/Rahmen (z. B. Tonalität, Persona, Regeln).
+                - User Prompt Template: Ihre Aufgabe/Anweisung; Platzhalter wie {transcriptions} und {talk_metadata} werden mit den gewählten Inhalten ersetzt.
+                - Temperatur: 0.0–1.0. Höher = kreativer/variabler, niedriger = präziser/konservativer.
+                - Max Tokens: Obergrenze der Antwortlänge (beeinflusst Kosten/Geschwindigkeit).
+                - Modell: Name des Chat-Modells. Die Liste kommt aus dem konfigurierten OpenAI-API kompatiblen Endpunkt von [KISSKI CHAT-AI](https://docs.hpc.gwdg.de/services/chat-ai/models/index.html).
+
+                Intern wird daraus ein Nachrichtenverlauf (System+User) gebaut und über `OpenAIClient` an die Chat API gesendet.
+                """
+            )
 
         # Prompt configuration section
         with gr.Accordion(
@@ -181,6 +204,15 @@ class BaseGeneratorTab:
         generated_files = self.talk_manager.get_uploaded_files(
             current_talk, "generated_content"
         )
+
+        # Filter to only include .md and .txt files
+        allowed_exts = (".md", ".txt")
+        transcription_files = [
+            f for f in transcription_files if f.lower().endswith(allowed_exts)
+        ]
+        generated_files = [
+            f for f in generated_files if f.lower().endswith(allowed_exts)
+        ]
 
         # Combine and label files
         all_files = []

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
+from .public_publisher import PublicPublisher
 
 
 class ResourceBrowser:
@@ -15,6 +16,7 @@ class ResourceBrowser:
 
     def __init__(self, base_resources_path: str = "resources"):
         self.base_resources = Path(base_resources_path)
+        self.publisher = PublicPublisher(base_resources_path)
 
     def get_browse_base_url(self) -> str:
         """Return the correct base URL for the browser, proxy-aware."""
@@ -179,204 +181,36 @@ class ResourceBrowser:
             back_link = f"{browse_base_url}{parent_path}"
 
             # Wrap in a nice HTML template with Mermaid support
+            static_base = os.getenv("PROXY_PATH", "").rstrip("/")
             full_html = f"""
             <!DOCTYPE html>
             <html lang="de">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="robots" content="noindex,nofollow">
                 <title>{safe_path.name} - MooMoot Scribe</title>
-                <style>
-                    body {{
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                        line-height: 1.6;
-                        max-width: 900px;
-                        margin: 40px auto;
-                        padding: 20px;
-                        color: #333;
-                    }}
-                    pre {{
-                        background: #f5f5f5;
-                        padding: 15px;
-                        border-radius: 5px;
-                        overflow-x: auto;
-                    }}
-                    code {{
-                        background: #f0f0f0;
-                        padding: 2px 4px;
-                        border-radius: 3px;
-                    }}
-                    table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin: 20px 0;
-                    }}
-                    th, td {{
-                        border: 1px solid #ddd;
-                        padding: 8px 12px;
-                        text-align: left;
-                    }}
-                    th {{
-                        background: #f5f5f5;
-                    }}
-                    .header {{
-                        border-bottom: 2px solid #eee;
-                        margin-bottom: 30px;
-                        padding-bottom: 20px;
-                    }}
-                    .breadcrumb {{
-                        font-size: 14px;
-                        color: #666;
-                        margin-bottom: 10px;
-                    }}
-                    .breadcrumb a {{
-                        color: #0066cc;
-                        text-decoration: none;
-                    }}
-                    .breadcrumb a:hover {{
-                        text-decoration: underline;
-                    }}
-                    .mermaid {{
-                        text-align: center;
-                        margin: 20px 0;
-                        background: #fafafa;
-                        border: 1px solid #eee;
-                        border-radius: 5px;
-                        padding: 20px;
-                        min-height: 50px;
-                        overflow: auto;
-                    }}
-                    .mermaid svg {{
-                        max-width: 100% !important;
-                        height: auto !important;
-                    }}
-                    .mermaid-error {{
-                        text-align: center;
-                        margin: 20px 0;
-                        background: #ffe6e6;
-                        border: 1px solid #ffcccc;
-                        border-radius: 5px;
-                        padding: 20px;
-                        color: #cc0000;
-                    }}
-                    .back-button {{
-                        display: inline-block;
-                        margin-top: 30px;
-                        padding: 10px 20px;
-                        background: #0066cc;
-                        color: white;
-                        text-decoration: none;
-                        border-radius: 5px;
-                        font-size: 14px;
-                    }}
-                    .back-button:hover {{
-                        background: #0052a3;
-                    }}
-                </style>
-                <script type="module">
-                    // Robust mermaid loading with proper handling
-                    let mermaid;
-                    
-                    // Fallback to CDN
-                    const mermaidModule = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
-                    mermaid = mermaidModule.default || mermaidModule;
-                    
-                    // Ensure mermaid is properly initialized
-                    if (mermaid && typeof mermaid.initialize === 'function') {{
-                        // Configure mermaid
-                        mermaid.initialize({{ 
-                            startOnLoad: false,
-                            theme: 'default',
-                            themeVariables: {{
-                                fontFamily: 'Arial, sans-serif'
-                            }},
-                            mindmap: {{
-                                maxNodeSizeX: 200,
-                                maxNodeSizeY: 100
-                            }},
-                            flowchart: {{
-                                useMaxWidth: true,
-                                htmlLabels: true
-                            }}
-                        }});
-                        console.log('Mermaid initialized successfully in resource browser');
-                    }} else {{
-                        console.error('Mermaid initialize function not found in resource browser');
-                    }}
-                    
-                    // Function to render mermaid diagrams
-                    async function renderMermaidDiagrams() {{
-                        if (!mermaid || typeof mermaid.render !== 'function') {{
-                            console.warn('Mermaid not available for rendering in resource browser');
-                            return;
-                        }}
-                        
-                        const mermaidElements = document.querySelectorAll('.mermaid:not([data-processed])');
-                        console.log(`Found ${{mermaidElements.length}} mermaid elements to process in resource browser`);
-                        
-                        for (const element of mermaidElements) {{
-                            try {{
-                                const graphDefinition = element.textContent || element.innerText;
-                                if (graphDefinition.trim()) {{
-                                    console.log('Processing mermaid diagram:', graphDefinition.substring(0, 50) + '...');
-                                    
-                                    // Clear the element
-                                    element.innerHTML = '';
-                                    
-                                    // Generate unique ID
-                                    const id = 'mermaid-' + Math.random().toString(36).substr(2, 9);
-                                    element.id = id;
-                                    
-                                    // Render the diagram
-                                    const {{ svg }} = await mermaid.render(id + '-svg', graphDefinition);
-                                    element.innerHTML = svg;
-                                    
-                                    // Mark as processed
-                                    element.setAttribute('data-processed', 'true');
-                                    
-                                    // Ensure SVG is properly sized
-                                    const svgElement = element.querySelector('svg');
-                                    if (svgElement) {{
-                                        svgElement.style.maxWidth = '100%';
-                                        svgElement.style.height = 'auto';
-                                    }}
-                                    
-                                    console.log('Successfully rendered mermaid diagram');
-                                }}
-                            }} catch (error) {{
-                                console.error('Error rendering mermaid diagram:', error);
-                                element.innerHTML = '<div style="color: red; border: 1px solid red; padding: 10px; border-radius: 5px; background: #ffe6e6;"><strong>Mermaid Error:</strong> ' + error.message + '</div>';
-                                element.setAttribute('data-processed', 'true');
-                            }}
-                        }}
-                    }}
-                    
-                    // Initial render when page loads
-                    document.addEventListener('DOMContentLoaded', function() {{
-                        console.log('DOM loaded, rendering mermaid diagrams in resource browser...');
-                        renderMermaidDiagrams();
-                    }});
-                    
-                    // Also run after a short delay to catch any dynamically added content
-                    setTimeout(function() {{
-                        console.log('Running delayed mermaid render in resource browser...');
-                        renderMermaidDiagrams();
-                    }}, 1000);
-                </script>
+                <script src="{static_base}/static/js/diagram_renderer.js"></script>
+                <script src="{static_base}/static/js/browser.js"></script>
+                <link rel="stylesheet" href="{static_base}/static/css/style.css" />
             </head>
             <body>
-                <div class="header">
-                    <div class="breadcrumb">
-                        {breadcrumb}
+                <div class="main">
+                    <div class="container">
+                        <div class="header">
+                            <div class="breadcrumb">
+                                {breadcrumb}
+                            </div>
+                            <h1>📄 {safe_path.name}</h1>
+                        </div>
+                        {html_content}
+                        
+                        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
+                            <a href="{back_link}" class="back-button">
+                                ← Back to folder
+                            </a>
+                        </div>
                     </div>
-                    <h1>📄 {safe_path.name}</h1>
-                </div>
-                {html_content}
-                
-                <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                    <a href="{back_link}" class="back-button">
-                        ← Back to folder
-                    </a>
                 </div>
             </body>
             </html>
@@ -408,6 +242,22 @@ class ResourceBrowser:
 
             proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
+            # Determine context (are we in talks root or a specific talk?)
+            talks_root = (self.base_resources / "talks").resolve()
+            current_path_resolved = safe_path.resolve()
+            is_talks_root = current_path_resolved == talks_root
+            slug_for_banner = None
+            try:
+                rel_to_resources = current_path_resolved.relative_to(
+                    self.base_resources.resolve()
+                ).as_posix()
+            except Exception:
+                rel_to_resources = ""
+            if rel_to_resources.startswith("talks/"):
+                parts = rel_to_resources.split("/")
+                if len(parts) >= 2 and parts[1]:
+                    slug_for_banner = parts[1]
+
             # Get directory contents
             items = []
             for item in sorted(safe_path.iterdir()):
@@ -420,14 +270,26 @@ class ResourceBrowser:
 
                 if item.is_dir():
                     base = f"{proxy_path}" if proxy_path else ""
-                    items.append(
-                        {
-                            "name": item.name + "/",
-                            "type": "directory",
-                            "url": f"{base}/browse/{relative_path.as_posix()}",
-                            "size": "-",
-                        }
-                    )
+                    entry = {
+                        "name": item.name + "/",
+                        "type": "directory",
+                        "url": f"{base}/browse/{relative_path.as_posix()}",
+                        "size": "-",
+                    }
+                    # If we are at talks root, include a review URL for the talk slug
+                    if is_talks_root:
+                        entry["review_url"] = f"{base}/review/{item.name}"
+                        # enrich with feedback/publish status
+                        slug = item.name
+                        fb = self.publisher.get_feedback(slug)
+                        entry["has_feedback"] = bool(fb)
+                        entry["published"] = self.publisher.is_published(slug)
+                        entry["public_url"] = (
+                            self.publisher.public_talk_url(slug)
+                            if entry["published"]
+                            else ""
+                        )
+                    items.append(entry)
                 else:
                     # Determine file type and appropriate URL
                     file_type, url = self.determine_file_type(
@@ -452,16 +314,80 @@ class ResourceBrowser:
             for item in items:
                 icon = self.get_file_icon(item["type"])
 
+                actions_td = ""
+                if is_talks_root and item.get("type") == "directory":
+                    review_url = item.get("review_url", "")
+                    public_url = item.get("public_url", "")
+                    has_feedback = bool(item.get("has_feedback"))
+                    is_published = bool(item.get("published"))
+
+                    # Status under the name
+                    status_bits = []
+                    if is_published:
+                        status_bits.append("published")
+                    elif has_feedback:
+                        status_bits.append("publication denied")
+                    status_html = (
+                        f"<div class=\"muted\">{' | '.join(status_bits)}</div>"
+                        if status_bits
+                        else ""
+                    )
+
+                    # Actions per state
+                    if is_published and public_url:
+                        actions_td = (
+                            f'<td style="white-space:nowrap;">'
+                            f'<a href="{review_url}" target="_blank" style="margin-left:6px;">review form</a>'
+                            f'<button onclick="copyReviewLink(\'{review_url}\', this)" class="icon-btn copy-btn" title="Copy review link" aria-label="Copy review link">⧉</button>, '
+                            f'<a href="{public_url}" target="_blank" style="margin-left:6px;">public page</a>'
+                            f'<button onclick="copyReviewLink(\'{public_url}\', this)" class="icon-btn copy-btn" title="Copy public link" aria-label="Copy public link">⧉</button>'
+                            f"</td>"
+                        )
+                    elif (not has_feedback) and review_url:
+                        actions_td = (
+                            f'<td style="white-space:nowrap;">'
+                            f'<a href="{review_url}" target="_blank" style="margin-left:6px;">review form</a>'
+                            f'<button onclick="copyReviewLink(\'{review_url}\', this)" class="icon-btn copy-btn" title="Copy review link" aria-label="Copy review link">⧉</button>'
+                            f"</td>"
+                        )
+                    else:
+                        # Feedback exists but not published (or missing URLs)
+                        actions_td = (
+                            f'<td style="white-space:nowrap;">'
+                            f'<a href="{review_url}" target="_blank" style="margin-left:6px;">review form</a>'
+                            f'<button onclick="copyReviewLink(\'{review_url}\', this)" class="icon-btn copy-btn" title="Copy review link" aria-label="Copy review link">⧉</button>'
+                            f'<span class="muted" style="margin-left:8px;">Publication denied</span>'
+                            f"</td>"
+                        )
+                else:
+                    actions_td = ""
+
                 items_html += f"""
                 <tr>
                     <td>
                         <a href="{item['url']}" style="text-decoration: none;">
                             {icon} {item['name']}
                         </a>
+                        {status_html if (is_talks_root and item.get('type')=='directory') else ''}
                     </td>
                     <td>{item['type']}</td>
                     <td>{item['size']}</td>
+                    {actions_td}
                 </tr>
+                """
+
+            static_base = os.getenv("PROXY_PATH", "").rstrip("/")
+            # Optional banner when inside a talk folder to quickly copy its review link
+            banner_html = ""
+            if slug_for_banner:
+                base = f"{static_base}" if static_base else ""
+                review_url = f"{base}/review/{slug_for_banner}"
+                banner_html = f"""
+                <div style=\"background:#f0f7ff;border:1px solid #cfe3ff;padding:12px 16px;border-radius:8px;margin-bottom:16px;\">
+                    <strong>Review link for talk:</strong>
+                    <code id=\"review-url-display\" style=\"background:#e8f2ff;padding:2px 6px;border-radius:4px;\">{review_url}</code>
+                    <button onclick=\"copyReviewLink('{review_url}', this)\" class=\"icon-btn copy-btn\" title=\"Copy review link\" aria-label=\"Copy review link\">⧉</button>
+                </div>
                 """
 
             html_content = f"""
@@ -470,90 +396,49 @@ class ResourceBrowser:
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="robots" content="noindex,nofollow">
                 <title>Resources Browser - MooMoot Scribe</title>
-                <style>
-                    body {{
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                        line-height: 1.6;
-                        max-width: 1000px;
-                        margin: 40px auto;
-                        padding: 20px;
-                        color: #333;
-                    }}
-                    table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin: 20px 0;
-                    }}
-                    th, td {{
-                        border: 1px solid #ddd;
-                        padding: 12px;
-                        text-align: left;
-                    }}
-                    th {{
-                        background: #f5f5f5;
-                        font-weight: 600;
-                    }}
-                    tr:hover {{
-                        background: #f9f9f9;
-                    }}
-                    a {{
-                        color: #0066cc;
-                        text-decoration: none;
-                    }}
-                    a:hover {{
-                        text-decoration: underline;
-                    }}
-                    .header {{
-                        border-bottom: 2px solid #eee;
-                        margin-bottom: 30px;
-                        padding-bottom: 20px;
-                    }}
-                    .breadcrumb {{
-                        font-size: 14px;
-                        color: #666;
-                        margin-bottom: 10px;
-                    }}
-                    .breadcrumb a {{
-                        color: #0066cc;
-                        text-decoration: none;
-                    }}
-                    .breadcrumb a:hover {{
-                        text-decoration: underline;
-                    }}
-                </style>
+                <script src="{static_base}/static/js/diagram_renderer.js"></script>
+                <script src="{static_base}/static/js/browser.js"></script>
+                <link rel="stylesheet" href="{static_base}/static/css/style.css" />
             </head>
             <body>
-                <div class="header">
-                    <div class="breadcrumb">
-                        {breadcrumb}
+                <div class="main">
+                    <div class="container">
+                        <div class="header">
+                            <div class="breadcrumb">
+                                {breadcrumb}
+                            </div>
+                            <h1>📂 Resources Browser</h1>
+                            <p>Browse and access all resources including talks, transcriptions, and generated content.</p>
+                        </div>
+                        {banner_html}
+                        
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Size</th>
+                                    {('<th class="actions-col">Actions</th>' if is_talks_root else '')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {items_html}
+                            </tbody>
+                        </table>
+                        
+                        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">
+                            <p><strong>File Types:</strong></p>
+                            <ul>
+                                <li>📝 Markdown files will be rendered as HTML with Mermaid diagram support</li>
+                                <li>🖼️ Images can be viewed directly</li>
+                                <li>🎵 Audio files can be played</li>
+                                <li>📋 JSON files can be downloaded or viewed</li>
+                                <li>📄 Other files will be served as downloads</li>
+                            </ul>
+                        </div>
                     </div>
-                    <h1>📂 Resources Browser</h1>
-                    <p>Browse and access all resources including talks, transcriptions, and generated content.</p>
-                </div>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>Size</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items_html}
-                    </tbody>
-                </table>
-                
-                <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">
-                    <p><strong>File Types:</strong></p>
-                    <ul>
-                        <li>📝 Markdown files will be rendered as HTML with Mermaid diagram support</li>
-                        <li>🖼️ Images can be viewed directly</li>
-                        <li>🎵 Audio files can be played</li>
-                        <li>📋 JSON files can be downloaded or viewed</li>
-                        <li>📄 Other files will be served as downloads</li>
-                    </ul>
                 </div>
             </body>
             </html>

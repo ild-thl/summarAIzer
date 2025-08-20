@@ -5,6 +5,7 @@ Image Generator Tab - Two-step image generation: description -> images
 import gradio as gr
 import markdown
 import re
+import os
 import tempfile
 import time
 import shutil
@@ -112,6 +113,23 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
         # Create header and file selection using base class
         current_talk_display = self.create_header()
+
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                #### So erzeugen Sie Bilder
+                1) Wählen Sie zunächst Kontextdateien und generieren Sie eine Bildbeschreibung (Schritt 1).
+                2) Tragen Sie Ihren Auth-Cookie für den Bilddienst ein.
+                3) Legen Sie Größe, Anzahl und Modell fest und klicken Sie auf "Bilder generieren".
+                4) Wählen Sie ein Bild und speichern Sie es als Cover für den Talk.
+
+                #### Unter der Haube
+                - Schritt 1 nutzt den gleichen LLM-Workflow wie der Generator-Tab, um eine präzise Bildbeschreibung zu erzeugen.
+                - Schritt 2 ruft den Bilddienst von KISSKI auf (`<image-ai.academiccloud.de>`). Authentifizierung via Cookie `mod_auth_openidc_session`.
+                - Die erzeugten Bilder werden in `resources/talks/<safe_name>/generated_content/images/` gespeichert; das Cover unter `generated_content/cover.*`.
+                - Das gespeicherte Cover wird in `resources/talks/<safe_name>/cover.*` abgelegt.
+                """
+            )
         input_files_selection, selection_status = self.create_file_selection()
 
         # Create prompt configuration using base class for Step 1
@@ -142,6 +160,18 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
         gr.Markdown("### 🎨 Schritt 2: Bilder generieren")
 
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                Parameter:
+                - Breite/Höhe: Auflösung der generierten Bilder (Pixel).
+                - Anzahl Bilder: Wie viele Varianten erzeugt werden (1–10).
+                - Bildmodell: Verwendetes Modell des Bilddienstes (z. B. "flux").
+
+                Hinweis: Für den Zugriff ist ein gültiger Auth-Cookie erforderlich. Dieser bleibt nur in Ihrer Session und wird nicht gespeichert.
+                """
+            )
+
         # Bildgenerierungs-API Konfiguration
         with gr.Accordion("🔑 API-Konfiguration", open=True):
             gr.Markdown(
@@ -165,6 +195,23 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
         with gr.Row():
             with gr.Column(scale=1):
+
+                def _cover_img_html_from_path(p: Path) -> str:
+                    try:
+                        proxy = os.getenv("PROXY_PATH", "").rstrip("/")
+                        rel = p.relative_to(Path("resources")).as_posix()
+                        # Cache-bust with high precision mtime (ns when available)
+                        st = p.stat()
+                        v = getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))
+                        url = (
+                            f"{proxy}/resources/{rel}?v={v}"
+                            if proxy
+                            else f"/resources/{rel}?v={v}"
+                        )
+                        return f'<img src="{url}" alt="Cover" style="max-width:100%;height:auto;border:1px solid #ddd;border-radius:6px;" />'
+                    except Exception:
+                        return ""
+
                 image_width = gr.Number(
                     label="Breite (px)",
                     value=480,
@@ -222,6 +269,28 @@ class ImageGeneratorTab(BaseGeneratorTab):
                 visible=False,
             )
 
+            # State to track which images were saved (for mapping selection -> file path)
+            saved_images_state = gr.State(value=[])
+            selected_index_state = gr.State(value=None)
+
+            with gr.Row():
+                save_cover_btn = gr.Button(
+                    "Als Cover speichern",
+                    variant="secondary",
+                    interactive=False,
+                )
+                cover_status = gr.Textbox(
+                    label="Cover-Status",
+                    interactive=False,
+                    lines=1,
+                    value="",
+                )
+
+        # Current cover image preview + manual reload (use HTML to avoid Gradio temp file serving)
+        with gr.Row():
+            cover_image = gr.HTML(value="")
+            load_cover_btn = gr.Button("Gespeichertes Cover laden", variant="secondary")
+
         # Helper functions specific to ImageGeneratorTab
         def update_generate_button_status(description, cookie):
             """Update image generation button based on description and auth cookie"""
@@ -272,19 +341,12 @@ class ImageGeneratorTab(BaseGeneratorTab):
                     gr.Gallery(visible=False),
                 )
 
-            # Helper function to construct absolute URLs for Gallery
+            # Helper function to construct absolute URLs for Gallery and cover
             def get_absolute_url(relative_path: str) -> str:
                 """Convert relative path to absolute URL for Gallery"""
-                import os
-
-                # Get the base URL from environment or use default
                 base_url = os.getenv("GRADIO_BASE_URL", "http://127.0.0.1:7860")
-
-                # Ensure relative_path starts with /
                 if not relative_path.startswith("/"):
                     relative_path = "/" + relative_path
-
-                # Construct the full URL
                 return f"{base_url}{relative_path}"
 
             try:
@@ -362,9 +424,37 @@ class ImageGeneratorTab(BaseGeneratorTab):
                                         absolute_url = get_absolute_url(relative_url)
                                         gallery_images.append(absolute_url)
 
+                                # Load existing cover if any
+                                try:
+                                    cover_path = None
+                                    for ext in [
+                                        ".png",
+                                        ".jpg",
+                                        ".jpeg",
+                                        ".webp",
+                                        ".gif",
+                                    ]:
+                                        p = (
+                                            talk_folder_path
+                                            / "generated_content"
+                                            / f"cover{ext}"
+                                        )
+                                        if p.exists():
+                                            cover_path = p
+                                            break
+                                    cover_value = (
+                                        _cover_img_html_from_path(cover_path)
+                                        if cover_path
+                                        else None
+                                    )
+                                except Exception:
+                                    cover_value = None
+
                                 return (
                                     f"✅ {save_result['total_saved']} Bild(er) erfolgreich generiert und gespeichert in Talk '{current_talk}'",
                                     gr.Gallery(value=gallery_images, visible=True),
+                                    save_result["saved_images"],
+                                    cover_value,
                                 )
                             else:
                                 # Return error if saving to talk failed
@@ -393,13 +483,129 @@ class ImageGeneratorTab(BaseGeneratorTab):
                     return (
                         f"❌ Fehler bei der Bildgenerierung: {result['error']}",
                         gr.Gallery(visible=False),
+                        [],
+                        None,
                     )
 
             except Exception as e:
                 return (
                     f"❌ Fehler bei der Bildgenerierung: {str(e)}",
                     gr.Gallery(visible=False),
+                    [],
+                    None,
                 )
+
+        def on_gallery_select(evt: gr.SelectData):
+            # Enable save cover when a selection is made
+            if evt is None:
+                return None, gr.Button(interactive=False)
+            try:
+                idx = int(evt.index)
+            except Exception:
+                idx = None
+            return idx, gr.Button(interactive=True)
+
+        def save_cover(state, selected_index, saved_images):
+            """Copy the selected generated image into talk's generated_content/cover.ext and update preview."""
+            try:
+                if selected_index is None:
+                    return (
+                        "❌ Kein Bild ausgewählt",
+                        gr.HTML(),
+                    )
+
+                current_talk = state.get("current_talk")
+                if not current_talk or current_talk == "Neu":
+                    return (
+                        "❌ Bitte wählen Sie einen Talk aus",
+                        gr.HTML(),
+                    )
+
+                talk_metadata = self.talk_manager.get_talk(current_talk)
+                if not talk_metadata:
+                    return (
+                        f"❌ Talk '{current_talk}' nicht gefunden",
+                        gr.HTML(),
+                    )
+
+                safe_folder_name = talk_metadata.get("safe_name")
+                talk_folder_path = self.talk_manager.get_talk_folder_path(
+                    safe_folder_name
+                )
+                if not talk_folder_path:
+                    return (
+                        f"❌ Talk-Ordner nicht gefunden für '{current_talk}'",
+                        gr.HTML(),
+                    )
+
+                # Map selection index to local file path
+                if not saved_images or selected_index >= len(saved_images):
+                    return (
+                        "❌ Auswahl ungültig",
+                        gr.HTML(),
+                    )
+                chosen = saved_images[selected_index]
+                local_path = Path(chosen.get("local_path")) if chosen else None
+                if not local_path or not local_path.exists():
+                    return (
+                        "❌ Ausgewählte Bilddatei nicht gefunden",
+                        gr.HTML(),
+                    )
+
+                # Copy to cover.ext in generated_content
+                images_dir = talk_folder_path / "generated_content"
+                images_dir.mkdir(parents=True, exist_ok=True)
+                ext = local_path.suffix.lower() or ".png"
+                cover_path = images_dir / f"cover{ext}"
+
+                import shutil as _shutil
+
+                _shutil.copy2(local_path, cover_path)
+
+                # Optionally clean temp images (best-effort)
+                self.cleanup_temp_images()
+
+                html_img = _cover_img_html_from_path(cover_path)
+                return (
+                    "✅ Cover-Bild gespeichert",
+                    gr.HTML(value=html_img),
+                )
+            except Exception as e:
+                return (
+                    f"❌ Fehler beim Speichern des Cover-Bilds: {e}",
+                    gr.HTML(),
+                )
+
+        def load_cover(state):
+            """Load existing cover image for the current talk and update the preview."""
+            try:
+                current_talk = state.get("current_talk")
+                if not current_talk or current_talk == "Neu":
+                    return "❌ Kein Talk ausgewählt", gr.HTML()
+
+                talk_metadata = self.talk_manager.get_talk(current_talk)
+                if not talk_metadata:
+                    return f"❌ Talk '{current_talk}' nicht gefunden", gr.HTML()
+
+                safe_folder_name = talk_metadata.get("safe_name")
+                talk_folder_path = self.talk_manager.get_talk_folder_path(
+                    safe_folder_name
+                )
+                if not talk_folder_path:
+                    return (
+                        f"❌ Talk-Ordner nicht gefunden für '{current_talk}'",
+                        gr.HTML(),
+                    )
+
+                for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+                    p = talk_folder_path / "generated_content" / f"cover{ext}"
+                    if p.exists():
+                        return "✅ Cover geladen", gr.HTML(
+                            value=_cover_img_html_from_path(p)
+                        )
+                return "ℹ️ Kein Cover gefunden", gr.HTML()
+            except Exception as e:
+                return (f"❌ Fehler beim Laden des Covers: {e}", gr.HTML())
 
         # Setup common event handlers using base class
         components_for_common_handlers = (
@@ -459,8 +665,57 @@ class ImageGeneratorTab(BaseGeneratorTab):
             outputs=[
                 image_generation_status,
                 generated_images,
+                saved_images_state,
+                cover_image,
             ],
         )
+
+        # When user selects an image in the gallery, store index and enable cover button
+        generated_images.select(
+            on_gallery_select,
+            inputs=None,
+            outputs=[selected_index_state, save_cover_btn],
+        )
+
+        # Save selected image as cover and update preview
+        save_cover_btn.click(
+            save_cover,
+            inputs=[self.app_state, selected_index_state, saved_images_state],
+            outputs=[cover_status, cover_image],
+        )
+
+        # Manual reload of the saved cover image
+        load_cover_btn.click(
+            load_cover,
+            inputs=[self.app_state],
+            outputs=[cover_status, cover_image],
+        )
+
+        # Pre-load current cover if available (compute once at build time)
+        try:
+            current_talk = (
+                self.app_state.value.get("current_talk")
+                if hasattr(self.app_state, "value")
+                else None
+            )
+        except Exception:
+            current_talk = None
+        try:
+            if current_talk and current_talk != "Neu":
+                talk_metadata = self.talk_manager.get_talk(current_talk)
+                if talk_metadata:
+                    safe_folder_name = talk_metadata.get("safe_name")
+                    talk_folder_path = self.talk_manager.get_talk_folder_path(
+                        safe_folder_name
+                    )
+                    if talk_folder_path:
+                        for ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
+                            p = talk_folder_path / "generated_content" / f"cover{ext}"
+                            if p.exists():
+                                cover_image.value = _cover_img_html_from_path(p)
+                                break
+        except Exception:
+            pass
 
         return {
             "input_files_selection": input_files_selection,
@@ -468,4 +723,5 @@ class ImageGeneratorTab(BaseGeneratorTab):
             "generated_images": generated_images,
             "description_status": description_status,
             "image_generation_status": image_generation_status,
+            "cover_image": cover_image,
         }

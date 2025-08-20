@@ -123,6 +123,24 @@ class TalkSetupTab:
             "Erstellen Sie einen neuen Talk oder wählen Sie einen bestehenden aus",
         )
 
+        # Inline help: how to use and what's happening
+
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                #### Wie benutze ich diesen Tab?
+                - Wählen Sie oben einen vorhandenen Talk oder lassen Sie "Neuer Talk" ausgewählt, um einen neuen anzulegen.
+                - Füllen Sie die Metadaten aus (Name, Sprecher/in, Datum, Link, Ort, Beschreibung).
+                - Speichern Sie den Talk ab, er wird als Basis für die nächsten Schritte benötigt.
+
+                #### Was passiert unter der Haube?
+                - Beim Speichern wird ein eindeutiger Ordnername (safe_name) erzeugt und als aktueller Kontext gesetzt.
+                - Die Metadaten werden im Projektordner gespeichert und von allen anderen Tabs (Transkription, Generator, Bilder) verwendet.
+                - Die Auswahlliste wird dynamisch aus den vorhandenen Talks aufgebaut.
+                - Im 📂 Resource Browser können alle Ordner und gespeicherten Dateien eingesehen werden.
+                """
+            )
+
         # Create a refresh function for the talk selector
         def refresh_talk_selector():
             """Refresh the talk selector with current talks"""

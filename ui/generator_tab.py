@@ -45,6 +45,22 @@ class GeneratorTab(BaseGeneratorTab):
 
         # Create header and file selection using base class
         current_talk_display = self.create_header()
+
+        with gr.Accordion("ℹ️ Hilfe", open=False, elem_classes=["help"]):
+            gr.Markdown(
+                """
+                #### Wie benutze ich diesen Tab?
+                1) Wählen Sie oben Dateien als Kontext (Transkriptionen/Generiertes).
+                2) Passen Sie die Prompt-Einstellungen an und klicken Sie auf "Generieren".
+                3) Prüfen Sie die Rohantwort oder nutzen Sie die Vorschau. Speichern Sie das Ergebnis in den Talk.
+
+                #### Was passiert unter der Haube?
+                - Die ausgewählten Dateien werden zusammengeführt und in das User-Prompt-Template eingesetzt.
+                - System- und User-Nachricht gehen an den konfigurierten Chat-Endpoint.
+                - Tokenlimit und Temperatur steuern Länge/Stil. Die Antwort wird optional als Markdown mit Mermaid gerendert.
+                - Beim Speichern landet die Datei unter `resources/talks/<safe_name>/generated_content/<content_type>.md`.
+                """
+            )
         input_files_selection, selection_status = self.create_file_selection()
 
         # Create prompt configuration using base class
@@ -322,6 +338,7 @@ class GeneratorTab(BaseGeneratorTab):
                 )
 
                 if result["success"]:
+                    content = result["content"]
                     # If result contains ```markdown``` blocks, extract content from inside
                     if "```markdown" in result["content"]:
                         # Extract content between ```markdown``` blocks
@@ -330,8 +347,6 @@ class GeneratorTab(BaseGeneratorTab):
                         )
                         if markdown_blocks:
                             content = "\n".join(markdown_blocks)
-                        else:
-                            content = result["content"]
                     html_content = self._render_markdown(content)
                     return (
                         "✅ Inhalt erfolgreich generiert",
