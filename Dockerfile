@@ -13,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # install build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -33,6 +34,10 @@ RUN mkdir -p /app/static/js && \
 # Create resources directory with proper permissions
 RUN mkdir -p /app/resources && \
     chmod 755 /app/resources
+
+# Ensure prompts directory exists and is writable (for non-bind-mount use)
+RUN mkdir -p /app/prompts && \
+    chmod 777 /app/prompts
 
 # Create a non-root user for security
 # Create non-root user but do not switch; compose may run container as host UID
