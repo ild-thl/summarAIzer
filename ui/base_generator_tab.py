@@ -264,6 +264,7 @@ class BaseGeneratorTab:
             "temperature": temp,
             "max_tokens": int(max_tok),
             "model": model_name,
+            "input_source": self.get_prompt_config().get("input_source", "transcriptions"),
         }
 
         success = self.prompt_library.update_prompt(self.prompt_id, prompt_data)

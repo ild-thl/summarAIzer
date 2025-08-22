@@ -54,6 +54,7 @@ class AppState:
     def updated(self) -> None:
         new_data = self._data.copy()
         new_data["updated_at"] = datetime.datetime.now().isoformat()
+        print(f"AppState updated at {new_data['updated_at']}")
         return AppState(new_data)
 
     # def update(self, values: Dict[str, Any]) -> "AppState":

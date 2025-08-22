@@ -1,5 +1,5 @@
 ---
-title: MooMootScribe
+title: SummarAIzer
 emoji: 💬
 colorFrom: yellow
 colorTo: purple
@@ -11,7 +11,7 @@ license: gpl-3.0
 short_description: ' AI Content Generator for Moodle Moot DACH talks'
 ---
 
-# 🎓 MooMoot Scribe
+# 🎓 SummarAIzer
 
 AI Content Generator for Moodle Moot DACH talks with built-in GDPR compliance checking.
 

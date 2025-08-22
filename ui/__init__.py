@@ -1,1 +1,1 @@
-# UI module for MooMoot Scribe
+# UI module for SummarAIzer

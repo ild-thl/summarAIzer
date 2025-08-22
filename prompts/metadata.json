@@ -1,9 +1,0 @@
-{
-    "name": "Metadaten",
-    "description": "Extrahiert strukturierte Metadaten aus Bildungsvorträgen",
-    "system_message": "Du analysierst Bildungsvorträge systematisch und extrahierst strukturierte, detaillierte Metadaten. Sei präzise, relevant und fokussiere auf Informationen, die für die Bildungspraxis wertvoll sind.",
-    "template": "Analysiere den folgenden Vortrag von der Moodle Moot DACH systematisch:\n\nTRANSKRIPTION:\n{transcriptions}\n\nExtrahiere folgende Metadaten:\n\n## 🏷️ TAGS UND SCHLAGWÖRTER\n**Hauptkategorien:** [5-7 Hauptthemen]\n**Technologien:** [Erwähnte Tools, Plattformen, Technologien]\n**Methoden:** [Didaktische Methoden, Ansätze]\n**Hashtags:** [#relevante #hashtags #für #social #media]\n\n## 👤 SPRECHER UND KONTEXT\n**Referent(en):** [Name(n) und Institution(en)]\n**Veranstaltung:** [Spezifische Session/Track]\n**Datum/Kontext:** [Falls erkennbar]\n\n## 💎 KERNAUSSAGEN\n1. [Wichtigste Aussage 1]\n2. [Wichtigste Aussage 2]\n3. [Wichtigste Aussage 3]\n4. [Wichtigste Aussage 4]\n5. [Wichtigste Aussage 5]\n\n## 💬 BEMERKENSWERTE ZITATE\n> \"[Prägnantes Zitat 1]\"\n> \"[Prägnantes Zitat 2]\"\n> \"[Prägnantes Zitat 3]\"\n\n## 📚 THEMENBEREICH\n**Hauptkategorie:** [E-Learning, Didaktik, Technologie, etc.]\n**Unterkategorien:** [Spezifische Bereiche]\n**Schwierigkeitsgrad:** [Einsteiger/Fortgeschritten/Expert]\n\n## 🎯 ZIELGRUPPE\n**Primäre Zielgruppe:** [Hauptzielgruppe]\n**Sekundäre Zielgruppen:** [Weitere relevante Gruppen]\n**Vorwissen erforderlich:** [Benötigte Vorkenntnisse]\n\n## 🔗 VERWANDTE THEMEN\n[Liste verwandter Themen und Querverbindungen]",
-    "max_tokens": 3000,
-    "temperature": 0.7,
-    "model": "gemma-3-27b-it"
-}

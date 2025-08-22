@@ -4,9 +4,12 @@ Talk Manager - Manages individual talks/workshops with metadata and file organiz
 
 import os
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import shutil
+import unicodedata
+import re
 
 
 class TalkManager:
@@ -223,6 +226,8 @@ class TalkManager:
             if not talk_folder.exists():
                 return {"success": False, "error": "Talk nicht gefunden"}
 
+            audio_folder.mkdir(parents=True, exist_ok=True)
+
             # Copy audio file to talk folder
             audio_file = Path(audio_file_path)
             target_path = audio_folder / audio_file.name
@@ -231,15 +236,31 @@ class TalkManager:
 
             shutil.copy2(audio_file_path, target_path)
 
-            # Update metadata
+            # If not already FLAC, convert using TranscriptionService
+            final_path = target_path
+            conversion_note = ""
+            try:
+                if target_path.suffix.lower() != ".flac":
+                    from core.transcription_service import TranscriptionService
+
+                    svc = TranscriptionService(None)
+                    ok, out_path, msg = svc.ffmpeg_convert_to_flac(str(target_path))
+                    conversion_note = f" ({msg})" if msg else ""
+                    if ok and out_path and Path(out_path).exists():
+                        final_path = Path(out_path)
+            except Exception as ex:
+                conversion_note = f" (Warnung: Fehler bei der Konvertierung: {ex})"
+
+            # Update metadata with the final stored filename
             self.update_talk_metadata(
-                safe_name, {"audio_file": audio_file.name, "status": "audio_uploaded"}
+                safe_name,
+                {"audio_file": final_path.name, "status": "audio_uploaded"},
             )
 
             return {
                 "success": True,
-                "file_path": str(target_path),
-                "message": "Audio-Datei erfolgreich hinzugefügt",
+                "file_path": str(final_path),
+                "message": f"Audio-Datei erfolgreich hinzugefügt{conversion_note}",
             }
 
         except Exception as e:
@@ -424,25 +445,16 @@ class TalkManager:
         Returns:
             str: Sanitized name safe for filesystem
         """
-        import re
 
-        # Replace spaces with underscores
-        safe_name = name.replace(" ", "_")
+        v = name.strip().lower()
+        # Normalize unicode and strip accents
+        v = unicodedata.normalize("NFKD", v).encode("ascii", "ignore").decode("ascii")
+        # Replace non-alnum with dashes
+        v = re.sub(r"[^a-z0-9]+", "-", v)
+        # Trim dashes
+        v = v.strip("-")
 
-        # Remove or replace problematic characters
-        safe_name = re.sub(r'[<>:"/\\|?*]', "", safe_name)
-
-        # Remove multiple underscores
-        safe_name = re.sub(r"_+", "_", safe_name)
-
-        # Trim underscores from start and end
-        safe_name = safe_name.strip("_")
-
-        # Limit length
-        if len(safe_name) > 50:
-            safe_name = safe_name[:50].rstrip("_")
-
-        return safe_name
+        return v
 
     def _convert_subtitle_to_text(self, raw_text: str) -> str:
         """

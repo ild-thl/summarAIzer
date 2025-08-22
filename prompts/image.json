@@ -1,9 +1,10 @@
 {
   "name": "Image Description",
-  "description": "Erstellt detaillierte Bildbeschreibungen für die Bildgenerierung aus Veranstaltungsinhalten",
-  "system_message": "Du bist ein Experte für visuelle Kommunikation und Bildgestaltung. Du erstellst präzise, künstlerische Bildbeschreibungen, die als Prompts für AI-Bildgenerierung verwendet werden. Fokussiere auf visuelle Metaphern, Symbolik und konkrete Details.",
-  "template": "Erstelle eine detaillierte Bildbeschreibung für ein Bild, das den Inhalt und die Kernbotschaft dieser Veranstaltung visuell darstellt:\n\n**Allgemeine Informationen zur Veranstaltung:**\n{talk_metadata}\n\n**Transkription(en):**\n{transcriptions}\n\n# Aufgabe:\nErstelle eine präzise Bildbeschreibung (max. 200 Wörter) für die AI-Bildgenerierung, die:\n\n## Visuelle Elemente enthält:\n- **Hauptmotiv**: Zentrales visuelles Element, das das Thema repräsentiert\n- **Symbolik**: Metaphorische Darstellung der Kernaussagen\n- **Stil**: Künstlerischer Stil (realistisch, abstrakt, minimalistisch, etc.)\n- **Farben**: Passende Farbpalette zur Stimmung des Themas\n- **Komposition**: Bildaufbau und Perspektive\n\n## Berücksichtigt:\n- Die Hauptthemen und Kernbotschaften des Vortrags\n- Relevante Technologien oder Konzepte als visuelle Elemente\n- Emotionale Wirkung und Zielgruppenbezug\n- Professionellen, ansprechenden Charakter\n\n## Format:\nSchreibe eine zusammenhängende Bildbeschreibung in einem Absatz. Verwende konkrete, visuelle Begriffe. Vermeide abstrakte Konzepte ohne visuelle Entsprechung.\n\n**Beispiel-Struktur:**\n\"Ein [Stil] Bild zeigt [Hauptmotiv] mit [spezifische Details]. Im [Vordergrund/Hintergrund] sind [weitere Elemente] zu sehen. Die [Farbpalette] vermittelt [Stimmung]. [Zusätzliche symbolische Elemente] unterstreichen [Kernbotschaft].\"\n\nErstelle die Bildbeschreibung auf Deutsch, optimiert für professionelle Bildgenerierung.",
-  "temperature": 0.8,
-  "max_tokens": 1000,
-  "model": "meta-llama-3.1-8b-instruct"
+  "description": "Erstellt kurze, prägnante Bildbeschreibungen für die Bildgenerierung aus Veranstaltungsinhalten",
+  "system_message": "Du bist Expert:in für visuelle Kommunikation. Erstelle knappe, präzise Bildprompts in 1 kompakten Zeile. Bevorzuge konkrete, visuelle Details; vermeide Füllwörter, Aufzählungen, Anführungszeichen und Erklärtexte.",
+  "template": "Erzeuge eine kurze, prägnante Bildbeschreibung für die Generierung eines Bildes mit generativer KI, das die Kernaussage der Veranstaltung visuell darstellt. Das Bild soll als Kachel zur Bewerbung der Veranstaltung eingesetzt werden. Daher sollte es ein klares zentrales Hauptmotiv geben, das auch im kleinen schnell erkannt und emotional ansprechend ist. Überlege dir eine einfache Bildidee, die sich in einem Satz beschreiben lässt. Nenne zuerst den Stil, beschreibe dann in einem Satz das Hauptmotiv. Gib stichpunkartig weitere Infos zu Farbpalette und Komposition/Perspektive.\n\nKontext – Veranstaltungsdaten:\n{talk_metadata}\n\nKontext – Zusammenfassung des Inhalts:\n{transcriptions}\n\nGib ausschließlich die Bildbeschreibung als Fließtext an.",
+  "temperature": 0.6,
+  "max_tokens": 300,
+  "model": "gemma-3-27b-it",
+  "input_source": "summary.md"
 }

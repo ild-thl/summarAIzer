@@ -23,8 +23,8 @@ class ImageGenerator:
     def generate_images(
         self,
         prompt: str,
-        width: int = 480,
-        height: int = 320,
+        width: int = 1024,
+        height: int = 768,
         num_images: int = 1,
         model: str = "flux",
         auth_cookie: str = None,
@@ -172,8 +172,6 @@ class ImageGenerator:
                         "error": f"File size mismatch. Expected {len(image_bytes)}, got {actual_size}",
                     }
 
-                print(f"Successfully saved image: {file_path} ({actual_size} bytes)")
-
             except PermissionError as e:
                 return {
                     "success": False,
@@ -287,8 +285,6 @@ class ImageGenerator:
                     "success": False,
                     "error": f"Failed to create images folder: {images_folder}",
                 }
-
-            print(f"Images folder ready: {images_folder}")
 
             # Generate web base path
             # Extract the relative path from the talk folder

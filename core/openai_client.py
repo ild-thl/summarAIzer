@@ -3,6 +3,8 @@ OpenAI Client - Handles all OpenAI API interactions
 """
 
 import os
+import time
+import traceback
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -17,7 +19,16 @@ class OpenAIClient:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-        self.client = OpenAI(api_key=self.api_key, base_url=self.api_base)
+        self.timeout = int(os.getenv("OPENAI_TIMEOUT", "1000"))
+        self.transcribe_temperature = float(
+            os.getenv("OPENAI_TRANSCRIBE_TEMPERATURE", "0.0")
+        )
+
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.api_base,
+            timeout=self.timeout,
+        )
         self.default_model = os.getenv("OPENAI_DEFAULT_MODEL", "gemma-3-27b-it")
         self.available_models = self.fetch_available_models()
         if self.default_model not in self.available_models:
@@ -27,7 +38,6 @@ class OpenAIClient:
             self.default_model = (
                 self.available_models[0] if self.available_models else None
             )
-        print("OpenAI Client configured:", self.get_status())
 
     def is_configured(self) -> bool:
         """Check if API key is configured"""
@@ -154,6 +164,25 @@ class OpenAIClient:
             }
 
         try:
+            file_size = None
+            try:
+                file_size = os.path.getsize(file_path)
+            except Exception:
+                file_size = None
+
+            print(
+                "[Transcribe] Starting request:",
+                {
+                    "base_url": self.api_base,
+                    "model": model,
+                    "format": response_format,
+                    "language": language,
+                    "file": file_path,
+                    "size_bytes": file_size,
+                    "timeout": self.timeout,
+                },
+            )
+            t0 = time.time()
             # The OpenAI python client supports audio transcriptions via
             # client.audio.transcriptions.create
             with open(file_path, "rb") as f:
@@ -164,10 +193,15 @@ class OpenAIClient:
                 }
                 if language:
                     params["language"] = language
+                # Temperature can reduce pathological repetitions in some cases
+                if self.transcribe_temperature is not None:
+                    params["temperature"] = self.transcribe_temperature
 
                 # Some servers expose the same under /v1/audio/transcriptions
                 # The SDK should target the configured base_url.
                 resp = self.client.audio.transcriptions.create(**params)
+            dt = time.time() - t0
+            print(f"[Transcribe] Response received in {dt:.2f}s")
 
             # Normalize response depending on format
             # For response_format="text" the SDK typically returns an object with .text
@@ -175,9 +209,28 @@ class OpenAIClient:
             if text is None:
                 # Fallback: serialize to string
                 try:
-                    text = str(resp)
+                    # Try richer serialization forms before fallback
+                    if hasattr(resp, "model_dump_json"):
+                        text = resp.model_dump_json()
+                    elif hasattr(resp, "dict"):
+                        text = str(resp.dict())
+                    else:
+                        text = str(resp)
                 except Exception:
                     text = ""
             return {"success": True, "text": text}
         except Exception as e:
-            return {"success": False, "error": f"Fehler bei der Transkription: {e}"}
+            # Collect as much info as possible from the exception/response
+            err_lines = [f"Fehler bei der Transkription: {e.__class__.__name__}: {e}"]
+            # Some OpenAI exceptions provide a response with details
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                try:
+                    status = getattr(resp, "status_code", None)
+                    err_lines.append(f"HTTP Status: {status}")
+                except Exception:
+                    pass
+
+            error_msg = "\n".join(err_lines)
+            print("[Transcribe][ERROR]", error_msg)
+            return {"success": False, "error": error_msg}

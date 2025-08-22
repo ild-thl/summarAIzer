@@ -56,7 +56,7 @@ class ResourceBrowser:
             main_app_url = "/app"
             browse_base_url = "/browse/"
 
-        breadcrumb_parts = [f'<a href="{main_app_url}">🎓 MooMoot Scribe</a>']
+        breadcrumb_parts = [f'<a href="{main_app_url}">🎓 SummarAIzer</a>']
         breadcrumb_parts.append(f'<a href="{browse_base_url}">Resources</a>')
 
         current_path = ""
@@ -189,7 +189,7 @@ class ResourceBrowser:
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <meta name="robots" content="noindex,nofollow">
-                <title>{safe_path.name} - MooMoot Scribe</title>
+                <title>{safe_path.name} - SummarAIzer</title>
                 <script src="{static_base}/static/js/diagram_renderer.js"></script>
                 <script src="{static_base}/static/js/browser.js"></script>
                 <link rel="stylesheet" href="{static_base}/static/css/style.css" />
@@ -397,7 +397,7 @@ class ResourceBrowser:
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <meta name="robots" content="noindex,nofollow">
-                <title>Resources Browser - MooMoot Scribe</title>
+                <title>Resources Browser - SummarAIzer</title>
                 <script src="{static_base}/static/js/diagram_renderer.js"></script>
                 <script src="{static_base}/static/js/browser.js"></script>
                 <link rel="stylesheet" href="{static_base}/static/css/style.css" />

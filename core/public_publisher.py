@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import re
 import markdown
+import unicodedata
 
 
 @dataclass
@@ -22,7 +23,7 @@ class TalkMetadata:
     date: Optional[str] = None  # ISO 8601 preferred
     speakers: Optional[List[str]] = None
     description: Optional[str] = None
-    track: Optional[str] = None
+    link: Optional[str] = None
     location: Optional[str] = None
 
     @property
@@ -63,7 +64,7 @@ class PublicPublisher:
         date: Optional[str] = None
         speakers: Optional[List[str]] = None
         description: Optional[str] = None
-        track: Optional[str] = None
+        link: Optional[str] = None
         location: Optional[str] = None
         if meta_path.exists():
             try:
@@ -76,7 +77,7 @@ class PublicPublisher:
                 elif isinstance(sp, str):
                     speakers = [sp]
                 description = data.get("description") or data.get("abstract")
-                track = data.get("track")
+                link = data.get("link")
                 location = data.get("location")
             except Exception:
                 pass
@@ -86,7 +87,7 @@ class PublicPublisher:
             date=date,
             speakers=speakers,
             description=description,
-            track=track,
+            link=link,
             location=location,
         )
 
@@ -165,9 +166,23 @@ class PublicPublisher:
     def is_published(self, slug: str) -> bool:
         return self.get_published_record(slug) is not None
 
+    def _slugify(self, value: str) -> str:
+        """Create a URL-safe, lowercase slug (a-z0-9 and dashes only)."""
+        if not value:
+            return "talk"
+        v = value.strip().lower()
+        # Normalize unicode and strip accents
+        v = unicodedata.normalize("NFKD", v).encode("ascii", "ignore").decode("ascii")
+        # Replace non-alnum with dashes
+        v = re.sub(r"[^a-z0-9]+", "-", v)
+        # Trim dashes
+        v = v.strip("-")
+        return v or "talk"
+
     def public_talk_url(self, slug: str) -> str:
         base = self._proxy_prefix()
-        return f"{base}/talk/{slug}"
+        safe = self._slugify(slug)
+        return f"{base}/talk/{safe}"
 
     def save_feedback(self, slug: str, feedback: Dict[str, Any]) -> Path:
         out = self.talks_dir / slug / "generated_content" / "review_feedback.json"
@@ -228,6 +243,7 @@ class PublicPublisher:
         meta = self.read_talk_metadata(slug)
         content = self.find_generated_content(slug)
         base_url = self._proxy_prefix()
+        safe_slug = self._slugify(slug)
 
         # Build sections
         summary_html = ""
@@ -272,10 +288,6 @@ class PublicPublisher:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         # Sidebar: info and resources
-        track_badge = f"<span class='badge'>{meta.track}</span>" if meta.track else ""
-        description_html = (
-            f"<p class='lead'>{meta.description}</p>" if meta.description else ""
-        )
         summary_src_link = (
             f"<li><a class='nav-link' href='{base_url}/resources/{content['summary_md'].relative_to(self.base_resources).as_posix()}' target='_blank'>Summary (Markdown)</a></li>"
             if content["summary_md"]
@@ -318,10 +330,9 @@ class PublicPublisher:
                             {f'<li><strong>Datum:</strong> {meta.date}</li>' if meta.date else ''}
                             {f'<li><strong>Vortragende:</strong> {speakers}</li>' if speakers else ''}
                             {f'<li><strong>Ort:</strong> {meta.location}</li>' if meta.location else ''}
-                            {f'<li><strong>Track:</strong> {meta.track}</li>' if meta.track else ''}
+                            {f'<li><strong>Link:</strong> <a href="{meta.link}" target="_blank">{meta.link}</a></li>' if meta.link else ''}
+                            {f'<li><strong>Beschreibung:</strong> {meta.description}</li>' if meta.description else ''}
                         </ul>
-                        <div class='badges'>{track_badge}</div>
-                        {description_html}
                     </div>
                 </div>
                 {resources_list}
@@ -334,9 +345,9 @@ class PublicPublisher:
             abs_base = os.getenv("PUBLIC_BASE_URL") or os.getenv("GRADIO_BASE_URL")
             if abs_base:
                 abs_base = abs_base.rstrip("/")
-                og_url = f"{abs_base}/talk/{slug}"
+                og_url = f"{abs_base}/talk/{safe_slug}"
             else:
-                og_url = f"{base_url}/talk/{slug}"
+                og_url = f"{base_url}/talk/{safe_slug}"
             meta_tags = f"""
             <meta property="og:title" content="{meta.title}" />
             <meta property="og:type" content="article" />
@@ -394,6 +405,7 @@ class PublicPublisher:
         </html>
         """
 
+        out_dir = self.public_dir / "talks" / safe_slug
         out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / "index.html"
         out_file.write_text(html, encoding="utf-8")
@@ -411,12 +423,13 @@ class PublicPublisher:
             key=lambda d: self.read_talk_metadata(d.get("slug", "")).date_sort_key,
         ):
             slug = t.get("slug", "")
+            safe_slug = self._slugify(slug)
             meta = self.read_talk_metadata(slug)
             title = meta.title
             date = meta.date or ""
             speakers = ", ".join(meta.speakers) if meta.speakers else ""
             desc = meta.description or ""
-            track = meta.track or ""
+            link = meta.link or ""
             location = meta.location or ""
 
             # Pick cover image if available
@@ -427,17 +440,14 @@ class PublicPublisher:
                 img_tag = f"<div class='card-image'><img alt='Cover' src='{base_url}/resources/{rel}'/></div>"
 
             badges = []
-            if track:
-                badges.append(f"<span class='badge'>{track}</span>")
             if location:
                 badges.append(f"<span class='badge'>{location}</span>")
             badges_html = " ".join(badges)
 
-            # Build card
             cards.append(
                 f"""
-                <a class="card" href="{base_url}/talk/{slug}"
-                   data-title="{title.lower()}" data-speakers="{speakers.lower()}" data-track="{track.lower()}" data-location="{location.lower()}" data-date="{date}">
+                <a class="card" href="{base_url}/talk/{safe_slug}"
+                   data-title="{title.lower()}" data-speakers="{speakers.lower()}" data-location="{location.lower()}" data-date="{date}">
                     {img_tag}
                     <div class="card-body">
                         <h3 class="card-title">{title}</h3>
@@ -496,7 +506,6 @@ class PublicPublisher:
                         const hay = [
                             c.dataset.title,
                             c.dataset.speakers,
-                            c.dataset.track,
                             c.dataset.location
                         ].join(' ');
                         const show = !v || hay.indexOf(v) >= 0;

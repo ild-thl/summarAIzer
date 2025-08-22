@@ -214,7 +214,7 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
                 image_width = gr.Number(
                     label="Breite (px)",
-                    value=480,
+                    value=1024,
                     minimum=64,
                     maximum=2048,
                     step=64,
@@ -222,7 +222,7 @@ class ImageGeneratorTab(BaseGeneratorTab):
                 )
                 image_height = gr.Number(
                     label="Höhe (px)",
-                    value=320,
+                    value=768,
                     minimum=64,
                     maximum=2048,
                     step=64,
@@ -365,7 +365,6 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
                     # Get current talk from app state
                     current_talk = state.get("current_talk")
-                    print(f"Current talk: {current_talk}")
 
                     if current_talk and current_talk != "Neu":
                         # Try to save images to talk's generated_content folder
@@ -385,14 +384,11 @@ class ImageGeneratorTab(BaseGeneratorTab):
                         )
 
                         if talk_folder_path:
-                            print(f"Saving images to talk folder: {talk_folder_path}")
-
                             # Ensure the images folder exists
                             images_folder = (
                                 talk_folder_path / "generated_content" / "images"
                             )
                             images_folder.mkdir(parents=True, exist_ok=True)
-                            print(f"Images folder created/verified: {images_folder}")
 
                             # Save images persistently to talk folder
                             save_result = self.image_generator.save_images_to_talk(
@@ -400,16 +396,10 @@ class ImageGeneratorTab(BaseGeneratorTab):
                             )
 
                             if save_result["success"]:
-                                print(
-                                    f"Successfully saved {save_result['total_saved']} images to talk"
-                                )
                                 # Use absolute URLs for Gallery (recommended by Gradio)
                                 gallery_images = []
                                 for img in save_result["saved_images"]:
                                     if "web_url" in img:
-                                        print(
-                                            f"Image {img['local_path']} saved with web_url: {img['web_url']}"
-                                        )
                                         # Convert relative web_url to absolute URL
                                         absolute_url = get_absolute_url(img["web_url"])
                                         gallery_images.append(absolute_url)
@@ -686,6 +676,13 @@ class ImageGeneratorTab(BaseGeneratorTab):
 
         # Manual reload of the saved cover image
         load_cover_btn.click(
+            load_cover,
+            inputs=[self.app_state],
+            outputs=[cover_status, cover_image],
+        )
+
+        # Auto-load existing content when the current talk changes
+        self.app_state.change(
             load_cover,
             inputs=[self.app_state],
             outputs=[cover_status, cover_image],

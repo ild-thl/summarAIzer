@@ -5,5 +5,6 @@
   "template": "Erstelle eine Mermaid-Mindmap für die folgende Veranstaltung:\n\nAllgemeine Informationen zur Veranstaltung:\n{talk_metadata}\n\nTranskription:\n{transcriptions}\n\nErstelle die Mindmap im Mermaid-Format, wie im folgendne Beispiel:\n\n```mermaid\nmindmap\n  root)Hauptthema(\n    A[Kernpunkt 1]\n      A1[\"Unterpunkt 1.1\"]\n      A2[\"Unterpunkt 1.2\"]\n      A3[\"Zitat: '...'\"]\n    B[Kernpunkt 2]\n      B1[\"Unterpunkt 2.1\"]\n      B2[\"Unterpunkt 2.2\"]\n      B3[\"Zitat: '...'\"]\n    C[Kernpunkt 3]\n      C1[\"Unterpunkt 3.1\"]\n      C2[\"Unterpunkt 3.2\"]\n      C3[\"Zitat: '...'\"]\n    D[Technologien/Tools]\n      D1[\"Tool 1\"]\n      D2[\"Tool 2\"]\n      D3[\"Methode\"]\n    E[Herausforderungen]\n      E1[\"Challenge 1\"]\n      E2[\"Challenge 2\"]\n      E3[\"Lösungsansatz\"]\n```\n\nFokussiere auf:\n- Die wichtigsten Kernpunkte (max. 5-6 Hauptäste)\n- Relevante Zitate als Unterpunkte\n- Technologien und Tools als eigener Ast\n- Herausforderungen und Lösungsansätze\n- Klare, prägnante Beschriftungen\n- Erweitere die Mermaid-Struktur nach Bedarf",
   "temperature": 0.2,
   "max_tokens": 1500,
-  "model": "codestral-22b"
+  "model": "codestral-22b",
+  "input_source": "transcription"
 }

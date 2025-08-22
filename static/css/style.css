@@ -1,4 +1,4 @@
-/* MooMoot Scribe Application Styles */
+/* SummarAIzer Application Styles */
 
 /* Main layout and container styles */
 .main,
@@ -653,9 +653,6 @@ a:hover {
 
 .actions-col {
     width: 260px;
-    display: flex;
-    gap: 12px;
-    margin-top: 16px;
 }
 
 .back-button {

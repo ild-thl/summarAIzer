@@ -1,1 +1,1 @@
-# Core module for MooMoot Scribe
+# Core module for SummarAIzer

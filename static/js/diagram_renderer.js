@@ -1,4 +1,4 @@
-/* Shared Mermaid renderer for MooMoot Scribe
+/* Shared Mermaid renderer for SummarAIzer
    - Ensures mermaid ESM is loaded (via CDN) even from non-module contexts
    - Initializes mermaid
    - Exposes window.renderMermaidDiagrams()

@@ -1,5 +1,5 @@
 """
-Transcription Tab for MooMootScribe UI
+Transcription Tab for SummarAIzer UI
 Upload audio files to generate transcriptions or upload existing transcripts and save them with the current talk.
 """
 
@@ -124,19 +124,19 @@ class TranscriptionTab:
                     file_count="single",
                 )
 
-                # # Minimal API controls on top of the audio section
+                # Minimal API controls on top of the audio section
                 # with gr.Row():
-                #     api_resp_format = gr.Dropdown(
-                #         label="Antwortformat",
-                #         choices=["text", "srt", "vtt"],
-                #         value="text",
-                #         interactive=False,
-                #     )
-                #     api_language = gr.Textbox(
-                #         label="Sprache (optional, z. B. de, en)",
-                #         value="de",
-                #         interactive=True,
-                #     )
+                # api_resp_format = gr.Dropdown(
+                #     label="Antwortformat",
+                #     choices=["text", "srt", "vtt"],
+                #     value="text",
+                #     interactive=False,
+                # )
+                # api_language = gr.Textbox(
+                #     label="Sprache (optional, z. B. de, en)",
+                #     value="de",
+                #     interactive=True,
+                # )
 
                 # Audio files display
                 gr.Markdown("##### 🎵 Hochgeladene Audio-Dateien")

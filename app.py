@@ -16,14 +16,16 @@ from core.image_generator import ImageGenerator
 from core.resource_browser import ResourceBrowser
 from core.public_publisher import PublicPublisher
 from core.review_routes import router as review_router
+from core.quick_generator import QuickGenerator
 
 from ui.talk_setup_tab import TalkSetupTab
 from ui.transcription_tab import TranscriptionTab
 from ui.generator_tab import GeneratorTab
 from ui.image_generator_tab import ImageGeneratorTab
+from ui.quick_generation_tab import QuickGenerationTab
 
 
-class MooMootScribeApp:
+class SummarAIzerApp:
     """Main application class"""
 
     def __init__(self):
@@ -33,6 +35,9 @@ class MooMootScribeApp:
         self.talk_manager = TalkManager()
         self.openai_client = OpenAIClient()
         self.image_generator = ImageGenerator()
+        self.quick_generator = QuickGenerator(
+            self.talk_manager, self.openai_client, self.image_generator
+        )
 
         # Get proxy path from environment
         self.proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
@@ -49,7 +54,7 @@ class MooMootScribeApp:
         """
 
         with gr.Blocks(
-            title="MooMoot Scribe - AI Content Generator",
+            title="SummarAIzer - AI Content Generator",
             theme=gr.themes.Soft(),
             head=head,
             analytics_enabled=False,  # Disable analytics
@@ -58,7 +63,7 @@ class MooMootScribeApp:
             gr.HTML(
                 f"""
             <div class="main-header">
-                <h1>🎓 MooMoot Scribe</h1>
+                <h1>🎓 SummarAIzer</h1>
                 <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
                 <div style=\"display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;\">
                     <a href=\"{self.proxy_path + '/browse/' if self.proxy_path else '/browse/'}\" target=\"_blank\" class=\"nav-link\" style=\"color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;\">
@@ -86,6 +91,16 @@ class MooMootScribeApp:
                         self.talk_manager, self.app_state
                     )
                     transcription_tab.create_tab()
+
+                with gr.Tab("⚡ Schnell-Generierung"):
+                    quick_tab = QuickGenerationTab(
+                        talk_manager=self.talk_manager,
+                        openai_client=self.openai_client,
+                        image_generator=self.image_generator,
+                        app_state=self.app_state,
+                        quick_generator=self.quick_generator,
+                    )
+                    quick_tab.create_tab()
 
                 with gr.Tab("📜 Zusammenfassung"):
                     summary_tab = GeneratorTab(
@@ -139,7 +154,7 @@ class MooMootScribeApp:
 
 
 print("\n" + "=" * 50)
-print("🚀 Starting MooMoot Scribe Application with FastAPI + Uvicorn")
+print("🚀 Starting SummarAIzer Application with FastAPI + Uvicorn")
 print("=" * 50)
 
 
@@ -148,7 +163,7 @@ proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
 # Create FastAPI app
 app = FastAPI(
-    title="MooMoot Scribe",
+    title="SummarAIzer",
     description="AI Content Generator für Moodle Moot DACH Vorträge",
     root_path=proxy_path,  # Set root path for proxy compatibility
 )
@@ -162,7 +177,7 @@ public_dir = resources_dir / "public"
 
 
 # Create Gradio app
-moomoot_app = MooMootScribeApp()
+moomoot_app = SummarAIzerApp()
 io = moomoot_app.create_interface()
 
 # Create resource browser

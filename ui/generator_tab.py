@@ -483,6 +483,13 @@ class GeneratorTab(BaseGeneratorTab):
             outputs=[save_status, raw_output, html_preview, save_content_btn],
         )
 
+        # Auto-load existing content when the current talk changes
+        self.app_state.change(
+            load_existing_content,
+            inputs=[self.app_state],
+            outputs=[save_status, raw_output, html_preview, save_content_btn],
+        )
+
         return {
             "input_files_selection": input_files_selection,
             "user_prompt": user_prompt,
