@@ -10,6 +10,7 @@ from core.prompt_library import PromptLibrary
 from core.openai_client import OpenAIClient
 from core.image_generator import ImageGenerator
 from core.talk_manager import TalkManager
+from core.competence_analyser import CompetenceAnalyser
 
 
 class QuickGenerator:
@@ -25,6 +26,7 @@ class QuickGenerator:
         self.openai_client = openai_client
         self.image_generator = image_generator
         self.prompt_library = PromptLibrary()
+        self.competence_analyser = CompetenceAnalyser()
 
     def _get_transcription_bundle(self, safe_name: str) -> Tuple[str, List[str]]:
         files = self.talk_manager.get_uploaded_files(safe_name, "transcription")
@@ -180,6 +182,75 @@ class QuickGenerator:
             "saved_path": save.get("file_path"),
             "usage": usage,
             "context_files": context_files,
+            "skipped": False,
+        }
+
+    # ---------- Competences (ESCO) ----------
+    def generate_competences(
+        self, safe_name: str, skip_if_exists: bool = True
+    ) -> Dict[str, Any]:
+        """Analyze competences from summary.md (or transcription fallback) and save as competences.json.
+
+        Returns {success, message|error, saved_path, skipped}
+        """
+        talk_folder = self.talk_manager.get_talk_folder_path(safe_name)
+        if talk_folder is None:
+            return {
+                "success": False,
+                "error": "Talk-Ordner nicht gefunden",
+                "skipped": False,
+            }
+        out_path = talk_folder / "generated_content" / "competences.json"
+        if skip_if_exists and out_path.exists():
+            return {
+                "success": True,
+                "message": f"⏭️ Übersprungen (existiert bereits): {out_path}",
+                "saved_path": str(out_path),
+                "skipped": True,
+            }
+
+        # Prefer summary.md
+        content = self._get_generated_file(safe_name, "summary.md") or ""
+        if not content.strip():
+            # Fallback: all transcription
+            bundle, _ = self._get_transcription_bundle(safe_name)
+            content = bundle
+        if not content.strip():
+            return {
+                "success": False,
+                "error": "Keine Eingabetexte gefunden",
+                "skipped": False,
+            }
+
+        resp = self.competence_analyser.analyze(doc=content)
+        if not resp.get("success"):
+            return {
+                "success": False,
+                "error": f"Analyse fehlgeschlagen: {resp.get('error')}",
+                "skipped": False,
+            }
+
+        data = resp.get("data", {})
+        natural, skills = CompetenceAnalyser.parse_learning_outcomes(data)
+        payload = {
+            "learning_outcomes": {
+                "natural": natural,
+                "skills": skills,
+            }
+        }
+        import json as _json
+
+        save = self.talk_manager.save_generated_content(
+            safe_name,
+            "competences.json",
+            _json.dumps(payload, indent=2, ensure_ascii=False),
+        )
+        if not save.get("success"):
+            return {"success": False, "error": save.get("error"), "skipped": False}
+        return {
+            "success": True,
+            "message": f"✅ Kompetenzen gespeichert: {save.get('file_path')}",
+            "saved_path": save.get("file_path"),
             "skipped": False,
         }
 

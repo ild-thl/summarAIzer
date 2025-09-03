@@ -23,6 +23,7 @@ from ui.transcription_tab import TranscriptionTab
 from ui.generator_tab import GeneratorTab
 from ui.image_generator_tab import ImageGeneratorTab
 from ui.quick_generation_tab import QuickGenerationTab
+from ui.competences_tab import CompetencesTab
 
 
 class SummarAIzerApp:
@@ -147,6 +148,14 @@ class SummarAIzerApp:
                         tab_description="Generiere ansprechende Social Media-Beiträge aus Transkriptionsinhalten",
                     )
                     social_media_tab.create_tab()
+
+                # ESCO Competences Tab
+                with gr.Tab("🧩 Kompetenzen"):
+                    comp_tab = CompetencesTab(
+                        talk_manager=self.talk_manager,
+                        app_state=self.app_state,
+                    )
+                    comp_tab.create_tab()
 
                 # Image Generation Tab
                 with gr.Tab("🎨 Bilder"):

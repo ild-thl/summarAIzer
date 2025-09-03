@@ -125,6 +125,11 @@ class PublicPublisher:
             "mermaid_md": mermaid_md,
             "transcription_txt": transcription_txt,
             "image": image,
+            "competences_json": (
+                (gen / "competences.json")
+                if (gen / "competences.json").exists()
+                else None
+            ),
         }
 
     # ---------- Feedback & publish state ----------
@@ -212,6 +217,15 @@ class PublicPublisher:
 
         return re.sub(pattern, repl, text, flags=re.DOTALL | re.IGNORECASE)
 
+    def _escape_html(self, s: str) -> str:
+        return (
+            s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#39;")
+        )
+
     def _render_markdown_with_mermaid(self, text: str) -> str:
         """Pre-render markdown to HTML and convert mermaid code fences into <div class="mermaid"> blocks.
 
@@ -263,6 +277,27 @@ class PublicPublisher:
                 content["transcription_txt"].relative_to(self.base_resources).as_posix()
             )
             transcript_link = f'<a class="btn" href="{base_url}/resources/{rel}" target="_blank">Transkript öffnen</a>'
+
+        competences_html = ""
+        if content.get("competences_json"):
+            try:
+                raw = self._read_text(content["competences_json"]) or "{}"
+                data = json.loads(raw)
+                lo = data.get("learning_outcomes") or {}
+                skills = lo.get("skills") or []
+                links = []
+                for s in skills:
+                    title = s.get("title") or ""
+                    uri = s.get("uri") or "#"
+                    if title and uri:
+                        links.append(
+                            f'<li><a href="{uri}" target="_blank" rel="noopener">{self._escape_html(title)}</a></li>'
+                        )
+                skills_html = f"<ul>{''.join(links)}</ul>" if links else ""
+                if skills_html:
+                    competences_html = f'<div class="card"><div class="card-body"><h2>ESCO-Kompetenzen</h2>{skills_html}</div></div>'
+            except Exception:
+                competences_html = ""
 
         img_html = ""
         og_image_url: str | None = None
@@ -392,7 +427,8 @@ class PublicPublisher:
                         </div>
                         {f'<div class="card"><div class="card-body"><h2>Zusammenfassung</h2>{summary_html}</div></div>' if summary_html else ''}
                         {f'<div class="card"><div class="card-body"><h2>Diagramme</h2>{mermaid_html}</div></div>' if mermaid_html else ''}
-                        {f'<div class="card"><div class="card-body"><h2>Transkript</h2><p>Das vollständige Transkript kann hier geöffnet werden.</p>{transcript_link}</div></div>' if transcript_link else ''}
+                        {competences_html}
+                        {f'<div class="card"><div class="card-body"><h2>Transkript</h2>{transcript_link}</div></div>' if transcript_link else ''}
                         <div class='mb-2'>
                             <a class='btn btn-small' href='{base_url}/public/'>← Zurück zur Übersicht</a>
                         </div>
@@ -401,7 +437,7 @@ class PublicPublisher:
                 </div>
             </main>
             <footer class="site-footer">
-                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small>
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small> powered by <a href="https://kisski.gwdg.de" target="_blank" rel="noopener">KISSKI</a>
                 <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
             </footer>
         </body>
@@ -498,7 +534,7 @@ class PublicPublisher:
                 </div>
             </main>
             <footer class="site-footer">
-                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small>
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small> powered by <a href="https://kisski.gwdg.de" target="_blank" rel="noopener">KISSKI</a>
                 <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
             </footer>
             <script>

@@ -50,8 +50,14 @@ class QuickGenerationTab:
             with gr.Column(scale=1):
                 steps = gr.CheckboxGroup(
                     label="Welche Schritte sollen erzeugt werden?",
-                    choices=["summary", "mermaid", "social_media", "image"],
-                    value=["summary", "mermaid", "image"],
+                    choices=[
+                        "summary",
+                        "mermaid",
+                        "social_media",
+                        "competences",
+                        "image",
+                    ],
+                    value=["summary", "mermaid", "competences", "image"],
                     interactive=True,
                 )
             with gr.Column(scale=1):
@@ -98,6 +104,19 @@ class QuickGenerationTab:
                     skip_if_exists=_skip_existing,
                 )
                 yield from _emit(self.quick_generator._format_step_log(res))
+
+            # Competences (ESCO)
+            if "competences" in steps_list:
+                yield from _emit("▶️ Ermittele ESCO-Kompetenzen aus summary.md…")
+                res = self.quick_generator.generate_competences(
+                    current_talk, skip_if_exists=_skip_existing
+                )
+                msg = (
+                    res.get("message")
+                    if res.get("success")
+                    else (res.get("error") or "Fehler bei Kompetenzen")
+                )
+                yield from _emit(msg)
 
                 # Mermaid
             if "mermaid" in steps_list:

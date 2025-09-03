@@ -23,7 +23,7 @@ def _base_prefix() -> str:
 def _labelled_radio_group(
     name: str, label: str, required: bool = True, value: int | None = None
 ) -> str:
-    # 1–5 Likert with anchors inline for better alignment
+    # 1–4 Likert with anchors inline for better alignment
     req = " required" if required else ""
 
     def checked(v: int) -> str:
@@ -31,18 +31,17 @@ def _labelled_radio_group(
 
     return f"""
     <div class=\"form-row\">
-      <div class=\"form-label\">{label}</div>
-      <div class=\"form-input\">
+        <div class=\"form-label\">{label}</div>
+        <div class=\"form-input\">
         <div class=\"likert\">
-          <span class=\"likert-anchor\">niedrig</span>
+            <span class=\"likert-anchor\">niedrig</span>
                 <label><input type=\"radio\" name=\"{name}\" value=\"1\"{req}{' checked' if value == 1 else ''}>1</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"2\"{req}{' checked' if value == 2 else ''}>2</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"3\"{req}{' checked' if value == 3 else ''}>3</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"4\"{req}{' checked' if value == 4 else ''}>4</label>
-                <label><input type=\"radio\" name=\"{name}\" value=\"5\"{req}{' checked' if value == 5 else ''}>5</label>
-          <span class=\"likert-anchor\">hoch</span>
+            <span class=\"likert-anchor\">hoch</span>
         </div>
-      </div>
+        </div>
     </div>
     """
 
@@ -131,7 +130,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
                     So funktioniert die Freigabeprüfung:
                     <ol>
                         <li>Klicken Sie auf \"Quelle öffnen\", um die automatisch generierten Inhalte einzusehen.</li>
-                        <li>Bewerten Sie die Inhalte zu den aufgeführten Kriterien auf einer Skala von 1 (niedrig) bis 5 (hoch).</li>
+                        <li>Bewerten Sie die Inhalte zu den aufgeführten Kriterien auf einer Skala von 1 (niedrig) bis 4 (hoch).</li>
                         <li>Optional: Geben Sie Freitext-Feedback und den geschätzten Zeitaufwand an.</li>
                         <li>Entscheiden Sie unter \"Freigabe\", ob die Inhalte veröffentlicht werden sollen.</li>
                         <li>Klicken Sie auf \"Bewertung speichern\". Ihre Angaben werden gespeichert und können später erneut angepasst werden.</li>
@@ -152,7 +151,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
                 {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
                 {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
                 {_labelled_radio_group('summary_clarity', 'Verständlichkeit', value=(existing.get('summary') or {}).get('clarity'))}
-                <div class=\"subsection\" style=\"margin-top:12px;\">
+                <div class=\"subsection\" style=\"margin-top:24px;\">
                 <h3 style=\"margin-bottom:8px;\">Zitate in der Zusammenfassung</h3>
                 <div class=\"form-row\">
                 <div class=\"form-label\">Zitate</div>

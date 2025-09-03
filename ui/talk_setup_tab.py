@@ -160,19 +160,11 @@ class TalkSetupTab:
 
         # New Talk + Refresh controls next to the selector for quicker access
         with gr.Row():
-            with gr.Column(scale=2):
-                with gr.Row():
-                    new_talk_btn = gr.Button("➕ Neuer Talk", variant="secondary")
-                    refresh_btn = gr.Button(
-                        "🔄 Talk-Liste aktualisieren",
-                        variant="secondary",
-                    )
-            with gr.Column(scale=3):
-                gr.HTML(
-                    "<p style='margin: auto 0; color: #666; font-size: 0.9em;'>Neuen Talk anlegen oder die Liste aktualisieren, wenn ein Talk fehlt</p>"
-                )
-
-        gr.Markdown("---")
+            new_talk_btn = gr.Button("➕ Neuer Talk", variant="secondary")
+            refresh_btn = gr.Button(
+                "🔄 Talk-Liste aktualisieren",
+                variant="secondary",
+            )
 
         # Talk edit form (hidden until loading or creating)
         gr.Markdown("### 🆕 Talk bearbeiten/erstellen")
@@ -222,11 +214,9 @@ class TalkSetupTab:
                 visible=False,  # Hidden initially
             )
 
-            with gr.Row() as edit_talk_buttons:
-                delete_talk_btn = gr.Button("🗑️ Talk löschen", variant="secondary")
-                save_talk_btn = gr.Button(
-                    "🎯 Talk speichern", variant="primary", size="lg"
-                )
+        with gr.Row() as edit_talk_buttons:
+            delete_talk_btn = gr.Button("🗑️ Talk löschen", variant="secondary")
+            save_talk_btn = gr.Button("🎯 Talk speichern", variant="primary", size="lg")
 
         # Wire up event handlers
 
