@@ -3,11 +3,16 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse, Response
 from fastapi import Form
 from fastapi.requests import Request
 import uvicorn
 import time
+import secrets
+from typing import List
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from urllib.parse import quote
 
 from core.talk_manager import TalkManager
 from core.app_state import AppState
@@ -196,6 +201,45 @@ resources_dir = Path(__file__).parent / "resources"
 public_dir = resources_dir / "public"
 
 
+# Load .env early for local development
+load_dotenv()
+
+# -------------------- Simple Session-based Admin Login --------------------
+
+
+class _SessionAuthMiddleware(BaseHTTPMiddleware):
+    """Protect selected path prefixes using a session flag set after login.
+
+    - Enable by setting ADMIN_PASSWORD in environment (or .env)
+    - Optionally set PROTECT_PATHS (comma-separated, defaults to /app,/browse)
+    - Uses Starlette SessionMiddleware (signed cookie) under the hood
+    """
+
+    def __init__(self, app, protected_prefixes: List[str], login_prefix: str = ""):
+        super().__init__(app)
+        # Normalize to ensure each prefix starts with '/'
+        self._protected = [
+            p if p.startswith("/") else f"/{p}" for p in protected_prefixes
+        ]
+        self._login_prefix = login_prefix.rstrip("/")
+
+    async def dispatch(self, request, call_next):
+        path = request.url.path or "/"
+        if any(path.startswith(p) for p in self._protected):
+            # Safe session check without triggering Starlette assertion
+            is_admin = bool(request.scope.get("session", {}).get("is_admin", False))
+            if not is_admin:
+                # Redirect to login, preserve original path (and query) in `next`
+                full_path = request.url.path
+                if request.url.query:
+                    full_path += f"?{request.url.query}"
+                # Preserve proxy prefix in both login and next links
+                next_target = f"{self._login_prefix}{full_path}"
+                login_url = f"{self._login_prefix}/login?next={quote(next_target)}"
+                return RedirectResponse(url=login_url, status_code=302)
+        return await call_next(request)
+
+
 # Create Gradio app
 summaraizer_app = SummarAIzerApp()
 io = summaraizer_app.create_interface()
@@ -207,6 +251,33 @@ publisher = PublicPublisher()
 # Mount Gradio interface to FastAPI app at /app
 app = gr.mount_gradio_app(app, io, path="/app")
 
+# Attach session middleware and simple auth if configured
+admin_password = os.getenv("ADMIN_PASSWORD")
+protect_paths = os.getenv("PROTECT_PATHS", "/app,/browse,/admin").split(",")
+protect_paths = [p.strip() for p in protect_paths if p.strip()]
+if admin_password:
+    # Secret key for signing session cookies; use env or a safe default fallback
+    secret_key = (
+        os.getenv("SESSION_SECRET") or os.getenv("SECRET_KEY") or secrets.token_hex(32)
+    )
+    # If running behind a proxy path, protect both plain and proxy-prefixed variants
+    proxy_prefix = proxy_path or ""
+    prefixes = set()
+    for p in protect_paths:
+        prefixes.add(p if p.startswith("/") else f"/{p}")
+        if proxy_prefix:
+            prefixes.add(f"{proxy_prefix}{p if p.startswith('/') else '/' + p}")
+    # Important: Add auth middleware first, then SessionMiddleware so that session is available in request.scope
+    app.add_middleware(
+        _SessionAuthMiddleware,
+        protected_prefixes=sorted(prefixes),
+        login_prefix=proxy_prefix,
+    )
+    app.add_middleware(SessionMiddleware, secret_key=secret_key, same_site="lax")
+    print(f"🔒 Session auth protecting: {', '.join(sorted(prefixes))}")
+else:
+    print("ℹ️ ADMIN_PASSWORD not set; /app and /browse are public.")
+
 # Mount review routes
 app.include_router(review_router)
 
@@ -216,6 +287,71 @@ app.include_router(review_router)
 async def render_markdown(file_path: str):
     """Render markdown files as HTML"""
     return await resource_browser.render_markdown(file_path)
+
+
+# -------------------- Login / Logout --------------------
+
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_form(
+    request: Request, error: str | None = None, next: str | None = None
+):
+    base = proxy_path
+    err_html = f"<p style='color:#c00;'>{error}</p>" if error else ""
+    next_input = (
+        f"<input type='hidden' name='next' value='{next or ''}'/>" if next else ""
+    )
+    return HTMLResponse(
+        f"""
+        <html>
+        <head>
+            <link rel=\"stylesheet\" href=\"{base}/static/css/style.css\" />
+            <meta name=\"robots\" content=\"noindex,nofollow\" />
+            <title>Login</title>
+        </head>
+        <body style=\"display:flex;align-items:center;justify-content:center;height:100vh;background:#0f1a3a;color:white;\">
+            <form method=\"post\" action=\"{base}/login\" style=\"background:rgba(255,255,255,0.06);padding:24px;border-radius:8px;min-width:320px;\">
+                <h2 style=\"margin-top:0;\">🔒 Admin Login</h2>
+                {err_html}
+                <label for=\"password\">Passwort</label>
+                <input id=\"password\" name=\"password\" type=\"password\" required style=\"width:100%;margin:8px 0;\" />
+                {next_input}
+                <button type=\"submit\" style=\"width:100%;margin-top:8px;\">Login</button>
+            </form>
+        </body>
+        </html>
+        """
+    )
+
+
+@app.post("/login")
+async def login_submit(
+    password: str = Form(...),
+    next: str | None = Form(default=None),
+    request: Request = None,
+):
+    expected = os.getenv("ADMIN_PASSWORD")
+    if not expected:
+        return RedirectResponse(url="/", status_code=302)
+    ok = secrets.compare_digest(password, expected)
+    if not ok:
+        q = (
+            f"?error=Falsches Passwort&next={quote(next)}"
+            if next
+            else "?error=Falsches Passwort"
+        )
+        return RedirectResponse(url=f"/login{q}", status_code=302)
+    # Mark session as admin
+    request.session["is_admin"] = True
+    dest = next or "/app"
+    return RedirectResponse(url=dest, status_code=302)
+
+
+@app.get("/logout")
+async def logout(request: Request):
+    if hasattr(request, "session"):
+        request.session.clear()
+    return RedirectResponse(url="/login", status_code=302)
 
 
 # -------------------- Public pages --------------------
