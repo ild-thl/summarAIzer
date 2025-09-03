@@ -34,13 +34,13 @@ def _labelled_radio_group(
       <div class=\"form-label\">{label}</div>
       <div class=\"form-input\">
         <div class=\"likert\">
-          <span class=\"likert-anchor\">low</span>
+          <span class=\"likert-anchor\">niedrig</span>
                 <label><input type=\"radio\" name=\"{name}\" value=\"1\"{req}{' checked' if value == 1 else ''}>1</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"2\"{req}{' checked' if value == 2 else ''}>2</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"3\"{req}{' checked' if value == 3 else ''}>3</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"4\"{req}{' checked' if value == 4 else ''}>4</label>
                 <label><input type=\"radio\" name=\"{name}\" value=\"5\"{req}{' checked' if value == 5 else ''}>5</label>
-          <span class=\"likert-anchor\">high</span>
+          <span class=\"likert-anchor\">hoch</span>
         </div>
       </div>
     </div>
@@ -127,7 +127,17 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
         <div class=\"container\">
             <div class="page-title">
                 <h1>Freigabeprüfung: {talk_meta.title}</h1>
-                <div class="lead">Bitte bewerten Sie die automatisch generierten Inhalte. Skala 1 (niedrig) bis 5 (hoch).</div>
+                <div class="lead">
+                    So funktioniert die Freigabeprüfung:
+                    <ol>
+                        <li>Klicken Sie auf \"Quelle öffnen\", um die automatisch generierten Inhalte einzusehen.</li>
+                        <li>Bewerten Sie die Inhalte zu den aufgeführten Kriterien auf einer Skala von 1 (niedrig) bis 5 (hoch).</li>
+                        <li>Optional: Geben Sie Freitext-Feedback und den geschätzten Zeitaufwand an.</li>
+                        <li>Entscheiden Sie unter \"Freigabe\", ob die Inhalte veröffentlicht werden sollen.</li>
+                        <li>Klicken Sie auf \"Bewertung speichern\". Ihre Angaben werden gespeichert und können später erneut angepasst werden.</li>
+                    </ol>
+                    Hinweis: Bei Freigabe wird eine Seite für Ihren Talk erstellt und in der <a style="color: white; text-decoration: underline;" href="https://lab.dlc.sh/summaraizer/" target="_blank">https://lab.dlc.sh/summaraizer/</a> geführt.
+                </div>
             </div>
         </div>
     </header>
@@ -136,8 +146,6 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
         <form method=\"post\" action=\"{base}/review/submit\">
             <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
             <input type=\"hidden\" name=\"schema_version\" value=\"3\" />
-                <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
-            <input type=\"hidden\" name=\"schema_version\" value=\"2\" />
 
             <section class=\"section\">
                 <h2>Zusammenfassung {sum_btn}</h2>

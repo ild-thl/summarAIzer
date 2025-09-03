@@ -243,8 +243,6 @@ main.container {
 .btn-light {
     padding: 4px 8px;
     font-size: 14px;
-    background-color: #ffecc3;
-    color: #fff !important;
 }
 
 .btn:hover {
