@@ -177,8 +177,8 @@ public_dir = resources_dir / "public"
 
 
 # Create Gradio app
-moomoot_app = SummarAIzerApp()
-io = moomoot_app.create_interface()
+summaraizer_app = SummarAIzerApp()
+io = summaraizer_app.create_interface()
 
 # Create resource browser
 resource_browser = ResourceBrowser()

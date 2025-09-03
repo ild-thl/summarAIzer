@@ -1,7 +1,7 @@
 services:
-    moomootscribe:
-        image: pascalhuerten/moomootscribe:latest
-        container_name: moomootscribe
+    summaraizer:
+        image: pascalhuerten/summaraizer:latest
+        container_name: summaraizer
         build: .
         user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Ensure proper user mapping for file permissions
         ports:
