@@ -248,7 +248,7 @@ class TranscriptionTab:
         with gr.Row():
             check_gdpr_btn = gr.Button(
                 "🔍 Datenschutz-Analyse durchführen",
-                variant="secondary",
+                variant="primary",
                 size="sm",
             )
             auto_check_gdpr = gr.Checkbox(
@@ -690,7 +690,8 @@ class TranscriptionTab:
             """Delete audio file"""
             return delete_file(state, filename, "audio")
 
-        def show_transcription_preview(state, filename):
+        def show_transcription_preview(state, filename, auto_check=False):
+            print("show_transcription_preview", filename, "auto_check=", auto_check)
             """Show preview of selected transcription file"""
             if not filename:
                 # Reset GDPR UI when no file selected
@@ -743,26 +744,47 @@ class TranscriptionTab:
             result = self.talk_manager.get_transcription_content(current_talk, filename)
 
             if result["success"]:
-                # When switching files, reset GDPR UI until user triggers analysis
-                dropdown_update = gr.update(choices=[], visible=False)
-                replacement_input_update = gr.update(value="", visible=False)
-                apply_btn_update = gr.update(visible=False)
-                help_update = gr.update(
-                    value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
-                    visible=False,
-                )
+                # If auto-check is enabled, analyze immediately; else, show placeholders
+                if auto_check:
+                    (
+                        recommendations_html,
+                        legend_html,
+                        highlighted_html,
+                        dropdown_update,
+                        replacement_input_update,
+                        apply_btn_update,
+                        replacement_status,
+                        help_update,
+                    ) = analyze_gdpr_compliance(result["content"])
+                else:
+                    recommendations_html = "<p><i>Empfehlungen werden nach der Analyse angezeigt...</i></p>"
+                    legend_html = (
+                        "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>"
+                    )
+                    highlighted_html = "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>"
+                    dropdown_update = gr.update(choices=[], visible=False)
+                    replacement_input_update = gr.update(value="", visible=False)
+                    apply_btn_update = gr.update(visible=False)
+                    help_update = gr.update(
+                        value=(
+                            gdpr_help.value if hasattr(gdpr_help, "value") else None
+                        ),
+                        visible=False,
+                    )
+                    replacement_status = ""
+
                 return (
                     result["content"],
                     gr.Button(visible=True),  # save button
                     gr.Button(visible=True),  # revert button
                     gr.Textbox(visible=True, value=result["message"]),
-                    "<p><i>Empfehlungen werden nach der Analyse angezeigt...</i></p>",
-                    "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
-                    "<p><i>Text wird nach der Analyse mit farbigen Markierungen angezeigt...</i></p>",
+                    recommendations_html,
+                    legend_html,
+                    highlighted_html,
                     dropdown_update,
                     replacement_input_update,
                     apply_btn_update,
-                    "",
+                    replacement_status,
                     help_update,
                 )
             else:
@@ -1005,6 +1027,7 @@ class TranscriptionTab:
 
         def auto_analyze_on_upload(file, state, auto_check):
             """Automatically analyze GDPR compliance when file is uploaded; update state to refresh Generator tabs"""
+            print("auto_analyze_on_upload", file, auto_check)
             # First upload the file normally
             upload_result = upload_transcription_file(file, state)
 
@@ -1039,6 +1062,9 @@ class TranscriptionTab:
                             )
 
                             if content_result["success"]:
+                                print(
+                                    "Performing automatic GDPR analysis on uploaded file..."
+                                )
                                 # Perform GDPR analysis
                                 analysis_results = analyze_gdpr_compliance(
                                     content_result["content"]
@@ -1049,11 +1075,28 @@ class TranscriptionTab:
                                     + tuple(upload_result)
                                     + tuple(analysis_results)
                                 )
+                            else:
+                                print(
+                                    f"Fehler beim Laden der Datei für GDPR-Analyse: {content_result.get('error')}"
+                                )
                     except Exception as e:
                         # If filename extraction fails, continue without analysis
                         print(f"Error extracting filename for GDPR analysis: {e}")
+                else:
+                    print("No current talk or file info for GDPR analysis.")
+            else:
+                print("Auto GDPR analysis not performed (disabled or upload failed).")
 
             # Return upload result with empty analysis if auto-check is disabled or failed
+            # Must match 8 GDPR outputs: recommendations, legend, highlighted,
+            # dropdown, replacement textbox, apply button, replacement status, help
+            empty_dropdown = gr.update(choices=[], visible=False)
+            empty_replacement_input = gr.update(value="", visible=False)
+            empty_apply_btn = gr.update(visible=False)
+            empty_help = gr.update(
+                value=(gdpr_help.value if hasattr(gdpr_help, "value") else None),
+                visible=False,
+            )
             return (
                 (new_state,)
                 + tuple(upload_result)
@@ -1061,6 +1104,11 @@ class TranscriptionTab:
                     "<p><i>Automatische GDPR-Analyse deaktiviert oder fehlgeschlagen.</i></p>",
                     "<p><i>Farblegende wird nach der Analyse angezeigt...</i></p>",
                     "<p><i>Kein Text analysiert.</i></p>",
+                    empty_dropdown,
+                    empty_replacement_input,
+                    empty_apply_btn,
+                    "",
+                    empty_help,
                 )
             )
 
@@ -1113,24 +1161,16 @@ class TranscriptionTab:
         )
 
         # Event handlers
+        # On upload: just upload and refresh file lists; GDPR analysis will trigger on selection change
         transcription_file_upload.upload(
-            auto_analyze_on_upload,
-            inputs=[transcription_file_upload, self.app_state, auto_check_gdpr],
+            upload_transcription_file,
+            inputs=[transcription_file_upload, self.app_state],
             outputs=[
-                self.app_state,  # updated state to trigger refresh in other tabs
                 file_upload_status,
                 audio_files_selection,
                 delete_audio_btn,
                 transcription_files_selection,
                 delete_transcription_btn,
-                gdpr_recommendations,
-                color_legend,
-                highlighted_text,
-                gdpr_entity_selector,
-                gdpr_replacement_input,
-                apply_replacements_btn,
-                replacement_status,
-                gdpr_help,
             ],
         )
 
@@ -1198,7 +1238,7 @@ class TranscriptionTab:
 
         transcription_files_selection.change(
             show_transcription_preview,
-            inputs=[self.app_state, transcription_files_selection],
+            inputs=[self.app_state, transcription_files_selection, auto_check_gdpr],
             outputs=[
                 transcription_preview,
                 save_transcription_btn,

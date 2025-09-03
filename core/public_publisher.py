@@ -331,7 +331,6 @@ class PublicPublisher:
                             {f'<li><strong>Vortragende:</strong> {speakers}</li>' if speakers else ''}
                             {f'<li><strong>Ort:</strong> {meta.location}</li>' if meta.location else ''}
                             {f'<li><strong>Link:</strong> <a href="{meta.link}" target="_blank">{meta.link}</a></li>' if meta.link else ''}
-                            {f'<li><strong>Beschreibung:</strong> {meta.description}</li>' if meta.description else ''}
                         </ul>
                     </div>
                 </div>
@@ -363,6 +362,11 @@ class PublicPublisher:
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <title>{meta.title}</title>
             <link rel="stylesheet" href="{base_url}/static/css/style.css" />
+            <link rel="apple-touch-icon" sizes="180x180" href="{base_url}/static/assets/favicon/apple-touch-icon.png">
+            <link rel="icon" type="image/png" sizes="32x32" href="{base_url}/static/assets/favicon/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="{base_url}/static/assets/favicon/favicon-16x16.png">
+            <link rel="icon" href="{base_url}/static/assets/favicon/favicon.ico">
+            <meta name="theme-color" content="#29396d" />
             <script src="{base_url}/static/js/diagram_renderer.js"></script>
             {meta_tags}
         </head>
@@ -397,9 +401,8 @@ class PublicPublisher:
                 </div>
             </main>
             <footer class="site-footer">
-                <div class="container">
-                    <small>© 2025 Institut für Interaktive Systeme @ THL für Moodle Moot Dach 2025</small>
-                </div>
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small>
+                <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
             </footer>
         </body>
         </html>
@@ -467,6 +470,11 @@ class PublicPublisher:
             <meta name="viewport" content="width=device-width, initial-scale=1" />
             <title>Moodle Moot DACH – Talks</title>
             <link rel="stylesheet" href="{base_url}/static/css/style.css" />
+            <link rel="apple-touch-icon" sizes="180x180" href="{base_url}/static/assets/favicon/apple-touch-icon.png">
+            <link rel="icon" type="image/png" sizes="32x32" href="{base_url}/static/assets/favicon/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="{base_url}/static/assets/favicon/favicon-16x16.png">
+            <link rel="icon" href="{base_url}/static/assets/favicon/favicon.ico">
+            <meta name="theme-color" content="#29396d" />
         </head>
         <body>
             <header class="site-header">
@@ -490,9 +498,8 @@ class PublicPublisher:
                 </div>
             </main>
             <footer class="site-footer">
-                <div class="container">
-                    <small>© 2025 Institut für Interaktive Systeme @ THL für Moodle Moot Dach 2025</small>
-                </div>
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small>
+                <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
             </footer>
             <script>
             (function(){{
@@ -526,6 +533,98 @@ class PublicPublisher:
         out_file.parent.mkdir(parents=True, exist_ok=True)
         out_file.write_text(html, encoding="utf-8")
         return out_file
+
+    # ---------- Admin & maintenance helpers ----------
+    def get_published_list(self) -> List[Dict[str, Any]]:
+        """Return the list of published talks from the index JSON."""
+        data = self._load_published()
+        talks = data.get("talks", [])
+        # Ensure each has a slug at minimum
+        return [t for t in talks if isinstance(t, dict) and t.get("slug")]
+
+    def set_published_list(self, talks: List[Dict[str, Any]]) -> None:
+        """Overwrite the published list and persist to disk."""
+        self._save_published({"talks": talks})
+
+    def unpublish(self, slug: str) -> bool:
+        """Remove a talk from the published index and delete its generated public page.
+
+        Returns True if something was removed, False if the slug wasn't present.
+        """
+        data = self._load_published()
+        before = data.get("talks", [])
+        after = [t for t in before if t.get("slug") != slug]
+        removed = len(after) != len(before)
+        if removed:
+            self._save_published({"talks": after})
+            # Remove generated public page directory if present
+            try:
+                safe_slug = self._slugify(slug)
+                out_dir = self.public_dir / "talks" / safe_slug
+                if out_dir.exists():
+                    # Best-effort clean-up
+                    for p in out_dir.glob("*"):
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+                    try:
+                        out_dir.rmdir()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # Refresh index page
+            try:
+                self.update_public_index()
+            except Exception:
+                pass
+        return removed
+
+    def prune_published(self) -> Dict[str, Any]:
+        """Remove entries from the published index whose talk data folders no longer exist."""
+        data = self._load_published()
+        removed: List[str] = []
+        kept: List[Dict[str, Any]] = []
+        for t in data.get("talks", []):
+            slug = t.get("slug", "")
+            if not slug:
+                continue
+            talk_dir = self.talks_dir / slug
+            if talk_dir.exists():
+                kept.append(t)
+            else:
+                removed.append(slug)
+        if len(kept) != len(data.get("talks", [])):
+            self._save_published({"talks": kept})
+            try:
+                self.update_public_index()
+            except Exception:
+                pass
+        return {"removed": removed, "kept_count": len(kept)}
+
+    def regenerate_pages(self) -> Dict[str, Any]:
+        """Regenerate all published talk pages and refresh the public index."""
+        generated: List[str] = []
+        for t in self.get_published_list():
+            slug = t.get("slug")
+            if not slug:
+                continue
+            try:
+                self.generate_talk_page(slug)
+                generated.append(slug)
+            except Exception:
+                # Skip failures but continue with others
+                pass
+        try:
+            self.update_public_index()
+        except Exception:
+            pass
+        return {"generated": generated, "count": len(generated)}
+
+    def talk_data_exists(self, slug: str) -> bool:
+        """Check whether the talk's data folder exists."""
+        return (self.talks_dir / slug).exists()
 
     # ---------- Orchestration ----------
     def publish(

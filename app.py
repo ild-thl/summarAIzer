@@ -44,11 +44,17 @@ class SummarAIzerApp:
         print(f"🔗 Proxy path configured: '{self.proxy_path}'")
 
     def create_interface(self):
+        base = self.proxy_path
         head = f"""
-        <script src="{proxy_path}/static/js/diagram_renderer.js"></script>
-        <script src="{proxy_path}/static/js/gdpr_entity_links.js"></script>
-        <link rel="stylesheet" href="{proxy_path}/static/css/style.css" />
-        
+        <script src="{base}/static/js/diagram_renderer.js"></script>
+        <script src="{base}/static/js/gdpr_entity_links.js"></script>
+        <link rel="stylesheet" href="{base}/static/css/style.css" />
+        <!-- Favicons -->
+        <link rel="apple-touch-icon" sizes="180x180" href="{base}/static/assets/favicon/apple-touch-icon.png">
+        <link rel="icon" type="image/png" sizes="32x32" href="{base}/static/assets/favicon/favicon-32x32.png">
+        <link rel="icon" type="image/png" sizes="16x16" href="{base}/static/assets/favicon/favicon-16x16.png">
+        <link rel="icon" href="{base}/static/assets/favicon/favicon.ico">
+        <meta name="theme-color" content="#29396d" />
         <!-- Private interface: discourage indexing -->
         <meta name="robots" content="noindex,nofollow" />
         """
@@ -63,8 +69,13 @@ class SummarAIzerApp:
             gr.HTML(
                 f"""
             <div class="main-header">
-                <h1>🎓 SummarAIzer</h1>
-                <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
+                <div class="brand-line">
+                    <div>
+                        <img class="app-logo" src="{self.proxy_path}/static/assets/logo.png" alt="SummarAIzer Logo" width=176 heigh=121/>
+                        <h1 style="display: none;">🎓 SummarAIzer</h1>
+                        <p>Modularer AI Content Generator für Moodle Moot DACH Vorträge</p>
+                    </div>
+                </div>
                 <div style=\"display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;\">
                     <a href=\"{self.proxy_path + '/browse/' if self.proxy_path else '/browse/'}\" target=\"_blank\" class=\"nav-link\" style=\"color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 5px; display: block;\">
                         📂 Resource Browser

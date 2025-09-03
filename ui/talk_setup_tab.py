@@ -3,6 +3,8 @@ Talk Setup Tab - UI components for creating and managing talks
 """
 
 import gradio as gr
+import datetime
+from zoneinfo import ZoneInfo
 
 from core.app_state import AppState
 
@@ -24,7 +26,7 @@ class TalkSetupTab:
         """Load talk by its safe_name or return blanks for a new talk"""
         if not safe_name or safe_name == "Neu":
             # new‐talk -> empty fields
-            return "", "", "", "", "", ""
+            return "", "", self.get_current_fomatted_date(), "", "", ""
 
         talk = self.talk_manager.get_talk(safe_name)
         if not talk:
@@ -33,7 +35,7 @@ class TalkSetupTab:
         return (
             talk.get("name", ""),
             talk.get("speaker", ""),
-            talk.get("date", ""),
+            talk.get("date", self.get_current_fomatted_date()),
             talk.get("link", ""),
             talk.get("location", ""),
             talk.get("description", ""),
@@ -48,7 +50,7 @@ class TalkSetupTab:
         else:
             metadata = {
                 "speaker": speaker or "",
-                "date": date or "",
+                "date": date or self.get_current_fomatted_date(),
                 "link": link or "",
                 "location": location or "",
                 "description": description or "",
@@ -109,10 +111,16 @@ class TalkSetupTab:
             state,
             "",
             "",
+            self.get_current_fomatted_date(),
             "",
             "",
             "",
-            "",
+        )
+
+    def get_current_fomatted_date(self):
+        """Get the current date formatted for the talk date field"""
+        return datetime.datetime.now(ZoneInfo("Europe/Berlin")).strftime(
+            "%d.%m.%Y %H:%M"
         )
 
     def create_tab(self):
@@ -150,16 +158,18 @@ class TalkSetupTab:
         # Create the dropdown component with initial refresh
         current_talk_selector = create_current_talk_selector(self.talk_manager)
 
-        # Add a refresh button with clear instructions
+        # New Talk + Refresh controls next to the selector for quicker access
         with gr.Row():
             with gr.Column(scale=2):
-                refresh_btn = gr.Button(
-                    "🔄 Talk-Liste aktualisieren",
-                    variant="secondary",
-                )
+                with gr.Row():
+                    new_talk_btn = gr.Button("➕ Neuer Talk", variant="secondary")
+                    refresh_btn = gr.Button(
+                        "🔄 Talk-Liste aktualisieren",
+                        variant="secondary",
+                    )
             with gr.Column(scale=3):
                 gr.HTML(
-                    "<p style='margin: auto 0; color: #666; font-size: 0.9em;'>Klicken Sie hier, wenn neu erstellte Talks nicht angezeigt werden</p>"
+                    "<p style='margin: auto 0; color: #666; font-size: 0.9em;'>Neuen Talk anlegen oder die Liste aktualisieren, wenn ein Talk fehlt</p>"
                 )
 
         gr.Markdown("---")
@@ -170,35 +180,38 @@ class TalkSetupTab:
 
             talk_name = gr.Textbox(
                 label="🎤 Talk Name *",
-                placeholder="z.B. 'KI in der Bildung - Praxis Workshop'",
                 info="Eindeutiger Name für den Talk",
             )
 
             speaker_name = gr.Textbox(
                 label="👤 Sprecher/in",
-                placeholder="z.B. 'Prof. Dr. Maria Mustermann'",
             )
 
             talk_date = gr.Textbox(
                 label="📅 Datum",
-                placeholder="z.B. '23.07.2025' oder '23.07.2025 14:00'",
+                placeholder=self.get_current_fomatted_date(),
+                value=self.get_current_fomatted_date(),
             )
 
             link = gr.Textbox(
                 label="🔗 Link",
-                placeholder="z.B. 'https://moodlemoot.de/programm/talk-123' oder 'https://conference.com/sessions/ai-education'",
                 info="Link zu weiteren Informationen über den Talk",
+                visible=False,
             )
 
             location = gr.Textbox(
                 label="📍 Ort/Event",
-                placeholder="z.B. 'Moodle Moot DACH 2025, München'",
+                placeholder="z.B. 'MoodleMoot DACH 2025'",
+                value="MoodleMoot DACH 2025",
+                visible=False,
             )
 
             description = gr.Textbox(
-                label="📝 Beschreibung",
+                label="📝 Kurzbeschreibung",
                 lines=3,
                 placeholder="Kurze Beschreibung des Talks, Themen, Zielgruppe...",
+                max_length=300,
+                visible=False,
             )
 
             # Status message (updated after save or delete)
@@ -219,6 +232,39 @@ class TalkSetupTab:
 
         # Refresh button to update talk list
         refresh_btn.click(fn=refresh_talk_selector, outputs=[current_talk_selector])
+
+        # Quick action: start a new talk (sets selector to "Neu" and clears fields)
+        def start_new_talk(current_state):
+            choices = refresh_talk_selector_choices(self.talk_manager)
+            # set state to "Neu"
+            state = AppState.from_gradio_state(current_state).set("current_talk", "Neu")
+            return (
+                "",  # status message
+                gr.Dropdown(choices=choices, value="Neu"),  # selector value
+                state,  # app state
+                "",  # talk_name
+                "",  # speaker_name
+                self.get_current_fomatted_date(),
+                "",  # link
+                "",  # location
+                "",  # description
+            )
+
+        new_talk_btn.click(
+            fn=start_new_talk,
+            inputs=[self.app_state],
+            outputs=[
+                status_message,
+                current_talk_selector,
+                self.app_state,
+                talk_name,
+                speaker_name,
+                talk_date,
+                link,
+                location,
+                description,
+            ],
+        )
 
         # Update app state when talk selection changes
         def update_app_state(selected_talk, current_state):

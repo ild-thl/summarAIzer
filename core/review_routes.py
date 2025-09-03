@@ -93,6 +93,15 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     sum_btn = _btn(summary_url, "Quelle öffnen")
     dia_btn = _btn(mermaid_url, "Quelle öffnen")
     trn_btn = _btn(transcript_url, "Transkript öffnen")
+    # Quotes feedback persistence/defaults
+    existing_quotes = existing.get("quotes") or {}
+    quotes_present = existing_quotes.get("present")
+    if quotes_present is None:
+        quotes_present = True
+    quotes_none_checked = " checked" if not quotes_present else ""
+    quotes_container_style = (
+        ' style="opacity:0.5;pointer-events:none;"' if not quotes_present else ""
+    )
     success_banner = (
         """
         <div style=\"background:#e6ffed;border:1px solid #b7f5c2;padding:10px 12px;border-radius:8px;margin:16px 0;\">
@@ -111,6 +120,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     <meta name=\"robots\" content=\"noindex,nofollow\" />
     <title>Review – {talk_meta.title}</title>
     <link rel=\"stylesheet\" href=\"{css_href}\" />
+    <script src="{base}/static/js/review.js"></script>
     </head>
     <body>
     <header class=\"site-header\">
@@ -123,11 +133,31 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     </header>
     <main class=\"container\">
     {success_banner}
-        <form method=\"post\" action=\"{base}/review/submit\">
+    <form method=\"post\" action=\"{base}/review/submit\">
+    <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
+    <input type=\"hidden\" name=\"schema_version\" value=\"3\" />
         <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
     <input type=\"hidden\" name=\"schema_version\" value=\"2\" />
 
-        <section class=\"section\">
+    <section class=\"section\">
+        <h2>Zusammenfassung {sum_btn}</h2>
+        {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
+        {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
+        {_labelled_radio_group('summary_clarity', 'Verständlichkeit', value=(existing.get('summary') or {}).get('clarity'))}
+        <div class=\"subsection\" style=\"margin-top:12px;\">
+        <h3 style=\"margin-bottom:8px;\">Zitate in der Zusammenfassung</h3>
+        <div class=\"form-row\">
+          <div class=\"form-label\">Zitate</div>
+          <div class=\"form-input\">
+            <label><input type=\"checkbox\" id=\"quotes_none\" name=\"quotes_none\" value=\"1\"{quotes_none_checked}> Keine Zitate enthalten</label>
+          </div>
+        </div>
+        <div id=\"quotes_questions\"{quotes_container_style}>
+          {_labelled_radio_group('quote_correctness', 'Korrektheit der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('correctness'))}
+          {_labelled_radio_group('quote_usefulness', 'Aussagekraft der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('usefulness'))}
+        </div>
+        </div>
+    </section>
             <h2>Zusammenfassung {sum_btn}</h2>
             {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
             {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
@@ -210,11 +240,22 @@ async def review_submit(request: Request):
         except Exception:
             return None
 
+    # Parse quotes checkbox
+    quotes_none = (form.get("quotes_none") is not None) and (
+        form.get("quotes_none") != "0"
+    )
+    quotes_present = not quotes_none
+
     feedback: Dict[str, Any] = {
         "summary": {
             "correctness": to_int("summary_correctness"),
             "usefulness": to_int("summary_usefulness"),
             "clarity": to_int("summary_clarity"),
+        },
+        "quotes": {
+            "present": quotes_present,
+            "correctness": to_int("quote_correctness") if quotes_present else None,
+            "usefulness": to_int("quote_usefulness") if quotes_present else None,
         },
         "diagram": {
             "correctness": to_int("diagram_correctness"),
@@ -247,3 +288,84 @@ async def review_submit(request: Request):
     base = _base_prefix()
     # Always redirect back to the review page so users can iterate; include saved flag
     return RedirectResponse(url=f"{base}/review/{slug}?saved=1", status_code=302)
+
+
+# ---------- Admin: Manage public index ----------
+@router.get("/admin/public", response_class=HTMLResponse)
+async def public_admin() -> HTMLResponse:
+    base = _base_prefix()
+    talks = publisher.get_published_list()
+    rows = []
+    for t in talks:
+        slug = t.get("slug", "")
+        title = t.get("title", slug)
+        exists = publisher.talk_data_exists(slug)
+        exists_badge = (
+            '<span class="badge badge-ok">exists</span>'
+            if exists
+            else '<span class="badge badge-warn">missing</span>'
+        )
+        rows.append(
+            f"<tr><td>{slug}</td><td>{title}</td><td>{exists_badge}</td>"
+            f"<td><a class='btn btn-small' href='{base}/talk/{publisher._slugify(slug)}' target='_blank'>View</a>"
+            f" <a class='btn btn-small' href='{base}/admin/public/unpublish/{slug}'>Unpublish</a></td></tr>"
+        )
+
+    html = f"""
+        <!doctype html>
+        <html lang=\"de\">
+        <head>
+            <meta charset=\"utf-8\" />
+            <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+            <title>Admin – Public Index</title>
+            <link rel=\"stylesheet\" href=\"{base}/static/css/style.css\" />
+            <style>
+            .admin-actions {{ margin: 12px 0; }}
+            .admin-actions .btn {{ margin-right: 8px; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ border-bottom: 1px solid #eee; padding: 8px; text-align: left; }}
+            .badge {{ padding: 2px 6px; border-radius: 4px; font-size: 12px; }}
+            .badge-ok {{ background: #e6ffed; border: 1px solid #b7f5c2; }}
+            .badge-warn {{ background: #fff6e6; border: 1px solid #f5deb7; }}
+            </style>
+        </head>
+        <body>
+            <header class=\"site-header\"> <div class=\"container\"><div class='page-title'><h1>Public Index Verwaltung</h1></div></div> </header>
+            <main class=\"container\">
+                <div class=\"admin-actions\">
+                    <a class=\"btn\" href=\"{base}/admin/public/prune\">Prune missing</a>
+                    <a class=\"btn\" href=\"{base}/admin/public/regenerate\">Regenerate pages</a>
+                    <a class=\"btn\" href=\"{base}/public/\" target=\"_blank\">Open Public Index</a>
+                </div>
+                <table>
+                    <thead><tr><th>Slug</th><th>Title</th><th>Data</th><th>Actions</th></tr></thead>
+                    <tbody>
+                        {''.join(rows) if rows else '<tr><td colspan="4"><em>No published talks</em></td></tr>'}
+                    </tbody>
+                </table>
+            </main>
+        </body>
+        </html>
+        """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/public/unpublish/{slug}")
+async def admin_unpublish(slug: str):
+    publisher.unpublish(slug)
+    base = _base_prefix()
+    return RedirectResponse(url=f"{base}/admin/public", status_code=302)
+
+
+@router.get("/admin/public/prune")
+async def admin_prune():
+    publisher.prune_published()
+    base = _base_prefix()
+    return RedirectResponse(url=f"{base}/admin/public", status_code=302)
+
+
+@router.get("/admin/public/regenerate")
+async def admin_regenerate():
+    publisher.regenerate_pages()
+    base = _base_prefix()
+    return RedirectResponse(url=f"{base}/admin/public", status_code=302)
