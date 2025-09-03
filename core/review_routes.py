@@ -133,86 +133,81 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     </header>
     <main class=\"container\">
     {success_banner}
-    <form method=\"post\" action=\"{base}/review/submit\">
-    <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
-    <input type=\"hidden\" name=\"schema_version\" value=\"3\" />
-        <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
-    <input type=\"hidden\" name=\"schema_version\" value=\"2\" />
+        <form method=\"post\" action=\"{base}/review/submit\">
+            <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
+            <input type=\"hidden\" name=\"schema_version\" value=\"3\" />
+                <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
+            <input type=\"hidden\" name=\"schema_version\" value=\"2\" />
 
-    <section class=\"section\">
-        <h2>Zusammenfassung {sum_btn}</h2>
-        {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
-        {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
-        {_labelled_radio_group('summary_clarity', 'Verständlichkeit', value=(existing.get('summary') or {}).get('clarity'))}
-        <div class=\"subsection\" style=\"margin-top:12px;\">
-        <h3 style=\"margin-bottom:8px;\">Zitate in der Zusammenfassung</h3>
-        <div class=\"form-row\">
-          <div class=\"form-label\">Zitate</div>
-          <div class=\"form-input\">
-            <label><input type=\"checkbox\" id=\"quotes_none\" name=\"quotes_none\" value=\"1\"{quotes_none_checked}> Keine Zitate enthalten</label>
-          </div>
-        </div>
-        <div id=\"quotes_questions\"{quotes_container_style}>
-          {_labelled_radio_group('quote_correctness', 'Korrektheit der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('correctness'))}
-          {_labelled_radio_group('quote_usefulness', 'Aussagekraft der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('usefulness'))}
-        </div>
-        </div>
-    </section>
-            <h2>Zusammenfassung {sum_btn}</h2>
-            {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
-            {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
-            {_labelled_radio_group('summary_clarity', 'Verständlichkeit', value=(existing.get('summary') or {}).get('clarity'))}
-        </section>
+            <section class=\"section\">
+                <h2>Zusammenfassung {sum_btn}</h2>
+                {_labelled_radio_group('summary_correctness', 'Korrektheit', value=(existing.get('summary') or {}).get('correctness'))}
+                {_labelled_radio_group('summary_usefulness', 'Nützlichkeit', value=(existing.get('summary') or {}).get('usefulness'))}
+                {_labelled_radio_group('summary_clarity', 'Verständlichkeit', value=(existing.get('summary') or {}).get('clarity'))}
+                <div class=\"subsection\" style=\"margin-top:12px;\">
+                <h3 style=\"margin-bottom:8px;\">Zitate in der Zusammenfassung</h3>
+                <div class=\"form-row\">
+                <div class=\"form-label\">Zitate</div>
+                <div class=\"form-input\">
+                    <label><input type=\"checkbox\" id=\"quotes_none\" name=\"quotes_none\" value=\"1\"{quotes_none_checked}> Keine Zitate enthalten</label>
+                </div>
+                </div>
+                <div id=\"quotes_questions\"{quotes_container_style}>
+                {_labelled_radio_group('quote_correctness', 'Korrektheit der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('correctness'))}
+                {_labelled_radio_group('quote_usefulness', 'Aussagekraft der Zitate', required=quotes_present, value=(existing.get('quotes') or {}).get('usefulness'))}
+                </div>
+                </div>
+            </section>
 
-        <section class=\"section\">
-            <h2>Diagramme {dia_btn}</h2>
-            {_labelled_radio_group('diagram_correctness', 'Korrektheit', value=(existing.get('diagram') or {}).get('correctness'))}
-            {_labelled_radio_group('diagram_usefulness', 'Nützlichkeit', value=(existing.get('diagram') or {}).get('usefulness'))}
-            {_labelled_radio_group('diagram_clarity', 'Verständlichkeit', value=(existing.get('diagram') or {}).get('clarity'))}
-        </section>
+            <section class=\"section\">
+                <h2>Diagramme {dia_btn}</h2>
+                {_labelled_radio_group('diagram_correctness', 'Korrektheit', value=(existing.get('diagram') or {}).get('correctness'))}
+                {_labelled_radio_group('diagram_usefulness', 'Nützlichkeit', value=(existing.get('diagram') or {}).get('usefulness'))}
+                {_labelled_radio_group('diagram_clarity', 'Verständlichkeit', value=(existing.get('diagram') or {}).get('clarity'))}
+            </section>
 
-        <section class=\"section\">
-            <h2>Bildqualität {('<a class="btn btn-light" href="' + cover_url + '" target="_blank">Cover öffnen</a>') if cover_url else ''}</h2>
-            {_labelled_radio_group('image_relevance', 'Relevanz zum Inhalt', value=(existing.get('image') or {}).get('relevance'))}
-            {_labelled_radio_group('image_quality', 'Bildqualität', value=(existing.get('image') or {}).get('quality'))}
-        </section>
+            <section class=\"section\">
+                <h2>Bildqualität {('<a class="btn btn-light" href="' + cover_url + '" target="_blank">Cover öffnen</a>') if cover_url else ''}</h2>
+                {_labelled_radio_group('image_relevance', 'Relevanz zum Inhalt', value=(existing.get('image') or {}).get('relevance'))}
+                {_labelled_radio_group('image_quality', 'Bildqualität', value=(existing.get('image') or {}).get('quality'))}
+            </section>
 
-        <section class=\"section\">
-            <h2>Transkript {trn_btn}</h2>
-            {_labelled_radio_group('transcript_completeness', 'Vollständigkeit', value=(existing.get('transcript') or {}).get('completeness'))}
-                {_labelled_radio_group('transcript_correctness', 'Korrektheit', value=(existing.get('transcript') or {}).get('correctness'))}
-        </section>
+            <section class=\"section\">
+                <h2>Transkript {trn_btn}</h2>
+                {_labelled_radio_group('transcript_completeness', 'Vollständigkeit', value=(existing.get('transcript') or {}).get('completeness'))}
+                    {_labelled_radio_group('transcript_correctness', 'Korrektheit', value=(existing.get('transcript') or {}).get('correctness'))}
+            </section>
 
-        <section class=\"section\">
-            <h2>Gesamteinschätzung</h2>
-            {_labelled_radio_group('overall_usefulness', 'Gesamtnützlichkeit', value=(existing.get('overall') or {}).get('overall_usefulness'))}
-            {_labelled_radio_group('practicality', 'Praktikabilität im Einsatz', value=(existing.get('overall') or {}).get('practicality'))}
-            {_labelled_radio_group('trust', 'Vertrauen in die Inhalte', value=(existing.get('overall') or {}).get('trust'))}
-            <div class=\"form-row\">
-            <div class=\"form-label\">Zeitaufwand (min)</div>
-            <div class=\"form-input\"><input type=\"number\" name=\"time_spent_min\" min=\"0\" step=\"1\" value=\"{(existing.get('time_spent_min') or '')}\" /></div>
+            <section class=\"section\">
+                <h2>Gesamteinschätzung</h2>
+                {_labelled_radio_group('overall_usefulness', 'Gesamtnützlichkeit', value=(existing.get('overall') or {}).get('overall_usefulness'))}
+                {_labelled_radio_group('practicality', 'Praktikabilität im Einsatz', value=(existing.get('overall') or {}).get('practicality'))}
+                {_labelled_radio_group('trust', 'Vertrauen in die Inhalte', value=(existing.get('overall') or {}).get('trust'))}
+                <div class=\"form-row\">
+                <div class=\"form-label\">Zeitaufwand (min)</div>
+                <div class=\"form-input\"><input type=\"number\" name=\"time_spent_min\" min=\"0\" step=\"1\" value=\"{(existing.get('time_spent_min') or '')}\" /></div>
+                </div>
+                <div class=\"form-row\">
+                <div class=\"form-label\">Freitext</div>
+                <div class=\"form-input\"><textarea name=\"comments\" placeholder=\"Optionales Feedback...\" rows=\"4\" maxlength=\"1500\">{(existing.get('comments') or '')}</textarea></div>
+                </div>
+            </section>
+
+            <section class=\"section\">
+                <h2>Freigabe</h2>
+                <div class=\"form-row\">
+                <div class=\"form-label\">Veröffentlichen?</div>
+                <div class=\"form-input\">
+                    <label><input type=\"radio\" name=\"approve\" value=\"yes\" required{approve_yes_checked}> Ja</label>
+                    <label style=\"margin-left:12px;\"><input type=\"radio\" name=\"approve\" value=\"no\" required{approve_no_checked}> Nein</label>
+                </div>
+                </div>
+            </section>
+
+            <div class=\"actions\">
+                <button type=\"submit\" class=\"btn\">Bewertung speichern</button>
+                <a class=\"btn\" href=\"{base}/public/\">Zur öffentlichen Übersicht</a>
             </div>
-            <div class=\"form-row\">
-            <div class=\"form-label\">Freitext</div>
-            <div class=\"form-input\"><textarea name=\"comments\" placeholder=\"Optionales Feedback...\" rows=\"4\" maxlength=\"1500\">{(existing.get('comments') or '')}</textarea></div>
-            </div>
-        </section>
-
-        <section class=\"section\">
-            <h2>Freigabe</h2>
-            <div class=\"form-row\">
-            <div class=\"form-label\">Veröffentlichen?</div>
-            <div class=\"form-input\">
-                <label><input type=\"radio\" name=\"approve\" value=\"yes\" required{approve_yes_checked}> Ja</label>
-                <label style=\"margin-left:12px;\"><input type=\"radio\" name=\"approve\" value=\"no\" required{approve_no_checked}> Nein</label>
-            </div>
-            </div>
-        </section>
-
-        <div class=\"actions\">
-            <button type=\"submit\" class=\"btn\">Bewertung speichern</button>
-            <a class=\"btn\" href=\"{base}/public/\">Zur öffentlichen Übersicht</a>
-        </div>
         </form>
     </main>
     </body>
