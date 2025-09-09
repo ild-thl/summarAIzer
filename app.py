@@ -4,6 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse, Response
+from fastapi import Body
 from fastapi import Form
 from fastapi.requests import Request
 import uvicorn
@@ -285,7 +286,7 @@ app.include_router(review_router)
 # Add markdown rendering endpoint
 @app.get("/markdown/{file_path:path}")
 async def render_markdown(file_path: str):
-    """Render markdown files as HTML"""
+    """Render markdown files with integrated editable view."""
     return await resource_browser.render_markdown(file_path)
 
 
@@ -396,6 +397,21 @@ async def browse_root():
 async def browse_directory(dir_path: str = ""):
     """Browse resources directory with nice HTML interface"""
     return await resource_browser.browse_directory(dir_path)
+
+
+# -------------------- Unified Editing APIs --------------------
+
+
+@app.post("/api/save/{file_path:path}")
+async def save_file(file_path: str, payload: dict = Body(...)):
+    content = payload.get("content", "")
+    return await resource_browser.save_file(file_path, content)
+
+
+@app.post("/api/preview_markdown")
+async def preview_markdown(payload: dict = Body(...)):
+    content = payload.get("content", "")
+    return await resource_browser.preview_markdown(content)
 
 
 # Add redirect for resources root to browser (relative for proxy-friendliness)

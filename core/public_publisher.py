@@ -110,7 +110,55 @@ class PublicPublisher:
             summary_md = find_first(gen, (".md",))
 
         mermaid_md = (gen / "mermaid.md") if (gen / "mermaid.md").exists() else None
-        transcription_txt = find_first(trans_dir, (".txt",))
+
+        # --- Transcription handling: combine multiple files if present ---
+        transcription_txt: Optional[Path] = None
+        if trans_dir.exists():
+            txt_files = sorted(
+                [
+                    p
+                    for p in trans_dir.iterdir()
+                    if p.is_file()
+                    and p.suffix.lower() == ".txt"
+                    and p.name != "_combined_transcription.txt"
+                ]
+            )
+            if len(txt_files) == 1:
+                transcription_txt = txt_files[0]
+            elif len(txt_files) > 1:
+                combined = trans_dir / "_combined_transcription.txt"
+                rebuild = True
+                if combined.exists():
+                    combo_mtime = combined.stat().st_mtime
+                    # Rebuild only if any source newer or file count changed (count via comment header optional)
+                    if all(f.stat().st_mtime <= combo_mtime for f in txt_files):
+                        rebuild = False
+                        print(f"Using existing combined transcription for '{slug}'")
+                        transcription_txt = combined
+                if rebuild:
+                    print(
+                        f"Combining {len(txt_files)} transcription files for '{slug}'"
+                    )
+                    try:
+                        with combined.open("w", encoding="utf-8") as out:
+                            for idx, f in enumerate(txt_files, 1):
+                                try:
+                                    out.write(f.read_text(encoding="utf-8"))
+                                except Exception as e:
+                                    out.write(f"[Fehler beim Lesen: {e}]")
+                    except Exception:
+                        # Fall back to first file if combine operation fails
+                        transcription_txt = txt_files[0]
+                    else:
+                        transcription_txt = combined
+            else:
+                # No transcription files
+                transcription_txt = None
+                print(f"No transcription files found")
+        else:
+            print(f"Transcription dir not found {trans_dir}")
+            transcription_txt = None
+
         image = None
         for ext in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
             candidate = gen / f"cover{ext}"

@@ -20,7 +20,7 @@ gradio-app {
 .container,
 .gradio-container {
     max-width: 1200px !important;
-    width: 100% !important;
+    width: inherit;
     padding-left: 16px;
     padding-right: 16px;
 }
@@ -182,6 +182,7 @@ main.container {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     gap: 16px;
+    justify-items: stretch;
 }
 
 .badges {
@@ -313,9 +314,6 @@ main.container {
 }
 
 /* Tab and content styles */
-.tab-content {
-    padding: 20px;
-}
 
 .component-section {
     background: #f49631;
@@ -506,6 +504,66 @@ textarea {
 
     .hero.hero-image img {
         height: 240px;
+    }
+
+    /* Center header content and avoid overflow on small screens */
+    .site-header .top-nav {
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .site-header .page-title {
+        text-align: center;
+    }
+
+    .site-header .page-title h1 {
+        font-size: 1.5rem;
+        line-height: 1.2;
+        word-break: break-word;
+    }
+}
+
+/* Narrow screens: ensure cards and review form are mobile-friendly */
+@media (max-width: 680px) {
+
+    /* Cards grid: single column, centered, no overflow */
+    .cards {
+        grid-template-columns: 1fr;
+        justify-items: center;
+    }
+
+    .cards .card {
+        width: 100%;
+        max-width: 600px;
+    }
+
+    /* Review form: stack label over control to let Likert use full width */
+    .form-row {
+        grid-template-columns: 1fr;
+        align-items: start;
+        gap: 8px;
+    }
+
+    .form-label {
+        margin-bottom: 2px;
+    }
+
+    .likert {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .likert label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 1 1 auto;
+        min-width: 48px;
+    }
+
+    .likert-anchor {
+        white-space: nowrap;
     }
 }
 
@@ -1006,4 +1064,109 @@ fieldset {
 legend {
     font-weight: 700;
     margin-bottom: 8px;
+}
+
+.editor-tabs {
+    margin-top: 20px;
+}
+
+.tab-buttons {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    border-bottom: 1px solid #d0d7de;
+    position: relative;
+}
+
+.tab-buttons button {
+    background: #f6f8fa;
+    border: 1px solid #d0d7de;
+    border-bottom: none;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: 14px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    font-weight: 500;
+    color: #24292f;
+    position: relative;
+    top: 1px;
+}
+
+.tab-buttons button:not(.active):hover {
+    background: #eef2f5;
+}
+
+.tab-buttons button.active {
+    background: #fff;
+}
+
+.tab-buttons button.save-btn {
+    margin-left: auto;
+    background: #28a745;
+    color: #fff;
+    border: 1px solid #248a37;
+    top: 0;
+}
+
+.tab-buttons button.save-btn:hover {
+    filter: brightness(1.05);
+    background: #28a745;
+}
+
+.tab-buttons button.save-btn[disabled] {
+    opacity: .55;
+    cursor: not-allowed;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+#editor {
+    width: 100%;
+    min-height: 60vh;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 14px;
+    padding: 12px;
+    border: 1px solid #d0d7de;
+    border-radius: 0 6px 6px 6px;
+    background: #fafafa;
+    box-sizing: border-box;
+    line-height: 1.5;
+}
+
+#tab-preview {
+    border: 1px solid #d0d7de;
+    border-radius: 0 6px 6px 6px;
+}
+
+#previewArea {
+    min-height: 60vh;
+    padding: 16px;
+    background: #fff;
+    border-radius: 0 6px 6px 6px;
+    overflow: auto;
+}
+
+.status-ok {
+    color: #2d7a36;
+}
+
+.status-error {
+    color: #c0392b;
+    position: absolute;
+    top: 4px;
+    right: 94px;
+}
+
+@media (max-width:700px) {
+    .tab-buttons button {
+        font-size: 13px;
+        padding: 5px 10px;
+    }
 }

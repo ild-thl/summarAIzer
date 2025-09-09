@@ -7,7 +7,7 @@ import re
 import os
 from pathlib import Path
 from fastapi import HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from .public_publisher import PublicPublisher
 
 
@@ -128,100 +128,14 @@ class ResourceBrowser:
         elif suffix == ".csv":
             return "csv", f"{base}/resources/{relative_path}"
         elif suffix in [".txt", ".log"]:
-            return "text", f"{base}/resources/{relative_path}"
+            # Open plain text/transcriptions in the editable viewer like markdown
+            return "text", f"{base}/markdown/{relative_path}"
         else:
             return "file", f"{base}/resources/{relative_path}"
 
     async def render_markdown(self, file_path: str) -> HTMLResponse:
-        """Render markdown files as HTML with enhanced features"""
-        try:
-            # Security: Ensure the path is within the resources directory
-            file_path = file_path.lstrip("/")
-            safe_path = self.base_resources / file_path
-
-            # Check if file exists and is within resources directory
-            if not safe_path.exists():
-                raise HTTPException(status_code=404, detail="File not found")
-
-            if not safe_path.suffix.lower() in [".md", ".markdown"]:
-                raise HTTPException(status_code=400, detail="Not a markdown file")
-
-            # Verify the file is within the resources directory
-            try:
-                safe_path.relative_to(self.base_resources)
-            except ValueError:
-                raise HTTPException(status_code=403, detail="Access denied")
-
-            # Read and render markdown
-            with open(safe_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            # Process Mermaid code blocks first
-            content = self.process_mermaid_content(content)
-
-            # Convert markdown to HTML with enhanced extensions
-            html_content = markdown.markdown(
-                content,
-                extensions=[
-                    "tables",
-                    "fenced_code",
-                    "toc",
-                    "codehilite",
-                    "attr_list",
-                    "def_list",
-                ],
-            )
-
-            # Generate breadcrumb
-            breadcrumb = self.get_breadcrumb_html(file_path, is_markdown=True)
-
-            # Compute browse base URL for back button
-            browse_base_url = self.get_browse_base_url()
-            parent_path = "/".join(file_path.split("/")[:-1])
-            back_link = f"{browse_base_url}{parent_path}"
-
-            # Wrap in a nice HTML template with Mermaid support
-            static_base = os.getenv("PROXY_PATH", "").rstrip("/")
-            full_html = f"""
-            <!DOCTYPE html>
-            <html lang="de">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <meta name="robots" content="noindex,nofollow">
-                <title>{safe_path.name} - SummarAIzer</title>
-                <script src="{static_base}/static/js/diagram_renderer.js"></script>
-                <script src="{static_base}/static/js/browser.js"></script>
-                <link rel="stylesheet" href="{static_base}/static/css/style.css" />
-            </head>
-            <body>
-                <div class="main">
-                    <div class="container">
-                        <div class="header">
-                            <div class="breadcrumb">
-                                {breadcrumb}
-                            </div>
-                            <h1>📄 {safe_path.name}</h1>
-                        </div>
-                        {html_content}
-                        
-                        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee;">
-                            <a href="{back_link}" class="back-button">
-                                ← Back to folder
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-
-            return HTMLResponse(content=full_html)
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Error rendering markdown: {str(e)}"
-            )
+        """Render markdown now using the unified editable view."""
+        return await self.render_editor(file_path)
 
     async def browse_directory(self, dir_path: str = "") -> HTMLResponse:
         """Browse resources directory with nice HTML interface"""
@@ -427,17 +341,6 @@ class ResourceBrowser:
                                 {items_html}
                             </tbody>
                         </table>
-                        
-                        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; color: #666; font-size: 14px;">
-                            <p><strong>File Types:</strong></p>
-                            <ul>
-                                <li>📝 Markdown files will be rendered as HTML with Mermaid diagram support</li>
-                                <li>🖼️ Images can be viewed directly</li>
-                                <li>🎵 Audio files can be played</li>
-                                <li>📋 JSON files can be downloaded or viewed</li>
-                                <li>📄 Other files will be served as downloads</li>
-                            </ul>
-                        </div>
                     </div>
                 </div>
             </body>
@@ -471,3 +374,189 @@ class ResourceBrowser:
             raise HTTPException(
                 status_code=500, detail=f"Error serving image: {str(e)}"
             )
+
+    # -------------------- Editable Viewer (Markdown / Text) --------------------
+
+    def _read_editable_file(self, safe_path: Path) -> str:
+        if not safe_path.exists() or not safe_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        if safe_path.stat().st_size > 2 * 1024 * 1024:  # 2MB limit
+            raise HTTPException(status_code=400, detail="File too large to edit (>2MB)")
+        with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    def _render_markdown_fragment(self, content: str) -> str:
+        # Reuse mermaid processing
+        processed = self.process_mermaid_content(content)
+        html_content = markdown.markdown(
+            processed,
+            extensions=[
+                "tables",
+                "fenced_code",
+                "toc",
+                "codehilite",
+                "attr_list",
+                "def_list",
+            ],
+        )
+        return html_content
+
+    async def render_editor(self, file_path: str) -> HTMLResponse:
+        """Render an editable Raw / Preview tabbed interface for markdown & text files"""
+        try:
+            rel = file_path.lstrip("/")
+            safe_path = (self.base_resources / rel).resolve()
+            base_resolved = self.base_resources.resolve()
+            if not str(safe_path).startswith(str(base_resolved)):
+                raise HTTPException(status_code=403, detail="Access denied")
+            if safe_path.suffix.lower() not in [".md", ".markdown", ".txt", ".log"]:
+                raise HTTPException(
+                    status_code=400, detail="Unsupported file type for editing"
+                )
+
+            content = self._read_editable_file(safe_path)
+            is_markdown = safe_path.suffix.lower() in [".md", ".markdown"]
+            breadcrumb = self.get_breadcrumb_html(rel, is_markdown=is_markdown)
+            browse_base_url = self.get_browse_base_url()
+            parent_path = "/".join(rel.split("/")[:-1])
+            back_link = (
+                f"{browse_base_url}{parent_path}" if parent_path else browse_base_url
+            )
+            static_base = os.getenv("PROXY_PATH", "").rstrip("/")
+            esc_content = (
+                content.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\u00a0", "&nbsp;")
+            )
+            # Provide inline CSS for the editor tabs (lightweight)
+            html = f"""
+            <!DOCTYPE html>
+            <html lang="de">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <meta name="robots" content="noindex,nofollow">
+                <title>Edit {safe_path.name} - SummarAIzer</title>
+                <script src="{static_base}/static/js/diagram_renderer.js"></script>
+                <script src="{static_base}/static/js/browser.js"></script>
+                <link rel="stylesheet" href="{static_base}/static/css/style.css" />
+            </head>
+            <body>
+                <div class="main"><div class="container">
+                    <div class="header">
+                        <div class="breadcrumb">{breadcrumb}</div>
+                        <h1>✏️ Edit: {safe_path.name}</h1>
+                        <p style="margin:4px 0 0;font-size:14px;">Editing within <code>resources/</code>.{' Markdown preview supports Mermaid diagrams.' if is_markdown else ' Plain text preview.'}</p>
+                    </div>
+                    <div class="editor-tabs" data-file="{rel}" data-mode="{'markdown' if is_markdown else 'text'}">
+                        <div class="tab-buttons">
+                            <button data-tab="raw" class="active" type="button">Raw</button>
+                            <button data-tab="preview" type="button">Preview</button>
+                            <button id="saveBtn" class="save-btn" type="button" disabled>💾 Save</button>
+                            <span id="saveStatus" class="muted" style="margin-left:4px;"></span>
+                        </div>
+                        <div id="tab-raw" class="tab-content active">
+                            <textarea id="editor" spellcheck="false">{esc_content}</textarea>
+                        </div>
+                        <div id="tab-preview" class="tab-content">
+                            <div id="previewArea" class="preview-area muted">Switch to Preview to render…</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:24px;">
+                        <a href="{back_link}" class="back-button">← Back to folder</a>
+                    </div>
+                </div></div>
+                <script>
+                (function() {{
+                    const root = document.querySelector('.editor-tabs');
+                    if(!root) return;
+                    const filePath = root.getAttribute('data-file');
+                    const mode = root.getAttribute('data-mode');
+                    const btns = root.querySelectorAll('.tab-buttons button[data-tab]');
+                    const saveBtn = document.getElementById('saveBtn');
+                    const statusEl = document.getElementById('saveStatus');
+                    const editor = document.getElementById('editor');
+                    const previewArea = document.getElementById('previewArea');
+                    let dirty = false; let lastPreviewSrc = null; let previewPending = false; let previewTimer = null;
+
+                    function setDirty(v) {{
+                        dirty = v; saveBtn.disabled = !dirty; if(!dirty) window.onbeforeunload = null; else window.onbeforeunload = () => 'Unsaved changes';
+                    }}
+                    editor.addEventListener('input', () => {{ setDirty(true); if(document.querySelector('button[data-tab="preview"].active')) schedulePreview(); }});
+
+                    btns.forEach(b => b.addEventListener('click', () => {{
+                        btns.forEach(x => x.classList.remove('active'));
+                        b.classList.add('active');
+                        const tab = b.getAttribute('data-tab');
+                        root.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                        document.getElementById('tab-' + tab).classList.add('active');
+                        if(tab === 'preview') renderPreview();
+                    }}));
+
+                    function schedulePreview() {{ clearTimeout(previewTimer); previewTimer = setTimeout(renderPreview, 500); }}
+
+                    function renderPreview() {{
+                        const txt = editor.value;
+                        if(mode === 'markdown') {{
+                            if(lastPreviewSrc === txt && !dirty) return; // nothing new
+                            previewArea.innerHTML = '<em>Rendering…</em>';
+                            fetch('{static_base}/api/preview_markdown', {{ method:'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ content: txt }}) }})
+                               .then(r => r.ok ? r.json() : r.json().then(j=>Promise.reject(j)))
+                               .then(j => {{ previewArea.innerHTML = j.html; window.renderMermaidDiagrams && window.renderMermaidDiagrams(); lastPreviewSrc = txt; }})
+                               .catch(err => {{ previewArea.innerHTML = '<span style="color:#c00;">Preview error</span>'; console.error(err); }});
+                        }} else {{
+                            // Plain text
+                            const esc = txt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                            previewArea.innerHTML = '<pre style="white-space:pre-wrap;">' + esc + '</pre>';
+                            lastPreviewSrc = txt;
+                        }}
+                    }}
+
+                    saveBtn.addEventListener('click', () => {{
+                        const txt = editor.value;
+                        statusEl.textContent = 'Saving…';
+                        fetch('{static_base}/api/save/' + filePath, {{ method:'POST', headers: {{'Content-Type':'application/json'}}, body: JSON.stringify({{ content: txt }}) }})
+                           .then(r => r.ok ? r.json() : r.json().then(j=>Promise.reject(j)))
+                           .then(j => {{ statusEl.textContent = 'Saved'; statusEl.className='status-ok'; setDirty(false); setTimeout(()=>statusEl.textContent='', 2500); if(document.querySelector('button[data-tab="preview"].active')) renderPreview(); }})
+                           .catch(err => {{ statusEl.textContent = (err && err.detail) ? err.detail : 'Save failed'; statusEl.className='status-error'; console.error(err); }});
+                    }});
+                }})();
+                </script>
+            </body>
+            </html>
+            """
+            return HTMLResponse(content=html)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error rendering editor: {e}")
+
+    async def save_file(self, file_path: str, content: str) -> JSONResponse:
+        """Persist edited content back to disk (markdown/txt)."""
+        try:
+            rel = file_path.lstrip("/")
+            safe_path = (self.base_resources / rel).resolve()
+            base_resolved = self.base_resources.resolve()
+            if not str(safe_path).startswith(str(base_resolved)):
+                raise HTTPException(status_code=403, detail="Access denied")
+            if safe_path.suffix.lower() not in [".md", ".markdown", ".txt", ".log"]:
+                raise HTTPException(status_code=400, detail="Unsupported file type")
+            if len(content.encode("utf-8")) > 2 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Content exceeds 2MB limit")
+            # Ensure directory exists (editing existing file; create if somehow missing)
+            safe_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(safe_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return JSONResponse({"status": "ok"})
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error saving file: {e}")
+
+    async def preview_markdown(self, content: str) -> JSONResponse:
+        try:
+            html_fragment = self._render_markdown_fragment(content)
+            return JSONResponse({"html": html_fragment})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Preview error: {e}")

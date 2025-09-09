@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -79,7 +80,50 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
 
     summary_url = _md_url(sources.get("summary_md"))
     mermaid_url = _md_url(sources.get("mermaid_md"))
-    transcript_url = _res_url(sources.get("transcription_txt"))
+
+    # Use combined transcription file if multiple exist (reuse logic similar to PublicPublisher)
+    transcript_url = None
+    try:
+        trans_dir = Path(publisher.base_resources) / "talks" / slug / "transcription"
+        if trans_dir.exists():
+            txt_files = sorted(
+                [
+                    p
+                    for p in trans_dir.iterdir()
+                    if p.is_file()
+                    and p.suffix.lower() == ".txt"
+                    and p.name != "_combined_transcription.txt"
+                ]
+            )
+            if len(txt_files) == 1:
+                transcript_url = _res_url(txt_files[0])
+            elif len(txt_files) > 1:
+                combined = trans_dir / "_combined_transcription.txt"
+                rebuild = True
+                if combined.exists():
+                    combo_mtime = combined.stat().st_mtime
+                    if all(f.stat().st_mtime <= combo_mtime for f in txt_files):
+                        rebuild = False
+                if rebuild:
+                    try:
+                        with combined.open("w", encoding="utf-8") as out:
+                            for i, f in enumerate(txt_files, 1):
+                                try:
+                                    out.write(f.read_text(encoding="utf-8"))
+                                except Exception as e:
+                                    out.write(f"[Fehler beim Lesen: {e}]")
+                    except Exception:
+                        transcript_url = _res_url(txt_files[0])
+                    else:
+                        transcript_url = _res_url(combined)
+                else:
+                    transcript_url = _res_url(combined)
+            else:
+                transcript_url = _res_url(sources.get("transcription_txt"))
+        else:
+            transcript_url = _res_url(sources.get("transcription_txt"))
+    except Exception:
+        transcript_url = _res_url(sources.get("transcription_txt"))
     cover_url = _res_url(sources.get("image"))
 
     def _btn(url, text):
