@@ -113,17 +113,18 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
                                 except Exception as e:
                                     out.write(f"[Fehler beim Lesen: {e}]")
                     except Exception:
-                        transcript_url = _res_url(txt_files[0])
+                        transcript_url = _md_url(txt_files[0])
                     else:
-                        transcript_url = _res_url(combined)
+                        transcript_url = _md_url(combined)
                 else:
-                    transcript_url = _res_url(combined)
+                    transcript_url = _md_url(combined)
             else:
-                transcript_url = _res_url(sources.get("transcription_txt"))
+                transcript_url = _md_url(sources.get("transcription_txt"))
         else:
-            transcript_url = _res_url(sources.get("transcription_txt"))
+            transcript_url = _md_url(sources.get("transcription_txt"))
     except Exception:
-        transcript_url = _res_url(sources.get("transcription_txt"))
+        transcript_url = _md_url(sources.get("transcription_txt"))
+
     cover_url = _res_url(sources.get("image"))
 
     def _btn(url, text):
