@@ -289,11 +289,8 @@ main.container {
 /* Mermaid diagram styles */
 .mermaid {
     text-align: center;
-    margin: 20px 0;
-    background: #fafafa;
-    border: none;
-    border-radius: 5px;
-    padding: 20px;
+    background: #ffffff;
+    /* ensure white bg to avoid dark blocks */
     min-height: 50px;
     overflow: auto;
 }
@@ -308,8 +305,8 @@ main.container {
     margin: 20px 0;
     background: #ffe6e6;
     border: 1px solid #ffcccc;
-    border-radius: 5px;
-    padding: 20px;
+    border-radius: 6px;
+    padding: 16px;
     color: #cc0000;
 }
 
@@ -602,9 +599,6 @@ textarea {
 /* Mermaid diagram styles */
 pre.mermaid {
     background-color: white !important;
-    border: 1px solid #ddd !important;
-    border-radius: 8px !important;
-    padding: 20px !important;
     margin: 20px 0 !important;
     text-align: center !important;
     overflow: visible !important;
@@ -618,21 +612,13 @@ pre.mermaid {
 /* Ensure mermaid diagrams display properly in HTML preview */
 .html-preview pre.mermaid {
     background: white !important;
-    border: 2px solid #e0e0e0 !important;
-    border-radius: 10px !important;
-    padding: 25px !important;
-    margin: 25px 0 !important;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
 }
 
 /* Mermaid diagram styles */
 .html-preview .mermaid {
     text-align: center !important;
-    margin: 20px auto !important;
     background: white !important;
-    border: 1px solid #ddd !important;
-    border-radius: 8px !important;
-    padding: 20px !important;
     max-width: 100% !important;
     overflow-x: auto !important;
 }
