@@ -254,7 +254,7 @@ app = gr.mount_gradio_app(app, io, path="/app")
 
 # Attach session middleware and simple auth if configured
 admin_password = os.getenv("ADMIN_PASSWORD")
-protect_paths = os.getenv("PROTECT_PATHS", "/app,/browse,/admin").split(",")
+protect_paths = os.getenv("PROTECT_PATHS", "/app,/browse,/admin,/api").split(",")
 protect_paths = [p.strip() for p in protect_paths if p.strip()]
 if admin_password:
     # Secret key for signing session cookies; use env or a safe default fallback

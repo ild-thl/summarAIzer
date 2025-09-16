@@ -189,7 +189,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     {success_banner}
         <form method=\"post\" action=\"{base}/review/submit\">
             <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
-            <input type=\"hidden\" name=\"schema_version\" value=\"3\" />
+            <input type=\"hidden\" name=\"schema_version\" value=\"4\" />
 
             <section class=\"section\">
                 <h2>Zusammenfassung {sum_btn}</h2>
@@ -416,3 +416,44 @@ async def admin_regenerate():
     publisher.regenerate_pages()
     base = _base_prefix()
     return RedirectResponse(url=f"{base}/admin/public", status_code=302)
+
+
+# ---------- API: Aggregate review feedback ----------
+@router.get("/api/review_feedback")
+async def api_review_feedback(schema_version: Optional[int] = None):
+    """Return an array of all stored review feedback objects.
+
+    For each talk that contains `generated_content/review_feedback.json`,
+    load the JSON and ensure it includes the talk's `title` and `slug`.
+    """
+    items: list[dict[str, Any]] = []
+    for slug in publisher.list_talk_slugs():
+        try:
+            fb = publisher.get_feedback(slug)
+            if not fb:
+                continue
+            # Ensure we don't mutate the stored dict accidentally
+            fb_out: Dict[str, Any] = dict(fb)
+            # Always include slug
+            fb_out.setdefault("slug", slug)
+            # Ensure title/name present
+            title = fb_out.get("title") or fb_out.get("name")
+            if not title:
+                meta = publisher.read_talk_metadata(slug)
+                fb_out["title"] = meta.title
+            # Attach current published status (live from index)
+            fb_out["published"] = bool(publisher.is_published(slug))
+            # Optional filter by schema version
+            if schema_version is not None:
+                raw_v = fb_out.get("schema_version")
+                try:
+                    v = int(raw_v) if raw_v is not None else None
+                except Exception:
+                    v = None
+                if v != schema_version:
+                    continue
+            items.append(fb_out)
+        except Exception:
+            # Skip invalid or unreadable feedback entries
+            continue
+    return items

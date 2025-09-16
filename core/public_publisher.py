@@ -714,6 +714,17 @@ class PublicPublisher:
     def publish(
         self, slug: str, feedback: Dict[str, Any], approve: bool
     ) -> Dict[str, Any]:
+        # Ensure feedback contains identifying metadata (non-breaking)
+        try:
+            feedback = dict(feedback)
+            feedback.setdefault("slug", slug)
+            # published flag reflects approval decision; may be updated below
+            feedback["published"] = bool(approve)
+            # Best-effort to include title
+            if not feedback.get("title") and not feedback.get("name"):
+                feedback["title"] = self.read_talk_metadata(slug).title
+        except Exception:
+            pass
         # Save feedback regardless of approval
         self.save_feedback(slug, feedback)
 
