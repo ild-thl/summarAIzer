@@ -254,7 +254,9 @@ app = gr.mount_gradio_app(app, io, path="/app")
 
 # Attach session middleware and simple auth if configured
 admin_password = os.getenv("ADMIN_PASSWORD")
-protect_paths = os.getenv("PROTECT_PATHS", "/app,/browse,/admin,/api").split(",")
+protect_paths = os.getenv(
+    "PROTECT_PATHS", "/app,/browse,/admin,/api/review_feedback"
+).split(",")
 protect_paths = [p.strip() for p in protect_paths if p.strip()]
 if admin_password:
     # Secret key for signing session cookies; use env or a safe default fallback
@@ -400,8 +402,6 @@ async def browse_directory(dir_path: str = ""):
 
 
 # -------------------- Unified Editing APIs --------------------
-
-
 @app.post("/api/save/{file_path:path}")
 async def save_file(file_path: str, payload: dict = Body(...)):
     content = payload.get("content", "")
@@ -480,12 +480,6 @@ async def serve_static_file(file_path: str):
         raise HTTPException(status_code=500, detail=f"Error serving static file: {e}")
 
 
-# Mount public static directory for generated pages
-# if public_dir.exists():
-#     app.mount(
-#         "/public/files", StaticFiles(directory=str(public_dir)), name="public_static"
-#     )
-#     print(f"✅ Public files mounted at /public/files from: {public_dir}")
 @app.get("/public/files/{file_path:path}")
 async def serve_public_file(file_path: str):
     """Serve public files from the public directory"""
@@ -515,10 +509,6 @@ async def redirect_gradio(request: Request):
 async def redirect_root(request: Request):
     # Public landing page for wider audience
     return RedirectResponse(url="public/", status_code=302)
-
-
-# Note: /app/ with trailing slash is handled by Gradio automatically
-# No need for explicit redirect since Gradio expects the trailing slash
 
 
 # Get configuration from environment variables
