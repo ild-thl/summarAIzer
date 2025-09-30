@@ -318,7 +318,7 @@ class ResourceBrowser:
             </head>
             <body>
                 <div class="main">
-                    <div class="container">
+                    <div class="container mw-1200">
                         <div class="header">
                             <div class="breadcrumb">
                                 {breadcrumb}
@@ -443,7 +443,7 @@ class ResourceBrowser:
                 <link rel="stylesheet" href="{static_base}/static/css/style.css" />
             </head>
             <body>
-                <div class="main"><div class="container">
+                <div class="main">
                     <div class="header">
                         <div class="breadcrumb">{breadcrumb}</div>
                         <h1>✏️ Edit: {safe_path.name}</h1>

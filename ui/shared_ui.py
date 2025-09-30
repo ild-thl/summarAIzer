@@ -107,8 +107,24 @@ def create_current_talk_display(app_state: gr.State, talk_manager) -> gr.HTML:
             # Format talk information
             speaker = talk.get("speaker", "Nicht angegeben")
             date = talk.get("date", "Nicht angegeben")
-            location = talk.get("location", "Nicht angegeben")
             link = talk.get("link", "Nicht angegeben")
+
+            # Get event information if the talk belongs to an event
+            event_slug = talk.get("event_slug")
+            event = None
+            if event_slug:
+                try:
+                    event = talk_manager.event_manager.get_event(event_slug)
+                except Exception:
+                    event = None
+
+            # Use event location if available, otherwise fall back to talk location
+            if event and event.location:
+                location = event.location
+                event_name = event.title
+            else:
+                location = talk.get("location", "Nicht angegeben")
+                event_name = ""
 
             return f"""
             <div class='talk-display talk-display-success' style='background: #e8f5e8; padding: 15px; border-radius: 8px; border-left: 4px solid #28a745; color: #212529;'>
@@ -118,6 +134,7 @@ def create_current_talk_display(app_state: gr.State, talk_manager) -> gr.HTML:
                     <div><strong>👤 Sprecher:</strong> {speaker}</div>
                     <div><strong>📅 Datum:</strong> {date}</div>
                     <div><strong>📍 Ort:</strong> {location}</div>
+                    <div><strong>🏷️ Event:</stong> {event_name}</div>
                     <div><strong>🔗 Link:</strong> {link}</div>
                 </div>
             </div>

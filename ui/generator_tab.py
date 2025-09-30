@@ -310,8 +310,32 @@ class GeneratorTab(BaseGeneratorTab):
                         metadata_content += f"- Datum: {talk_metadata['date']}\\n"
                     if talk_metadata.get("speaker"):
                         metadata_content += f"- Referent: {talk_metadata['speaker']}\\n"
-                    if talk_metadata.get("location"):
-                        metadata_content += f"- Ort: {talk_metadata['location']}\\n"
+
+                    # Include event information if available
+                    if talk_metadata.get("event_slug"):
+                        event = self.talk_manager.event_manager.get_event(
+                            talk_metadata["event_slug"]
+                        )
+                        if event:
+                            metadata_content += f"- Event: {event.title}\\n"
+                            # Prioritize event location over talk location
+                            if event.location:
+                                metadata_content += f"- Ort: {event.location}\\n"
+                            elif talk_metadata.get("location"):
+                                metadata_content += (
+                                    f"- Ort: {talk_metadata['location']}\\n"
+                                )
+                        else:
+                            # Fallback if event not found
+                            if talk_metadata.get("location"):
+                                metadata_content += (
+                                    f"- Ort: {talk_metadata['location']}\\n"
+                                )
+                    else:
+                        # No event - use talk location if available
+                        if talk_metadata.get("location"):
+                            metadata_content += f"- Ort: {talk_metadata['location']}\\n"
+
                     if talk_metadata.get("description"):
                         metadata_content += (
                             f"- Beschreibung: {talk_metadata['description']}\\n"

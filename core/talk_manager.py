@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import unicodedata
 import re
+from .event_manager import EventManager
 
 
 class TalkManager:
@@ -23,6 +24,9 @@ class TalkManager:
         # Create subdirectories
         self.talks_path = self.base_path / "talks"
         self.talks_path.mkdir(exist_ok=True)
+
+        # Initialize event manager
+        self.event_manager = EventManager(str(self.base_path))
 
     def save_talk(self, talk_name, metadata=None):
         """
@@ -40,7 +44,14 @@ class TalkManager:
                     existing = json.load(f)
                 # merge incoming metadata fields
                 updates = metadata or {}
-                for field in ("speaker", "date", "description", "link", "location"):
+                for field in (
+                    "speaker",
+                    "date",
+                    "description",
+                    "link",
+                    "location",
+                    "event_slug",
+                ):
                     if field in updates:
                         existing[field] = updates[field]
                 existing["updated_at"] = datetime.now().isoformat()
@@ -70,6 +81,7 @@ class TalkManager:
                 "description": metadata.get("description", "") if metadata else "",
                 "link": metadata.get("link", "") if metadata else "",
                 "location": metadata.get("location", "") if metadata else "",
+                "event_slug": metadata.get("event_slug", "") if metadata else "",
                 "audio_file": None,
                 "transcription_file": None,
                 "status": "created",

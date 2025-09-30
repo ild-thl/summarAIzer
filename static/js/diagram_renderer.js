@@ -208,6 +208,42 @@
             "#7DD3FC",
         ];
 
+        // Fix inline styles that make text white/unreadable
+        const styleElements = svg.querySelectorAll('style');
+        styleElements.forEach((styleEl) => {
+            let cssText = styleEl.textContent || styleEl.innerHTML || '';
+
+            // Replace all instances of white text colors with our dark color
+            cssText = cssText.replace(/color:\s*#ffffff/gi, 'color: #1f2937');
+            cssText = cssText.replace(/color:\s*white/gi, 'color: #1f2937');
+            cssText = cssText.replace(/color:\s*rgb\(255,\s*255,\s*255\)/gi, 'color: #1f2937');
+            cssText = cssText.replace(/fill:\s*#ffffff/gi, 'fill: #1f2937');
+            cssText = cssText.replace(/fill:\s*white/gi, 'fill: #1f2937');
+            cssText = cssText.replace(/fill:\s*rgb\(255,\s*255,\s*255\)/gi, 'fill: #1f2937');
+
+            // Add our own overrides to ensure text is readable
+            const svgId = svg.id || svg.getAttribute('id') || '';
+            if (svgId) {
+                cssText += `
+                    #${svgId} span,
+                    #${svgId} text,
+                    #${svgId} .section-root span,
+                    #${svgId} .section-0 span,
+                    #${svgId} .section-1 span,
+                    #${svgId} .section-2 span,
+                    #${svgId} .section-3 span,
+                    #${svgId} .section-4 span,
+                    #${svgId} .section-5 span,
+                    #${svgId} [class*="section-"] span {
+                        color: #1f2937 !important;
+                        fill: #1f2937 !important;
+                    }
+                `;
+            }
+
+            styleEl.textContent = cssText;
+        });
+
         // Candidate selectors for nodes in different diagrams
         const nodeSelectors = [
             'g.node rect',
@@ -220,6 +256,10 @@
         const textSelectors = [
             'g.node text',
             'g[class*="mindmap"] text',
+            'span',
+            'text',
+            '[class*="section-"] span',
+            '.section-root span',
         ];
 
         const nodes = svg.querySelectorAll(nodeSelectors.join(','));
@@ -238,6 +278,10 @@
         texts.forEach((t) => {
             t.removeAttribute('fill');
             t.style.fill = '#1f2937';
+            t.style.color = '#1f2937';
+            // Use !important to override inline styles
+            t.style.setProperty('fill', '#1f2937', 'important');
+            t.style.setProperty('color', '#1f2937', 'important');
         });
     }
 

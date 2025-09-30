@@ -83,8 +83,26 @@ class QuickGenerator:
             out.append(f"- Datum: {md['date']}")
         if md.get("speaker"):
             out.append(f"- Referent: {md['speaker']}")
-        if md.get("location"):
-            out.append(f"- Ort: {md['location']}")
+
+        # Include event information if available
+        if md.get("event_slug"):
+            event = self.talk_manager.event_manager.get_event(md["event_slug"])
+            if event:
+                out.append(f"- Event: {event.title}")
+                # Prioritize event location over talk location
+                if event.location:
+                    out.append(f"- Ort: {event.location}")
+                elif md.get("location"):
+                    out.append(f"- Ort: {md['location']}")
+            else:
+                # Fallback if event not found
+                if md.get("location"):
+                    out.append(f"- Ort: {md['location']}")
+        else:
+            # No event - use talk location if available
+            if md.get("location"):
+                out.append(f"- Ort: {md['location']}")
+
         if md.get("description"):
             out.append(f"- Beschreibung: {md['description']}")
         if md.get("link"):

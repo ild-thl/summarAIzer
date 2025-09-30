@@ -168,7 +168,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     </head>
     <body>
     <header class=\"site-header\">
-        <div class=\"container\">
+        <div class=\"container mw-1200\">
             <div class="page-title">
                 <h1>Freigabeprüfung: {talk_meta.title}</h1>
                 <div class="lead">
@@ -185,7 +185,7 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
             </div>
         </div>
     </header>
-    <main class=\"container\">
+    <main class=\"container mw-1200\">
     {success_banner}
         <form method=\"post\" action=\"{base}/review/submit\">
             <input type=\"hidden\" name=\"slug\" value=\"{slug}\" />
@@ -377,11 +377,17 @@ async def public_admin() -> HTMLResponse:
             </style>
         </head>
         <body>
-            <header class=\"site-header\"> <div class=\"container\"><div class='page-title'><h1>Public Index Verwaltung</h1></div></div> </header>
-            <main class=\"container\">
+            <header class=\"site-header\">
+                <div class=\"container mw-1200\">
+                    <div class='page-title'>
+                        <h1>Public Index Verwaltung</h1>
+                    </div>
+                </div>
+            </header>
+            <main class=\"container mw-1200\">
                 <div class=\"admin-actions\">
                     <a class=\"btn\" href=\"{base}/admin/public/prune\">Prune missing</a>
-                    <a class=\"btn\" href=\"{base}/admin/public/regenerate\">Regenerate pages</a>
+                    <a class=\"btn\" href=\"{base}/admin/public/regenerate\">Regenerate all pages</a>
                     <a class=\"btn\" href=\"{base}/public/\" target=\"_blank\">Open Public Index</a>
                 </div>
                 <table>
@@ -413,7 +419,8 @@ async def admin_prune():
 
 @router.get("/admin/public/regenerate")
 async def admin_regenerate():
-    publisher.regenerate_pages()
+    # Regenerate all pages (events index, event pages, and talk pages)
+    publisher.regenerate_all_pages()
     base = _base_prefix()
     return RedirectResponse(url=f"{base}/admin/public", status_code=302)
 

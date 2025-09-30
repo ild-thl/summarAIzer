@@ -26,11 +26,21 @@ class TalkSetupTab:
         """Load talk by its safe_name or return blanks for a new talk"""
         if not safe_name or safe_name == "Neu":
             # new‐talk -> empty fields
-            return "", "", self.get_current_fomatted_date(), "", "", ""
+            default_event = self.talk_manager.event_manager.get_default_event()
+            default_event_slug = default_event.slug if default_event else ""
+            return (
+                "",
+                "",
+                self.get_current_fomatted_date(),
+                "",
+                "",
+                "",
+                default_event_slug,
+            )
 
         talk = self.talk_manager.get_talk(safe_name)
         if not talk:
-            return "", "", "", "", "", ""
+            return "", "", "", "", "", "", ""
 
         return (
             talk.get("name", ""),
@@ -39,9 +49,10 @@ class TalkSetupTab:
             talk.get("link", ""),
             talk.get("location", ""),
             talk.get("description", ""),
+            talk.get("event_slug", ""),
         )
 
-    def save_talk(self, name, speaker, date, link, location, description):
+    def save_talk(self, name, speaker, date, link, location, description, event_slug):
         """Save a talk with metadata"""
         status_message = ""
 
@@ -54,6 +65,7 @@ class TalkSetupTab:
                 "link": link or "",
                 "location": location or "",
                 "description": description or "",
+                "event_slug": event_slug or "",
             }
 
             result = self.talk_manager.save_talk(name.strip(), metadata)
@@ -123,6 +135,127 @@ class TalkSetupTab:
             "%d.%m.%Y %H:%M"
         )
 
+    def get_event_choices(self):
+        """Get choices for the event dropdown."""
+        events = self.talk_manager.event_manager.list_events(include_protected=True)
+        choices = [
+            (event.slug, f"{event.title} ({event.start_date or 'TBD'})")
+            for event in events
+        ]
+        choices.append(("new_event", "➕ Neues Event erstellen"))
+        return choices
+
+    def create_new_event(
+        self,
+        title,
+        description,
+        start_date,
+        end_date,
+        location,
+        password,
+        organizer,
+        website,
+    ):
+        """Create a new event and return status message and updated event choices."""
+        if not title or not title.strip():
+            return "❌ Bitte geben Sie einen Event-Titel ein.", gr.Dropdown(
+                choices=self.get_event_choices()
+            )
+
+        from core.event_manager import Event
+
+        # Create event slug
+        event_slug = self.talk_manager.event_manager.create_event_slug(title.strip())
+
+        # Create new event
+        event = Event(
+            slug=event_slug,
+            title=title.strip(),
+            description=description.strip() if description else None,
+            start_date=start_date.strip() if start_date else None,
+            end_date=end_date.strip() if end_date else None,
+            location=location.strip() if location else None,
+            organizer=organizer.strip() if organizer else None,
+            website=website.strip() if website else None,
+        )
+
+        # Set password if provided
+        if password and password.strip():
+            event.set_password(password.strip())
+
+        # Save event
+        try:
+            self.talk_manager.event_manager.save_event(event)
+            status_message = f"✅ Event '{title}' erfolgreich erstellt!"
+
+            # Update event choices and select the new event
+            updated_choices = self.get_event_choices()
+
+            return (
+                gr.Textbox(value=status_message, visible=True),
+                gr.Dropdown(choices=updated_choices, value=event_slug),
+            )
+        except Exception as e:
+            return (
+                gr.Textbox(
+                    value=f"❌ Fehler beim Erstellen des Events: {str(e)}", visible=True
+                ),
+                gr.Dropdown(choices=self.get_event_choices()),
+            )
+
+    def get_event_choices(self):
+        """Get available events for dropdown"""
+        events = self.talk_manager.event_manager.list_events(include_protected=True)
+        choices = [(f"{event.title} ({event.slug})", event.slug) for event in events]
+        choices.append(("+ Neues Event erstellen", "new_event"))
+        return choices
+
+    def create_new_event(
+        self,
+        title,
+        description,
+        start_date,
+        end_date,
+        location,
+        password,
+        organizer,
+        website,
+    ):
+        """Create a new event"""
+        if not title or not title.strip():
+            return "❌ Bitte geben Sie einen Event-Titel ein.", gr.Dropdown(
+                choices=self.get_event_choices()
+            )
+
+        from core.event_manager import Event
+
+        # Create slug from title
+        slug = self.talk_manager.event_manager.create_event_slug(title.strip())
+
+        event = Event(
+            slug=slug,
+            title=title.strip(),
+            description=description.strip() if description else None,
+            start_date=start_date if start_date else None,
+            end_date=end_date if end_date else None,
+            location=location.strip() if location else None,
+            organizer=organizer.strip() if organizer else None,
+            website=website.strip() if website else None,
+        )
+
+        # Set password if provided
+        if password and password.strip():
+            event.set_password(password.strip())
+
+        # Save event
+        self.talk_manager.event_manager.save_event(event)
+
+        # Update choices and return success
+        new_choices = self.get_event_choices()
+        return f"✅ Event '{title}' erfolgreich erstellt!", gr.Dropdown(
+            choices=new_choices, value=slug
+        )
+
     def create_tab(self):
         """Create the talk setup and management tab"""
 
@@ -185,6 +318,59 @@ class TalkSetupTab:
                 value=self.get_current_fomatted_date(),
             )
 
+            # Event selection
+            with gr.Row():
+                event_selector = gr.Dropdown(
+                    choices=self.get_event_choices(),
+                    label="🎪 Event",
+                    info="Wählen Sie ein Event oder erstellen Sie ein neues",
+                    value=(
+                        self.talk_manager.event_manager.get_default_event().slug
+                        if self.talk_manager.event_manager.get_default_event()
+                        else None
+                    ),
+                )
+
+            # New event creation form (initially hidden)
+            with gr.Group(visible=False) as new_event_group:
+                gr.Markdown("#### 🆕 Neues Event erstellen")
+
+                with gr.Row():
+                    event_title = gr.Textbox(label="Event Titel *", scale=2)
+                    event_location = gr.Textbox(label="Ort", scale=1)
+
+                with gr.Row():
+                    event_start_date = gr.Textbox(
+                        label="Start Datum (YYYY-MM-DD)", scale=1
+                    )
+                    event_end_date = gr.Textbox(label="End Datum (YYYY-MM-DD)", scale=1)
+
+                event_description = gr.Textbox(
+                    label="Beschreibung", lines=2, placeholder="Beschreibung des Events"
+                )
+
+                with gr.Row():
+                    event_organizer = gr.Textbox(label="Veranstalter", scale=1)
+                    event_website = gr.Textbox(label="Website", scale=1)
+
+                event_password = gr.Textbox(
+                    label="Passwort (optional)",
+                    type="password",
+                    info="Lassen Sie leer für öffentliche Events",
+                    scale=1,
+                )
+
+                with gr.Row():
+                    create_event_btn = gr.Button("Event erstellen", variant="primary")
+                    cancel_event_btn = gr.Button("Abbrechen", variant="secondary")
+
+                event_status = gr.Textbox(
+                    label="Event Status",
+                    value="",
+                    interactive=False,
+                    visible=False,
+                )
+
             link = gr.Textbox(
                 label="🔗 Link",
                 info="Link zu weiteren Informationen über den Talk",
@@ -228,6 +414,8 @@ class TalkSetupTab:
             choices = refresh_talk_selector_choices(self.talk_manager)
             # set state to "Neu"
             state = AppState.from_gradio_state(current_state).set("current_talk", "Neu")
+            default_event = self.talk_manager.event_manager.get_default_event()
+            default_event_slug = default_event.slug if default_event else ""
             return (
                 "",  # status message
                 gr.Dropdown(choices=choices, value="Neu"),  # selector value
@@ -235,6 +423,7 @@ class TalkSetupTab:
                 "",  # talk_name
                 "",  # speaker_name
                 self.get_current_fomatted_date(),
+                default_event_slug,  # event_slug
                 "",  # link
                 "",  # location
                 "",  # description
@@ -250,6 +439,7 @@ class TalkSetupTab:
                 talk_name,
                 speaker_name,
                 talk_date,
+                event_selector,
                 link,
                 location,
                 description,
@@ -279,6 +469,7 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+                event_selector,
             ],
         )
 
@@ -298,6 +489,7 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+                event_selector,
             ],
             outputs=[
                 status_message,
@@ -326,5 +518,79 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+            ],
+        )
+
+        # Event management handlers
+        def toggle_new_event_form(event_selection):
+            """Show/hide new event creation form based on selection"""
+            if event_selection == "new_event":
+                return gr.Group(visible=True)
+            else:
+                return gr.Group(visible=False)
+
+        event_selector.change(
+            fn=toggle_new_event_form,
+            inputs=[event_selector],
+            outputs=[new_event_group],
+        )
+
+        # Create new event
+        create_event_btn.click(
+            fn=self.create_new_event,
+            inputs=[
+                event_title,
+                event_description,
+                event_start_date,
+                event_end_date,
+                event_location,
+                event_password,
+                event_organizer,
+                event_website,
+            ],
+            outputs=[event_status, event_selector],
+        ).then(
+            fn=lambda: (gr.Group(visible=False), "", "", "", "", "", "", "", ""),
+            outputs=[
+                new_event_group,
+                event_title,
+                event_description,
+                event_start_date,
+                event_end_date,
+                event_location,
+                event_password,
+                event_organizer,
+                event_website,
+            ],
+        ).then(
+            fn=lambda: gr.Textbox(visible=False),
+            outputs=[event_status],
+        )
+
+        # Cancel new event creation
+        cancel_event_btn.click(
+            fn=lambda: (
+                gr.Group(visible=False),
+                gr.Dropdown(choices=self.get_event_choices()),
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+            ),
+            outputs=[
+                new_event_group,
+                event_selector,
+                event_title,
+                event_description,
+                event_start_date,
+                event_end_date,
+                event_location,
+                event_password,
+                event_organizer,
+                event_website,
             ],
         )

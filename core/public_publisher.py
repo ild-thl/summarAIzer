@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 import markdown
 import unicodedata
+from .event_manager import EventManager
 
 
 @dataclass
@@ -25,6 +26,7 @@ class TalkMetadata:
     description: Optional[str] = None
     link: Optional[str] = None
     location: Optional[str] = None
+    event_slug: Optional[str] = None  # Reference to the event this talk belongs to
 
     @property
     def date_sort_key(self) -> Tuple[int, str]:
@@ -49,6 +51,9 @@ class PublicPublisher:
         self.published_index_path = self.public_dir / "published.json"
         self.proxy_path = os.getenv("PROXY_PATH", "").rstrip("/")
 
+        # Initialize event manager
+        self.event_manager = EventManager(base_resources_path)
+
         # Ensure base dirs exist
         self.public_dir.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +71,7 @@ class PublicPublisher:
         description: Optional[str] = None
         link: Optional[str] = None
         location: Optional[str] = None
+        event_slug: Optional[str] = None
         if meta_path.exists():
             try:
                 data = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -79,6 +85,7 @@ class PublicPublisher:
                 description = data.get("description") or data.get("abstract")
                 link = data.get("link")
                 location = data.get("location")
+                event_slug = data.get("event_slug")
             except Exception:
                 pass
         return TalkMetadata(
@@ -89,6 +96,7 @@ class PublicPublisher:
             description=description,
             link=link,
             location=location,
+            event_slug=event_slug,
         )
 
     def find_generated_content(self, slug: str) -> Dict[str, Optional[Path]]:
@@ -362,9 +370,6 @@ class PublicPublisher:
             og_image_url = image_url
 
         speakers = ", ".join(meta.speakers) if meta.speakers else ""
-        meta_line = " | ".join(
-            [p for p in [meta.date or "", speakers, meta.location or ""] if p]
-        )
 
         # Prepare output dir
         out_dir = self.public_dir / "talks" / slug
@@ -404,6 +409,47 @@ class PublicPublisher:
             else ""
         )
 
+        # Determine navigation links and get event info first
+        event = None
+        if meta.event_slug:
+            # Get event info for proper navigation and metadata
+            event = self.event_manager.get_event(meta.event_slug)
+            if event:
+                back_to_event_link = f"{base_url}/event/{meta.event_slug}"
+                back_to_event_text = f"← Zurück zu {event.title}"
+                brand_link = back_to_event_link
+                brand_text = back_to_event_text
+                content_back_link = back_to_event_link
+                content_back_text = "← Zurück zum Event"
+            else:
+                # Fallback if event not found
+                brand_link = f"{base_url}/public/"
+                brand_text = "← Zurück zu allen Events"
+                content_back_link = f"{base_url}/public/"
+                content_back_text = "← Zurück zur Übersicht"
+        else:
+            # No event - link back to all events
+            brand_link = f"{base_url}/public/"
+            brand_text = "← Zurück zu allen Events"
+            content_back_link = f"{base_url}/public/"
+            content_back_text = "← Zurück zur Übersicht"
+
+        # Use event location if available, otherwise fall back to talk location
+        display_location = ""
+        if event and event.location:
+            display_location = event.location
+        elif meta.location:
+            display_location = meta.location
+
+        display_event = ""
+        if event:
+            display_event = event.title
+
+        # Create meta line using event location when available
+        meta_line = " | ".join(
+            [p for p in [meta.date or "", speakers, display_location or ""] if p]
+        )
+
         info_sidebar = f"""
             <aside class='sidebar'>
                 <div class='card'>
@@ -412,7 +458,8 @@ class PublicPublisher:
                         <ul class='meta-list'>
                             {f'<li><strong>Datum:</strong> {meta.date}</li>' if meta.date else ''}
                             {f'<li><strong>Vortragende:</strong> {speakers}</li>' if speakers else ''}
-                            {f'<li><strong>Ort:</strong> {meta.location}</li>' if meta.location else ''}
+                            {f'<li><strong>Ort:</strong> {display_location}</li>' if display_location else ''}
+                            {f'<li><strong>Event:</strong> {display_event}</li>' if display_event else ''}
                             {f'<li><strong>Link:</strong> <a href="{meta.link}" target="_blank">{meta.link}</a></li>' if meta.link else ''}
                         </ul>
                     </div>
@@ -455,9 +502,9 @@ class PublicPublisher:
         </head>
         <body>
             <header class="site-header">
-                <div class="container">
+                <div class="container mw-1200">
                     <div class="top-nav">
-                        <a class="brand" href="{base_url}/public/">← Zurück zur Startseite</a>
+                        <a class="brand" href="{brand_link}">{brand_text}</a>
                     </div>
                     <div class="page-title">
                         <h1>{meta.title}</h1>
@@ -465,20 +512,20 @@ class PublicPublisher:
                     </div>
                 </div>
             </header>
-            <main class="container">
+            <main class="container mw-1200">
                 <div class="content-warning">Hinweis: Die Inhalte auf dieser Seite wurden automatisch von KI generiert und können Fehler enthalten.</div>
                 <div class="two-col">
                     <section class="content">
                         {img_html}
                         <div class='mb-2'>
-                            <a class='btn btn-small' href='{base_url}/public/'>← Zurück zur Übersicht</a>
+                            <a class='btn btn-small' href='{content_back_link}'>{content_back_text}</a>
                         </div>
                         {f'<div class="card"><div class="card-body"><h2>Zusammenfassung</h2>{summary_html}</div></div>' if summary_html else ''}
                         {f'<div class="card"><div class="card-body"><h2>Diagramme</h2>{mermaid_html}</div></div>' if mermaid_html else ''}
                         {competences_html}
                         {f'<div class="card"><div class="card-body"><h2>Transkript</h2>{transcript_link}</div></div>' if transcript_link else ''}
                         <div class='mb-2'>
-                            <a class='btn btn-small' href='{base_url}/public/'>← Zurück zur Übersicht</a>
+                            <a class='btn btn-small' href='{content_back_link}'>{content_back_text}</a>
                         </div>
                     </section>
                     {info_sidebar}
@@ -517,7 +564,17 @@ class PublicPublisher:
             speakers = ", ".join(meta.speakers) if meta.speakers else ""
             desc = meta.description or ""
             link = meta.link or ""
-            location = meta.location or ""
+
+            # Use event location if available, otherwise fall back to talk location
+            location = ""
+            if meta.event_slug:
+                event = self.event_manager.get_event(meta.event_slug)
+                if event and event.location:
+                    location = event.location
+                elif meta.location:
+                    location = meta.location
+            else:
+                location = meta.location or ""
 
             # Pick cover image if available
             gc = self.find_generated_content(slug)
@@ -562,7 +619,7 @@ class PublicPublisher:
         </head>
         <body>
             <header class="site-header">
-                <div class="container">
+                <div class="container mw-1200">
                     <div class="top-nav">
                         <a class="brand" href="{base_url}/public/">Moodle Moot DACH 2025</a>
                     </div>
@@ -572,7 +629,7 @@ class PublicPublisher:
                     </div>
                 </div>
             </header>
-            <main class="container">
+            <main class="container mw-1200">
                 <div class="search-bar">
                     <input id="search" type="search" placeholder="Suchen nach Titel, Vortragenden, Track…" />
                     <span class="count" id="count"></span>
@@ -710,6 +767,280 @@ class PublicPublisher:
         """Check whether the talk's data folder exists."""
         return (self.talks_dir / slug).exists()
 
+    # ---------- Event-based publishing methods ----------
+    def update_events_index(self, include_protected: bool = False) -> Path:
+        """Generate the main events index page.
+
+        Args:
+            include_protected: If True, includes password-protected events.
+                              Should be True for authenticated users.
+        """
+        events = self.event_manager.list_events(include_protected=include_protected)
+        base_url = self._proxy_prefix()
+
+        event_cards = []
+        for event in events:
+            # Count talks for this event
+            talks_count = self._count_talks_for_event(event.slug)
+
+            # Generate a unique color hue based on event slug for visual distinction
+            # Use hash of slug to get consistent color per event
+            import hashlib
+
+            hash_obj = hashlib.md5(event.slug.encode())
+            hue = int(hash_obj.hexdigest()[:6], 16) % 360
+
+            # Format date range - put on separate line from location
+            date_info = ""
+            if event.start_date:
+                if event.end_date and event.end_date != event.start_date:
+                    date_info = f"{event.start_date} - {event.end_date}"
+                else:
+                    date_info = event.start_date
+
+            location_info = event.location or ""
+
+            # Add visual indicator for protected events
+            protection_indicator = "🔒 " if event.password_hash else ""
+
+            event_cards.append(
+                f"""
+                <a href="{base_url}/event/{event.slug}" class="event-card" style="--event-hue: {hue};">
+                    <div class="event-card-body">
+                        <h3 class="event-title">{protection_indicator}{event.title}</h3>
+                        {f'<div class="event-date">{date_info}</div>' if date_info else ''}
+                        {f'<div class="event-location">{location_info}</div>' if location_info else ''}
+                        <p class="event-description">{event.description or ''}</p>
+                        <div class="event-stats">
+                            <span class="talks-count">{talks_count} Talk{'s' if talks_count != 1 else ''}</span>
+                        </div>
+                    </div>
+                </a>
+            """
+            )
+
+        html = f"""
+        <!doctype html>
+        <html lang="de">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>SummarAIzer – Events</title>
+            <link rel="stylesheet" href="{base_url}/static/css/style.css" />
+            <link rel="apple-touch-icon" sizes="180x180" href="{base_url}/static/assets/favicon/apple-touch-icon.png">
+            <link rel="icon" type="image/png" sizes="32x32" href="{base_url}/static/assets/favicon/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="{base_url}/static/assets/favicon/favicon-16x16.png">
+            <link rel="icon" href="{base_url}/static/assets/favicon/favicon.ico">
+            <meta name="theme-color" content="#29396d" />
+        </head>
+        <body>
+            <header class="site-header">
+                <div class="container mw-1200">
+                    <div class="top-nav">
+                        <a class="brand" href="{base_url}/public/">SummarAIzer</a>
+                    </div>
+                    <div class="page-title">
+                        <h1>Events</h1>
+                        <p class="lead">Dokumentierte Veranstaltungen und deren Talks</p>
+                    </div>
+                </div>
+            </header>
+            <main class="container mw-1200">
+                <div class="events-grid">
+                    {''.join(event_cards) if event_cards else '<p>Noch keine Events verfügbar</p>'}
+                </div>
+            </main>
+            <footer class="site-footer">
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small> powered by <a href="https://kisski.gwdg.de" target="_blank" rel="noopener">KISSKI</a>
+                <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
+            </footer>
+        </body>
+        </html>
+        """
+
+        out_file = self.public_dir / "index.html"
+        out_file.parent.mkdir(parents=True, exist_ok=True)
+        out_file.write_text(html, encoding="utf-8")
+        return out_file
+
+    def update_event_page(self, event_slug: str) -> Path:
+        """Generate an event-specific page with its talks."""
+        event = self.event_manager.get_event(event_slug)
+        if not event:
+            raise ValueError(f"Event not found: {event_slug}")
+
+        data = self._load_published()
+        talks: List[Dict[str, Any]] = data.get("talks", [])
+
+        # Filter talks for this event
+        event_talks = []
+        for t in talks:
+            slug = t.get("slug", "")
+            meta = self.read_talk_metadata(slug)
+            if meta.event_slug == event_slug:
+                event_talks.append(t)
+
+        base_url = self._proxy_prefix()
+        cards: List[str] = []
+
+        for t in sorted(
+            event_talks,
+            key=lambda d: self.read_talk_metadata(d.get("slug", "")).date_sort_key,
+        ):
+            slug = t.get("slug", "")
+            safe_slug = self._slugify(slug)
+            meta = self.read_talk_metadata(slug)
+            title = meta.title
+            date = meta.date or ""
+            speakers = ", ".join(meta.speakers) if meta.speakers else ""
+            desc = meta.description or ""
+            link = meta.link or ""
+
+            # For event page, always use event location (these talks belong to this event)
+            location = event.location or ""
+
+            # Pick cover image if available
+            gc = self.find_generated_content(slug)
+            img_tag = ""
+            if gc.get("image"):
+                rel = gc["image"].relative_to(self.base_resources).as_posix()
+                img_tag = f"<div class='card-image'><img alt='Cover' src='{base_url}/resources/{rel}'/></div>"
+
+            badges = []
+            if location:
+                badges.append(f"<span class='badge'>{location}</span>")
+            badges_html = " ".join(badges)
+
+            cards.append(
+                f"""
+                <a class="card" href="{base_url}/talk/{safe_slug}"
+                   data-title="{title.lower()}" data-speakers="{speakers.lower()}" data-location="{location.lower()}" data-date="{date}">
+                    {img_tag}
+                    <div class="card-body">
+                        <h3 class="card-title">{title}</h3>
+                        <div class="meta">{date}{' • ' + speakers if speakers else ''}</div>
+                        <p>{desc[:160] + ('…' if len(desc) > 160 else '')}</p>
+                        <div class="badges">{badges_html}</div>
+                    </div>
+                </a>
+                """
+            )
+
+        html = f"""
+        <!doctype html>
+        <html lang="de">
+        <head>
+            <meta charset="UTF-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>{event.title} – Talks</title>
+            <link rel="stylesheet" href="{base_url}/static/css/style.css" />
+            <link rel="apple-touch-icon" sizes="180x180" href="{base_url}/static/assets/favicon/apple-touch-icon.png">
+            <link rel="icon" type="image/png" sizes="32x32" href="{base_url}/static/assets/favicon/favicon-32x32.png">
+            <link rel="icon" type="image/png" sizes="16x16" href="{base_url}/static/assets/favicon/favicon-16x16.png">
+            <link rel="icon" href="{base_url}/static/assets/favicon/favicon.ico">
+            <meta name="theme-color" content="#29396d" />
+        </head>
+        <body>
+            <header class="site-header">
+                <div class="container mw-1200">
+                    <div class="top-nav">
+                        <a class="brand" href="{base_url}/public/">← Alle Events</a>
+                    </div>
+                    <div class="page-title">
+                        <h1>{event.title}</h1>
+                        <p class="lead">{event.description or 'Automatisch generierte Zusammenfassungen der Vorträge'}</p>
+                        {f'<div class="event-details">{event.start_date or ""}{" - " + event.end_date if event.end_date and event.end_date != event.start_date else ""}{" • " + event.location if event.location else ""}</div>' if event.start_date or event.location else ''}
+                    </div>
+                </div>
+            </header>
+            <main class="container mw-1200">
+                <div class="search-bar">
+                    <input id="search" type="search" placeholder="Suchen nach Titel, Vortragenden, Track…" />
+                    <span class="count" id="count"></span>
+                </div>
+                <div class="cards" id="cards">
+                    {''.join(cards) if cards else '<p>Noch keine freigegebenen Vorträge für dieses Event</p>'}
+                </div>
+            </main>
+            <footer class="site-footer">
+                <small>© 2025 Institut für Interaktive Systeme @ THL · Ein Prototyp für den <a href="https://dlc.sh" target="_blank" rel="noopener">DLC</a></small> powered by <a href="https://kisski.gwdg.de" target="_blank" rel="noopener">KISSKI</a>
+                <small style="float: right"><a href="https://dlc.sh/impressum" target="_blank" rel="noopener">Impressum</a> · <a href="https://dlc.sh/datenschutz" target="_blank" rel="noopener">Datenschutz</a></small>
+            </footer>
+            <script>
+            (function(){{
+                const q = document.getElementById('search');
+                const cards = Array.from(document.querySelectorAll('#cards .card'));
+                const countEl = document.getElementById('count');
+                function apply() {{
+                    const v = (q.value || '').toLowerCase().trim();
+                    let n = 0;
+                    cards.forEach(c => {{
+                        const hay = [
+                            c.dataset.title,
+                            c.dataset.speakers,
+                            c.dataset.location
+                        ].join(' ');
+                        const show = !v || hay.indexOf(v) >= 0;
+                        c.style.display = show ? '' : 'none';
+                        if (show) n++;
+                    }});
+                    countEl.textContent = n + ' Treffer';
+                }}
+                q.addEventListener('input', apply);
+                apply();
+            }})();
+            </script>
+        </body>
+        </html>
+        """
+
+        # Save to event-specific directory
+        event_dir = self.public_dir / "events" / event_slug
+        event_dir.mkdir(parents=True, exist_ok=True)
+        out_file = event_dir / "index.html"
+        out_file.write_text(html, encoding="utf-8")
+        return out_file
+
+    def _count_talks_for_event(self, event_slug: str) -> int:
+        """Count published talks for a specific event."""
+        data = self._load_published()
+        talks: List[Dict[str, Any]] = data.get("talks", [])
+
+        count = 0
+        for t in talks:
+            slug = t.get("slug", "")
+            meta = self.read_talk_metadata(slug)
+            if meta.event_slug == event_slug:
+                count += 1
+        return count
+
+    def regenerate_all_pages(self) -> Dict[str, Any]:
+        """Regenerate all pages (events index, event pages, and talk pages)."""
+        # Regenerate individual talk pages first
+        talk_result = self.regenerate_pages()
+
+        # Regenerate all event pages
+        events = self.event_manager.list_events(include_protected=True)
+        event_pages_generated = []
+        for event in events:
+            try:
+                self.update_event_page(event.slug)
+                event_pages_generated.append(event.slug)
+            except Exception:
+                # Continue with other events on failure
+                pass
+
+        # Regenerate main events index last (this should be the main index page)
+        self.update_events_index()
+
+        return {
+            "events_index": True,
+            "event_pages": event_pages_generated,
+            "talk_pages": talk_result.get("generated", []),
+            "total_events": len(event_pages_generated),
+            "total_talks": len(talk_result.get("generated", [])),
+        }
+
     # ---------- Orchestration ----------
     def publish(
         self, slug: str, feedback: Dict[str, Any], approve: bool
@@ -749,8 +1080,16 @@ class PublicPublisher:
                         t["date"] = meta.date
                 self._save_published(data)
 
-            # Regenerate public index
-            self.update_public_index()
+            # Regenerate public index and event pages
+            self.update_events_index()
+
+            # Regenerate the specific event page if the talk belongs to an event
+            meta = self.read_talk_metadata(slug)
+            if meta.event_slug:
+                try:
+                    self.update_event_page(meta.event_slug)
+                except Exception:
+                    pass  # Continue even if event page generation fails
 
             result.update({"published": True, "page": talk_page.as_posix()})
         else:
@@ -767,8 +1106,16 @@ class PublicPublisher:
             if talk_dir.exists():
                 shutil.rmtree(talk_dir, ignore_errors=True)
 
-            # Regenerate public index
-            self.update_public_index()
+            # Regenerate public index and event pages
+            self.update_events_index()
+
+            # Also regenerate the specific event page if the talk belonged to an event
+            meta = self.read_talk_metadata(slug)
+            if meta.event_slug:
+                try:
+                    self.update_event_page(meta.event_slug)
+                except Exception:
+                    pass  # Continue even if event page generation fails
 
         return result
 
