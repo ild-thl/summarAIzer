@@ -22,6 +22,31 @@ class TalkSetupTab:
         self.talk_manager = talk_manager
         self.app_state = app_state
 
+    def load_talk_values_and_refresh_events(self, safe_name):
+        """Load talk values and ensure event choices are fresh"""
+        # First, get the talk values
+        talk_values = self.load_talk_values(safe_name)
+
+        # Get fresh event choices
+        fresh_event_choices = self.get_event_choices()
+
+        # Extract the event_slug from talk values (last item)
+        event_slug_from_talk = talk_values[-1] if talk_values else ""
+
+        # Validate that the event_slug exists in the choices
+        valid_values = [
+            choice[0] for choice in fresh_event_choices if isinstance(choice, tuple)
+        ]
+        if event_slug_from_talk and event_slug_from_talk not in valid_values:
+            # If the event doesn't exist in choices, use the default
+            default_event = self.talk_manager.event_manager.get_default_event()
+            event_slug_from_talk = default_event.slug if default_event else ""
+
+        # Return talk values (excluding the last event_slug) + updated event dropdown
+        return talk_values[:-1] + (
+            gr.update(choices=fresh_event_choices, value=event_slug_from_talk),
+        )
+
     def load_talk_values(self, safe_name):
         """Load talk by its safe_name or return blanks for a new talk"""
         if not safe_name or safe_name == "Neu":
@@ -137,77 +162,12 @@ class TalkSetupTab:
 
     def get_event_choices(self):
         """Get choices for the event dropdown."""
+        # Always fetch fresh data from the file system
         events = self.talk_manager.event_manager.list_events(include_protected=True)
         choices = [
             (event.slug, f"{event.title} ({event.start_date or 'TBD'})")
             for event in events
         ]
-        choices.append(("new_event", "➕ Neues Event erstellen"))
-        return choices
-
-    def create_new_event(
-        self,
-        title,
-        description,
-        start_date,
-        end_date,
-        location,
-        password,
-        organizer,
-        website,
-    ):
-        """Create a new event and return status message and updated event choices."""
-        if not title or not title.strip():
-            return "❌ Bitte geben Sie einen Event-Titel ein.", gr.Dropdown(
-                choices=self.get_event_choices()
-            )
-
-        from core.event_manager import Event
-
-        # Create event slug
-        event_slug = self.talk_manager.event_manager.create_event_slug(title.strip())
-
-        # Create new event
-        event = Event(
-            slug=event_slug,
-            title=title.strip(),
-            description=description.strip() if description else None,
-            start_date=start_date.strip() if start_date else None,
-            end_date=end_date.strip() if end_date else None,
-            location=location.strip() if location else None,
-            organizer=organizer.strip() if organizer else None,
-            website=website.strip() if website else None,
-        )
-
-        # Set password if provided
-        if password and password.strip():
-            event.set_password(password.strip())
-
-        # Save event
-        try:
-            self.talk_manager.event_manager.save_event(event)
-            status_message = f"✅ Event '{title}' erfolgreich erstellt!"
-
-            # Update event choices and select the new event
-            updated_choices = self.get_event_choices()
-
-            return (
-                gr.Textbox(value=status_message, visible=True),
-                gr.Dropdown(choices=updated_choices, value=event_slug),
-            )
-        except Exception as e:
-            return (
-                gr.Textbox(
-                    value=f"❌ Fehler beim Erstellen des Events: {str(e)}", visible=True
-                ),
-                gr.Dropdown(choices=self.get_event_choices()),
-            )
-
-    def get_event_choices(self):
-        """Get available events for dropdown"""
-        events = self.talk_manager.event_manager.list_events(include_protected=True)
-        choices = [(f"{event.title} ({event.slug})", event.slug) for event in events]
-        choices.append(("+ Neues Event erstellen", "new_event"))
         return choices
 
     def create_new_event(
@@ -288,6 +248,22 @@ class TalkSetupTab:
             choices = refresh_talk_selector_choices(self.talk_manager)
             return gr.Dropdown(choices=choices, value="Neu")
 
+        # Create a refresh function for the event selector
+        def refresh_event_selector():
+            """Refresh the event selector with current events"""
+            choices = self.get_event_choices()
+            default_event = self.talk_manager.event_manager.get_default_event()
+            default_value = default_event.slug if default_event else None
+
+            # Validate that the default value exists in choices
+            valid_values = [
+                choice[0] for choice in choices if isinstance(choice, tuple)
+            ]
+            if default_value and default_value not in valid_values:
+                default_value = valid_values[0] if valid_values else None
+
+            return gr.update(choices=choices, value=default_value)
+
         # Create the dropdown component with initial refresh
         current_talk_selector = create_current_talk_selector(self.talk_manager)
 
@@ -319,17 +295,31 @@ class TalkSetupTab:
             )
 
             # Event selection
-            with gr.Row():
+            with gr.Column():
+                # Get fresh choices every time the tab is created
+                fresh_choices = self.get_event_choices()
+                default_event = self.talk_manager.event_manager.get_default_event()
+                default_value = default_event.slug if default_event else None
+
                 event_selector = gr.Dropdown(
-                    choices=self.get_event_choices(),
+                    choices=fresh_choices,
                     label="🎪 Event",
-                    info="Wählen Sie ein Event oder erstellen Sie ein neues",
-                    value=(
-                        self.talk_manager.event_manager.get_default_event().slug
-                        if self.talk_manager.event_manager.get_default_event()
-                        else None
-                    ),
+                    info="Wählen Sie ein Event aus",
+                    value=default_value,
+                    allow_custom_value=True,
                 )
+
+                with gr.Row():
+                    new_event_btn = gr.Button(
+                        "➕ Neues Event",
+                        variant="secondary",
+                        size="sm",
+                    )
+                    refresh_event_btn = gr.Button(
+                        "🔄 Events aktualisieren",
+                        variant="secondary",
+                        size="sm",
+                    )
 
             # New event creation form (initially hidden)
             with gr.Group(visible=False) as new_event_group:
@@ -409,13 +399,20 @@ class TalkSetupTab:
         # Refresh button to update talk list
         refresh_btn.click(fn=refresh_talk_selector, outputs=[current_talk_selector])
 
+        # Refresh button to update event list
+        refresh_event_btn.click(fn=refresh_event_selector, outputs=[event_selector])
+
         # Quick action: start a new talk (sets selector to "Neu" and clears fields)
         def start_new_talk(current_state):
             choices = refresh_talk_selector_choices(self.talk_manager)
             # set state to "Neu"
             state = AppState.from_gradio_state(current_state).set("current_talk", "Neu")
+
+            # Get fresh event choices and default event
+            fresh_event_choices = self.get_event_choices()
             default_event = self.talk_manager.event_manager.get_default_event()
             default_event_slug = default_event.slug if default_event else ""
+
             return (
                 "",  # status message
                 gr.Dropdown(choices=choices, value="Neu"),  # selector value
@@ -423,7 +420,9 @@ class TalkSetupTab:
                 "",  # talk_name
                 "",  # speaker_name
                 self.get_current_fomatted_date(),
-                default_event_slug,  # event_slug
+                gr.update(
+                    choices=fresh_event_choices, value=default_event_slug
+                ),  # event selector with fresh choices
                 "",  # link
                 "",  # location
                 "",  # description
@@ -460,7 +459,7 @@ class TalkSetupTab:
         )
 
         current_talk_selector.change(
-            fn=self.load_talk_values,
+            fn=self.load_talk_values_and_refresh_events,
             inputs=[current_talk_selector],
             outputs=[
                 talk_name,
@@ -522,16 +521,16 @@ class TalkSetupTab:
         )
 
         # Event management handlers
-        def toggle_new_event_form(event_selection):
-            """Show/hide new event creation form based on selection"""
-            if event_selection == "new_event":
-                return gr.Group(visible=True)
-            else:
-                return gr.Group(visible=False)
+        def toggle_new_event_form():
+            """Show/hide new event creation form"""
+            return gr.Group(visible=True)
 
-        event_selector.change(
+        def hide_new_event_form():
+            """Hide new event creation form"""
+            return gr.Group(visible=False)
+
+        new_event_btn.click(
             fn=toggle_new_event_form,
-            inputs=[event_selector],
             outputs=[new_event_group],
         )
 
@@ -568,10 +567,11 @@ class TalkSetupTab:
         )
 
         # Cancel new event creation
-        cancel_event_btn.click(
-            fn=lambda: (
+        def cancel_new_event():
+            """Cancel new event creation and refresh event choices"""
+            return (
                 gr.Group(visible=False),
-                gr.Dropdown(choices=self.get_event_choices()),
+                gr.update(choices=self.get_event_choices()),
                 "",
                 "",
                 "",
@@ -580,7 +580,10 @@ class TalkSetupTab:
                 "",
                 "",
                 "",
-            ),
+            )
+
+        cancel_event_btn.click(
+            fn=cancel_new_event,
             outputs=[
                 new_event_group,
                 event_selector,
@@ -594,3 +597,16 @@ class TalkSetupTab:
                 event_website,
             ],
         )
+
+        # Auto-refresh event selector when talk selector is first interacted with
+        # This ensures fresh event data after container restarts
+        def auto_refresh_events_on_first_use():
+            """Refresh event choices when user first interacts with the interface"""
+            return refresh_event_selector()
+
+        # REMOVED: Conflicting auto-refresh that was overriding talk event selection
+        # current_talk_selector.change(
+        #     fn=auto_refresh_events_on_first_use,
+        #     outputs=[event_selector],
+        #     show_progress=False,
+        # )
