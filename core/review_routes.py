@@ -168,20 +168,18 @@ def _review_form_html(slug: str, saved: bool = False) -> str:
     </head>
     <body>
     <header class=\"site-header\">
-        <div class=\"container mw-1200\">
-            <div class="page-title">
-                <h1>Freigabeprüfung: {talk_meta.title}</h1>
-                <div class="lead">
-                    So funktioniert die Freigabeprüfung:
-                    <ol>
-                        <li>Klicken Sie auf \"Quelle öffnen\", um die automatisch generierten Inhalte einzusehen.</li>
-                        <li>Bewerten Sie die Inhalte zu den aufgeführten Kriterien auf einer Skala von 1 (niedrig) bis 4 (hoch).</li>
-                        <li>Optional: Geben Sie Freitext-Feedback und den geschätzten Zeitaufwand an.</li>
-                        <li>Entscheiden Sie unter \"Freigabe\", ob die Inhalte veröffentlicht werden sollen.</li>
-                        <li>Klicken Sie auf \"Bewertung speichern\". Ihre Angaben werden gespeichert und können später erneut angepasst werden.</li>
-                    </ol>
-                    Hinweis: Bei Freigabe wird eine Seite für Ihren Talk erstellt und in der <a style="color: white; text-decoration: underline;" href="https://lab.dlc.sh/summaraizer/" target="_blank">https://lab.dlc.sh/summaraizer/</a> geführt.
-                </div>
+        <div class="page-title">
+            <h1>Freigabeprüfung: {talk_meta.title}</h1>
+            <div class="lead">
+                So funktioniert die Freigabeprüfung:
+                <ol>
+                    <li>Klicken Sie auf \"Quelle öffnen\", um die automatisch generierten Inhalte einzusehen.</li>
+                    <li>Bewerten Sie die Inhalte zu den aufgeführten Kriterien auf einer Skala von 1 (niedrig) bis 4 (hoch).</li>
+                    <li>Optional: Geben Sie Freitext-Feedback und den geschätzten Zeitaufwand an.</li>
+                    <li>Entscheiden Sie unter \"Freigabe\", ob die Inhalte veröffentlicht werden sollen.</li>
+                    <li>Klicken Sie auf \"Bewertung speichern\". Ihre Angaben werden gespeichert und können später erneut angepasst werden.</li>
+                </ol>
+                Hinweis: Bei Freigabe wird eine Seite für Ihren Talk erstellt und in der <a style="color: white; text-decoration: underline;" href="https://lab.dlc.sh/summaraizer/" target="_blank">https://lab.dlc.sh/summaraizer/</a> geführt.
             </div>
         </div>
     </header>

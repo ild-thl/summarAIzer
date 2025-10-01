@@ -17,6 +17,17 @@ gradio-app {
     justify-content: center;
 }
 
+gradio-app {
+    width: 100%;
+    max-width: 1200px !important;
+    margin: auto;
+}
+
+/* On samll devices set padding to none on gradio-app main */
+gradio-app main {
+    padding: 0 !important;
+}
+
 .container,
 .gradio-container {
     width: inherit;
@@ -42,6 +53,10 @@ main.container {
     border-radius: 10px;
 }
 
+.site-header.container {
+    margin: auto;
+}
+
 .site-header .top-nav {
     display: flex;
     justify-content: space-between;
@@ -60,6 +75,7 @@ main.container {
 }
 
 .site-header .page-title {
+    padding: 0 2em;
     margin-top: 12px;
 }
 
@@ -496,76 +512,6 @@ textarea {
     color: #2c3e50 !important;
 }
 
-/* Responsive */
-@media (max-width: 900px) {
-    .two-col {
-        grid-template-columns: 1fr;
-    }
-
-    .hero.hero-image img {
-        height: 240px;
-    }
-
-    /* Center header content and avoid overflow on small screens */
-    .site-header .top-nav {
-        flex-direction: column;
-        gap: 8px;
-        align-items: center;
-    }
-
-    .site-header .page-title {
-        text-align: center;
-    }
-
-    .site-header .page-title h1 {
-        font-size: 1.5rem;
-        line-height: 1.2;
-        word-break: break-word;
-    }
-}
-
-/* Narrow screens: ensure cards and review form are mobile-friendly */
-@media (max-width: 680px) {
-
-    /* Cards grid: single column, centered, no overflow */
-    .cards {
-        grid-template-columns: 1fr;
-        justify-items: center;
-    }
-
-    .cards .card {
-        width: 100%;
-        max-width: 600px;
-    }
-
-    /* Review form: stack label over control to let Likert use full width */
-    .form-row {
-        grid-template-columns: 1fr;
-        align-items: start;
-        gap: 8px;
-    }
-
-    .form-label {
-        margin-bottom: 2px;
-    }
-
-    .likert {
-        width: 100%;
-        justify-content: space-between;
-    }
-
-    .likert label {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        flex: 1 1 auto;
-        min-width: 48px;
-    }
-
-    .likert-anchor {
-        white-space: nowrap;
-    }
-}
 
 /* Prompt configuration accordion */
 .prompt-config .gradio-accordion {
@@ -852,34 +798,6 @@ html.dark .html-preview .mermaid {
     color: #000000 !important;
 }
 
-/* Media query for system dark mode preference */
-@media (prefers-color-scheme: dark) {
-
-    /* Only apply if no explicit theme is set */
-    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label,
-    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label span,
-    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label,
-    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label span {
-        color: #212529 !important;
-    }
-
-    body:not(.light):not([data-theme="light"]) .raw-output-editor textarea {
-        color: #212529 !important;
-        background-color: #f8f9fa !important;
-    }
-
-    body:not(.light):not([data-theme="light"]) .html-preview.block {
-        background-color: #ffffff !important;
-        color: #212529 !important;
-    }
-
-    body:not(.light):not([data-theme="light"]) .mermaid,
-    body:not(.light):not([data-theme="light"]) .html-preview .mermaid {
-        background: white !important;
-        color: #000000 !important;
-    }
-}
-
 /* Talk display components - maintain readability in all modes */
 .talk-display {
     color: #212529 !important;
@@ -1153,13 +1071,6 @@ legend {
     right: 94px;
 }
 
-@media (max-width:700px) {
-    .tab-buttons button {
-        font-size: 13px;
-        padding: 5px 10px;
-    }
-}
-
 /* === Events Page Styles === */
 .events-grid {
     display: grid;
@@ -1402,6 +1313,41 @@ legend {
     color: white;
 }
 
+/* Media query for system dark mode preference */
+@media (prefers-color-scheme: dark) {
+
+    /* Only apply if no explicit theme is set */
+    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label,
+    body:not(.light):not([data-theme="light"]) .file-radio-vertical .wrap>label span,
+    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label,
+    body:not(.light):not([data-theme="light"]) .file-checkbox-vertical .wrap>label span {
+        color: #212529 !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .raw-output-editor textarea {
+        color: #212529 !important;
+        background-color: #f8f9fa !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .html-preview.block {
+        background-color: #ffffff !important;
+        color: #212529 !important;
+    }
+
+    body:not(.light):not([data-theme="light"]) .mermaid,
+    body:not(.light):not([data-theme="light"]) .html-preview .mermaid {
+        background: white !important;
+        color: #000000 !important;
+    }
+}
+
+@media (max-width:700px) {
+    .tab-buttons button {
+        font-size: 13px;
+        padding: 5px 10px;
+    }
+}
+
 /* Responsive adjustments for smaller screens */
 @media (max-width: 768px) {
 
@@ -1520,5 +1466,65 @@ legend {
     .auth-form {
         margin: 50px auto;
         padding: 24px;
+    }
+}
+
+
+/* Responsive */
+@media (max-width: 900px) {
+    .two-col {
+        grid-template-columns: 1fr;
+    }
+
+    .hero.hero-image img {
+        height: 240px;
+    }
+
+    .site-header .page-title h1 {
+        font-size: 1.5rem;
+        line-height: 1.2;
+        word-break: break-word;
+    }
+}
+
+/* Narrow screens: ensure cards and review form are mobile-friendly */
+@media (max-width: 680px) {
+
+    /* Cards grid: single column, centered, no overflow */
+    .cards {
+        grid-template-columns: 1fr;
+        justify-items: center;
+    }
+
+    .cards .card {
+        width: 100%;
+        max-width: 600px;
+    }
+
+    /* Review form: stack label over control to let Likert use full width */
+    .form-row {
+        grid-template-columns: 1fr;
+        align-items: start;
+        gap: 8px;
+    }
+
+    .form-label {
+        margin-bottom: 2px;
+    }
+
+    .likert {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .likert label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        flex: 1 1 auto;
+    }
+
+    .likert-anchor {
+        white-space: nowrap;
     }
 }

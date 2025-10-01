@@ -444,12 +444,12 @@ class ResourceBrowser:
             </head>
             <body>
                 <div class="main">
-                    <div class="header">
+                    <div class="header container mw-1200">
                         <div class="breadcrumb">{breadcrumb}</div>
                         <h1>✏️ Edit: {safe_path.name}</h1>
                         <p style="margin:4px 0 0;font-size:14px;">Editing within <code>resources/</code>.{' Markdown preview supports Mermaid diagrams.' if is_markdown else ' Plain text preview.'}</p>
                     </div>
-                    <div class="editor-tabs" data-file="{rel}" data-mode="{'markdown' if is_markdown else 'text'}">
+                    <div class="editor-tabs container mw-1200" data-file="{rel}" data-mode="{'markdown' if is_markdown else 'text'}">
                         <div class="tab-buttons">
                             <button data-tab="raw" class="active" type="button">Raw</button>
                             <button data-tab="preview" type="button">Preview</button>
