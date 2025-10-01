@@ -37,15 +37,15 @@ class TalkSetupTab:
         valid_values = [
             choice[0] for choice in fresh_event_choices if isinstance(choice, tuple)
         ]
+
         if event_slug_from_talk and event_slug_from_talk not in valid_values:
             # If the event doesn't exist in choices, use the default
             default_event = self.talk_manager.event_manager.get_default_event()
             event_slug_from_talk = default_event.slug if default_event else ""
 
         # Return talk values (excluding the last event_slug) + updated event dropdown
-        return talk_values[:-1] + (
-            gr.update(choices=fresh_event_choices, value=event_slug_from_talk),
-        )
+        update_dict = gr.update(choices=fresh_event_choices, value=event_slug_from_talk)
+        return talk_values[:-1] + (update_dict,)
 
     def load_talk_values(self, safe_name):
         """Load talk by its safe_name or return blanks for a new talk"""
@@ -80,6 +80,14 @@ class TalkSetupTab:
     def save_talk(self, name, speaker, date, link, location, description, event_slug):
         """Save a talk with metadata"""
         status_message = ""
+
+        # Convert display label back to slug if needed
+        event_choices = self.get_event_choices()
+        event_slug_map = {label: slug for slug, label in event_choices}
+
+        # If event_slug is actually a display label, convert it to slug
+        if event_slug in event_slug_map:
+            event_slug = event_slug_map[event_slug]
 
         if not name or not name.strip():
             status_message = "❌ Bitte geben Sie einen Talk-Namen ein."
@@ -121,6 +129,7 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+                event_slug,  # Return the event_slug to preserve the selection
             )
 
     def delete_talk(self, safe_name):
@@ -142,6 +151,10 @@ class TalkSetupTab:
             self.talk_manager, initial_selection=selected_tab
         )
 
+        # Get default event for reset
+        default_event = self.talk_manager.event_manager.get_default_event()
+        default_event_slug = default_event.slug if default_event else ""
+
         return (
             status_message,
             current_talk_selector,
@@ -152,6 +165,7 @@ class TalkSetupTab:
             "",
             "",
             "",
+            default_event_slug,  # Reset to default event
         )
 
     def get_current_fomatted_date(self):
@@ -215,6 +229,195 @@ class TalkSetupTab:
         return f"✅ Event '{title}' erfolgreich erstellt!", gr.Dropdown(
             choices=new_choices, value=slug
         )
+
+    def load_event_for_editing(self, event_slug):
+        """Load event data for editing"""
+        if not event_slug:
+            return ("", "", "", "", "", "", "", "")
+
+        event = self.talk_manager.event_manager.get_event(event_slug)
+        if not event:
+            return ("", "", "", "", "", "", "", "")
+
+        return (
+            event.title or "",
+            event.description or "",
+            event.start_date or "",
+            event.end_date or "",
+            event.location or "",
+            event.organizer or "",
+            event.website or "",
+            "",  # Don't show password for security
+        )
+
+    def update_existing_event(
+        self,
+        event_slug,
+        title,
+        description,
+        start_date,
+        end_date,
+        location,
+        password,
+        organizer,
+        website,
+    ):
+        """Update an existing event"""
+        if not event_slug:
+            return "❌ Kein Event zum Bearbeiten ausgewählt.", gr.Dropdown(
+                choices=self.get_event_choices()
+            )
+
+        if not title or not title.strip():
+            return "❌ Bitte geben Sie einen Event-Titel ein.", gr.Dropdown(
+                choices=self.get_event_choices()
+            )
+
+        from core.event_manager import Event
+
+        # Get existing event
+        existing_event = self.talk_manager.event_manager.get_event(event_slug)
+        if not existing_event:
+            return "❌ Event nicht gefunden.", gr.Dropdown(
+                choices=self.get_event_choices()
+            )
+
+        # Create updated event with same slug
+        updated_event = Event(
+            slug=event_slug,  # Keep the same slug
+            title=title.strip(),
+            description=description.strip() if description else None,
+            start_date=start_date if start_date else None,
+            end_date=end_date if end_date else None,
+            location=location.strip() if location else None,
+            organizer=organizer.strip() if organizer else None,
+            website=website.strip() if website else None,
+            is_public=existing_event.is_public,  # Preserve existing privacy setting
+        )
+
+        # Update password if provided, or keep existing
+        if password and password.strip():
+            updated_event.set_password(password.strip())
+        elif existing_event.password_hash:
+            updated_event.password_hash = existing_event.password_hash
+
+        # Save updated event
+        self.talk_manager.event_manager.save_event(updated_event)
+
+        # Update choices and return success
+        new_choices = self.get_event_choices()
+        return f"✅ Event '{title}' erfolgreich aktualisiert!", gr.Dropdown(
+            choices=new_choices, value=event_slug
+        )
+
+    def show_new_event_form(self):
+        """Show the form for creating a new event"""
+        return (
+            gr.Group(visible=True),  # event_form_group
+            gr.Markdown("#### 🆕 Neues Event erstellen"),  # event_form_title
+            "",  # event_editing_slug (empty for new event)
+            "",  # event_title
+            "",  # event_description
+            "",  # event_start_date
+            "",  # event_end_date
+            "",  # event_location
+            "",  # event_organizer
+            "",  # event_website
+            "",  # event_password
+            gr.Button("Event erstellen", variant="primary"),  # save_event_btn
+        )
+
+    def show_edit_event_form(self, selected_event_slug):
+        """Show the form for editing an existing event"""
+        if not selected_event_slug:
+            return (
+                gr.Group(visible=False),  # event_form_group - hide if no event selected
+                gr.Markdown("#### ⚠️ Kein Event ausgewählt"),  # event_form_title
+                "",  # event_editing_slug
+                "",  # event_title
+                "",  # event_description
+                "",  # event_start_date
+                "",  # event_end_date
+                "",  # event_location
+                "",  # event_organizer
+                "",  # event_website
+                "",  # event_password
+                gr.Button("Event erstellen", variant="primary"),  # save_event_btn
+            )
+
+        # Load event data
+        event_data = self.load_event_for_editing(selected_event_slug)
+
+        return (
+            gr.Group(visible=True),  # event_form_group
+            gr.Markdown("#### ✏️ Event bearbeiten"),  # event_form_title
+            selected_event_slug,  # event_editing_slug
+            event_data[0],  # event_title
+            event_data[1],  # event_description
+            event_data[2],  # event_start_date
+            event_data[3],  # event_end_date
+            event_data[4],  # event_location
+            event_data[5],  # event_organizer
+            event_data[6],  # event_website
+            event_data[7],  # event_password (always empty for security)
+            gr.Button("Event aktualisieren", variant="primary"),  # save_event_btn
+        )
+
+    def hide_event_form(self):
+        """Hide the event form"""
+        return (
+            gr.Group(visible=False),  # event_form_group
+            gr.Markdown("#### 🆕 Neues Event erstellen"),  # event_form_title
+            "",  # event_editing_slug
+            "",  # event_title
+            "",  # event_description
+            "",  # event_start_date
+            "",  # event_end_date
+            "",  # event_location
+            "",  # event_organizer
+            "",  # event_website
+            "",  # event_password
+            gr.Button("Event erstellen", variant="primary"),  # save_event_btn
+        )
+
+    def save_or_update_event(
+        self,
+        editing_slug,
+        title,
+        description,
+        start_date,
+        end_date,
+        location,
+        password,
+        organizer,
+        website,
+    ):
+        """Save or update event based on whether we're editing"""
+        if editing_slug:
+            # Update existing event
+            return self.update_existing_event(
+                editing_slug,
+                title,
+                description,
+                start_date,
+                end_date,
+                location,
+                password,
+                organizer,
+                website,
+            )
+        else:
+            # Create new event
+            return self.create_new_event(
+                title,
+                description,
+                start_date,
+                end_date,
+                location,
+                password,
+                organizer,
+                website,
+            )
 
     def create_tab(self):
         """Create the talk setup and management tab"""
@@ -315,15 +518,23 @@ class TalkSetupTab:
                         variant="secondary",
                         size="sm",
                     )
+                    edit_event_btn = gr.Button(
+                        "✏️ Event bearbeiten",
+                        variant="secondary",
+                        size="sm",
+                    )
                     refresh_event_btn = gr.Button(
                         "🔄 Events aktualisieren",
                         variant="secondary",
                         size="sm",
                     )
 
-            # New event creation form (initially hidden)
-            with gr.Group(visible=False) as new_event_group:
-                gr.Markdown("#### 🆕 Neues Event erstellen")
+            # Event creation/editing form (initially hidden)
+            with gr.Group(visible=False) as event_form_group:
+                event_form_title = gr.Markdown("#### 🆕 Neues Event erstellen")
+
+                # Hidden field to track if we're editing an existing event
+                event_editing_slug = gr.Textbox(visible=False, value="")
 
                 with gr.Row():
                     event_title = gr.Textbox(label="Event Titel *", scale=2)
@@ -351,7 +562,7 @@ class TalkSetupTab:
                 )
 
                 with gr.Row():
-                    create_event_btn = gr.Button("Event erstellen", variant="primary")
+                    save_event_btn = gr.Button("Event erstellen", variant="primary")
                     cancel_event_btn = gr.Button("Abbrechen", variant="secondary")
 
                 event_status = gr.Textbox(
@@ -472,13 +683,6 @@ class TalkSetupTab:
             ],
         )
 
-        # # Refresh dropdown choices via gr.update
-        # refresh_selector_btn.click(
-        #     fn=lambda: (self.update_talk_selector(), ""),
-        #     outputs=[current_talk_selector, status_message],
-        # )
-
-        # Save talk and update status message and dropdown
         save_talk_btn.click(
             fn=self.save_talk,
             inputs=[
@@ -500,6 +704,7 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+                event_selector,
             ],
         )
 
@@ -517,27 +722,53 @@ class TalkSetupTab:
                 link,
                 location,
                 description,
+                event_selector,
             ],
         )
 
         # Event management handlers
-        def toggle_new_event_form():
-            """Show/hide new event creation form"""
-            return gr.Group(visible=True)
-
-        def hide_new_event_form():
-            """Hide new event creation form"""
-            return gr.Group(visible=False)
-
         new_event_btn.click(
-            fn=toggle_new_event_form,
-            outputs=[new_event_group],
+            fn=self.show_new_event_form,
+            outputs=[
+                event_form_group,
+                event_form_title,
+                event_editing_slug,
+                event_title,
+                event_description,
+                event_start_date,
+                event_end_date,
+                event_location,
+                event_organizer,
+                event_website,
+                event_password,
+                save_event_btn,
+            ],
         )
 
-        # Create new event
-        create_event_btn.click(
-            fn=self.create_new_event,
+        edit_event_btn.click(
+            fn=self.show_edit_event_form,
+            inputs=[event_selector],
+            outputs=[
+                event_form_group,
+                event_form_title,
+                event_editing_slug,
+                event_title,
+                event_description,
+                event_start_date,
+                event_end_date,
+                event_location,
+                event_organizer,
+                event_website,
+                event_password,
+                save_event_btn,
+            ],
+        )
+
+        # Save/Update event
+        save_event_btn.click(
+            fn=self.save_or_update_event,
             inputs=[
+                event_editing_slug,
                 event_title,
                 event_description,
                 event_start_date,
@@ -549,52 +780,42 @@ class TalkSetupTab:
             ],
             outputs=[event_status, event_selector],
         ).then(
-            fn=lambda: (gr.Group(visible=False), "", "", "", "", "", "", "", ""),
+            fn=self.hide_event_form,
             outputs=[
-                new_event_group,
+                event_form_group,
+                event_form_title,
+                event_editing_slug,
                 event_title,
                 event_description,
                 event_start_date,
                 event_end_date,
                 event_location,
-                event_password,
                 event_organizer,
                 event_website,
+                event_password,
+                save_event_btn,
             ],
         ).then(
             fn=lambda: gr.Textbox(visible=False),
             outputs=[event_status],
         )
 
-        # Cancel new event creation
-        def cancel_new_event():
-            """Cancel new event creation and refresh event choices"""
-            return (
-                gr.Group(visible=False),
-                gr.update(choices=self.get_event_choices()),
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-            )
-
+        # Cancel event creation/editing
         cancel_event_btn.click(
-            fn=cancel_new_event,
+            fn=self.hide_event_form,
             outputs=[
-                new_event_group,
-                event_selector,
+                event_form_group,
+                event_form_title,
+                event_editing_slug,
                 event_title,
                 event_description,
                 event_start_date,
                 event_end_date,
                 event_location,
-                event_password,
                 event_organizer,
                 event_website,
+                event_password,
+                save_event_btn,
             ],
         )
 
@@ -603,10 +824,3 @@ class TalkSetupTab:
         def auto_refresh_events_on_first_use():
             """Refresh event choices when user first interacts with the interface"""
             return refresh_event_selector()
-
-        # REMOVED: Conflicting auto-refresh that was overriding talk event selection
-        # current_talk_selector.change(
-        #     fn=auto_refresh_events_on_first_use,
-        #     outputs=[event_selector],
-        #     show_progress=False,
-        # )
