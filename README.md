@@ -1,6 +1,6 @@
 # 🎓 SummarAIzer
 
-AI Content Generator for Moodle Moot DACH talks with built-in GDPR compliance checking.
+AI Content Generator for talks, classes or workshops. 
 
 ## Features
 
