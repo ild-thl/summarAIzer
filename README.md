@@ -7,7 +7,7 @@ AI Content Generator for talks, classes or workshops.
 - **Transcription Management**: Upload and manage audio files and transcriptions
 - **AI Content Generation**: Generate summaries, social media posts, and metadata
 - **Image Generation**: Genreate images based on talk content
-- **🔒 GDPR Compliance Checking**: Automatically detects and highlights personal data in transcription
+- **🔒 GDPR Compliance Checking**: Automatically detects and highlights personal data in transcription using [presidio](https://microsoft.github.io/presidio/analyzer/)
 
 ## Usage
 
