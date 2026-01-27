@@ -3,18 +3,16 @@ services:
         image: pascalhuerten/summaraizer:latest
         container_name: summaraizer
         build: .
-        user: "${HOST_UID:-1000}:${HOST_GID:-1000}" # Ensure proper user mapping for file permissions
         ports:
             - "7860:7860"
         volumes:
-            # Persistent storage for resources folder
-            - ./resources:/app/resources
-            - ./prompts:/app/prompts
-            # Optional: Mount .env file for environment variables
-            - ./.env:/app/.env:ro
+            # Use Docker-managed volumes instead of bind mounts for better compatibility
+            - summaraizer_resources:/app/resources
+            - summaraizer_prompts:/app/prompts
         environment:
-            HOST_UID: ${HOST_UID:-1000}
-            HOST_GID: ${HOST_GID:-1000}
+            GRADIO_SERVER_NAME: 0.0.0.0
+            GRADIO_SERVER_PORT: 7860
+            PYTHONUNBUFFERED: "1"
         restart: unless-stopped
         healthcheck:
             test: ["CMD", "curl", "-f", "http://localhost:7860/"]
@@ -29,14 +27,10 @@ services:
                     memory: 2G
                 reservations:
                     memory: 1G
-        networks:
-            - tls_proxy_network
 
-networks:
-    tls_proxy_network:
-        external: true
-
-# Persistent volumes
+# Docker-managed volumes for persistent data
 volumes:
-    moomootscribe_data:
+    summaraizer_resources:
+        driver: local
+    summaraizer_prompts:
         driver: local

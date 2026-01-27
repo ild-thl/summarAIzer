@@ -4,24 +4,20 @@ services:
             context: .
             dockerfile: Dockerfile.dev
         container_name: summaraizer
-        user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
         ports:
             - "7860:7860"
         environment:
             GRADIO_SERVER_NAME: 0.0.0.0
             GRADIO_SERVER_PORT: 7860
             PYTHONUNBUFFERED: "1"
-            HOST_UID: ${HOST_UID:-1000}
-            HOST_GID: ${HOST_GID:-1000}
         volumes:
-            - ./:/app:rw
-            - ./static:/app/static:rw
-            - ./ui:/app/ui:rw
-            - ./core:/app/core:rw
+            - ./static:/app/static:z
+            - ./ui:/app/ui:z
+            - ./core:/app/core:z
+            - ./resources:/app/resources:z
+            - ./prompts:/app/prompts:z
+            - ./.env:/app/.env:z
             - /app/.venv
-            - ./resources:/app/resources:rw
-            - ./prompts:/app/prompts:rw
-            - ./.env:/app/.env:ro
         command:
             [
                 "uvicorn",
@@ -39,9 +35,3 @@ services:
             interval: 30s
             timeout: 10s
             retries: 3
-        networks:
-            - tls_proxy_network
-
-networks:
-    tls_proxy_network:
-        external: true

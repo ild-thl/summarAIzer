@@ -22,8 +22,6 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Note: defer spaCy model download to container start to speed up image builds
-
 # Copy application code
 COPY . .
 
@@ -43,12 +41,6 @@ RUN mkdir -p /app/prompts && \
 # Create non-root user but do not switch; compose may run container as host UID
 RUN useradd --create-home --shell /bin/bash app || true
 RUN chown -R app:app /app || true
-
-# Copy entrypoint script
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # Expose port
 EXPOSE 7860

@@ -99,7 +99,6 @@ class SummarAIzerApp:
         base = self.proxy_path
         head = f"""
         <script src="{base}/static/js/diagram_renderer.js"></script>
-        <script src="{base}/static/js/gdpr_entity_links.js"></script>
         <link rel="stylesheet" href="{base}/static/css/style.css" />
         <!-- Favicons -->
         <link rel="apple-touch-icon" sizes="180x180" href="{base}/static/assets/favicon/apple-touch-icon.png">

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 import requests
+import os
 
 
 class CompetenceAnalyser:
@@ -19,8 +20,8 @@ class CompetenceAnalyser:
     def __init__(self, base_url: str | None = None) -> None:
         # Full endpoint URL expected
         self.endpoint = (
-            base_url or "https://lab.dlc.sh/competence-analyser/v2/chatsearch"
-        )
+            base_url or os.getenv("WISYKI_API_URL")
+        ) + "/v2/chatsearch"
 
     def analyze(
         self,
