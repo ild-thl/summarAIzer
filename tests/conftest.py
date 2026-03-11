@@ -254,3 +254,29 @@ def session_with_owner(test_db, event_with_owner, sample_user):
     test_db.commit()
     test_db.refresh(session)
     return session
+
+
+@pytest.fixture
+def published_session(test_db, sample_event, sample_user):
+    """Create a published session for testing public access."""
+    now = datetime.utcnow()
+    session = SessionModel(
+        title="Published Test Session",
+        speakers=["John Doe"],
+        categories=["Testing"],
+        short_description="A published test session",
+        location="Room 101",
+        start_datetime=now,
+        end_datetime=now + timedelta(hours=1),
+        status=SessionStatus.PUBLISHED,
+        session_format=SessionFormat.WORKSHOP,
+        duration=60,
+        language="en",
+        uri="published-test-session",
+        event_id=sample_event.id,
+        owner_id=sample_user.id,
+    )
+    test_db.add(session)
+    test_db.commit()
+    test_db.refresh(session)
+    return session

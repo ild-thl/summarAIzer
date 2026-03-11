@@ -108,52 +108,67 @@ class TestSessionAPI:
 
         assert response.status_code == HTTP_409_CONFLICT
 
-    def test_get_session_by_id(self, client, sample_session):
-        """Test getting a session by ID."""
-        response = client.get(f"/api/v2/sessions/{sample_session.id}")
+    def test_get_session_by_id(self, client, sample_api_key, session_with_owner):
+        """Test getting a session by ID (authenticated)."""
+        api_key, plain_key = sample_api_key
+        response = client.get(
+            f"/api/v2/sessions/{session_with_owner.id}",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        assert data["id"] == sample_session.id
-        assert data["title"] == sample_session.title
+        assert data["id"] == session_with_owner.id
+        assert data["title"] == session_with_owner.title
 
-    def test_get_session_by_uri(self, client, sample_session):
-        """Test getting a session by URI."""
-        response = client.get(f"/api/v2/sessions/by-uri/{sample_session.uri}")
+    def test_get_session_by_uri(self, client, sample_api_key, session_with_owner):
+        """Test getting a session by URI (authenticated)."""
+        api_key, plain_key = sample_api_key
+        response = client.get(
+            f"/api/v2/sessions/by-uri/{session_with_owner.uri}",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        assert data["uri"] == sample_session.uri
+        assert data["uri"] == session_with_owner.uri
 
-    def test_list_sessions(self, client, sample_session):
-        """Test listing sessions."""
+    def test_list_sessions(self, client, published_session):
+        """Test listing sessions (public access to published)."""
         response = client.get("/api/v2/sessions")
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
         assert len(data) >= 1
+        # Should include the published session
+        assert any(s["id"] == published_session.id for s in data)
 
-    def test_list_sessions_by_event(self, client, sample_event, sample_session):
-        """Test listing sessions for a specific event."""
+    def test_list_sessions_by_event(self, client, sample_event, published_session):
+        """Test listing sessions for a specific event (public access)."""
         response = client.get(f"/api/v2/sessions/event/{sample_event.id}/sessions")
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
         assert len(data) >= 1
-        assert sample_session.id in [s["id"] for s in data]
+        # Should include the published session
+        assert any(s["id"] == published_session.id for s in data)
 
     def test_list_sessions_published_only(self, client, sample_session_no_event):
-        """Test listing only published sessions."""
-        response = client.get("/api/v2/sessions?published_only=true")
+        """Test listing only published sessions using status filter."""
+        response = client.get("/api/v2/sessions?status=published")
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include the published session
         assert any(s["id"] == sample_session_no_event.id for s in data)
 
-    def test_list_sessions_by_status(self, client, sample_session):
-        """Test listing sessions filtered by status."""
-        response = client.get("/api/v2/sessions?status=draft")
+    def test_list_sessions_by_status(self, client, sample_api_key, session_with_owner):
+        """Test listing sessions filtered by status (authenticated)."""
+        api_key, plain_key = sample_api_key
+        response = client.get(
+            "/api/v2/sessions?status=draft",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
 
         assert response.status_code == HTTP_200_OK
         data = response.json()

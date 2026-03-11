@@ -126,3 +126,64 @@ async def require_session_owner(
             detail="Permission denied",
         )
     return session
+
+
+async def get_current_user_optional(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Optional authentication. Returns User if valid auth provided, None otherwise."""
+    if not authorization:
+        return None
+
+    try:
+        # Reuse get_current_user logic but catch exceptions
+        parts = authorization.split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return None
+
+        api_key = parts[1]
+        key_hash = hash_api_key(api_key)
+
+        api_key_record = (
+            db.query(APIKey)
+            .filter(
+                APIKey.key_hash == key_hash,
+                APIKey.deleted_at == None,
+            )
+            .first()
+        )
+
+        if not api_key_record:
+            return None
+
+        user = api_key_record.user
+        if not user or not user.is_active:
+            return None
+
+        # Update last used timestamp
+        api_key_record.last_used_at = datetime.utcnow()
+        db.commit()
+
+        return user
+    except Exception:
+        return None
+
+
+def can_access_session_content(
+    session: SessionModel,
+    current_user: Optional[User],
+) -> bool:
+    """
+    Check if a user can access a session/content based on publication status.
+
+    - Published sessions: accessible to everyone
+    - Draft sessions: accessible only to owner
+    """
+    from app.database.models import SessionStatus
+
+    if session.status == SessionStatus.PUBLISHED.value:
+        return True
+    if current_user and session.owner_id == current_user.id:
+        return True
+    return False

@@ -31,7 +31,12 @@ from app.crud.session import session_crud
 from app.crud.event import event_crud
 from app.crud import generated_content as content_crud
 from app.database.models import SessionStatus, User, Session as SessionModel
-from app.security.auth import get_current_user, require_session_owner
+from app.security.auth import (
+    get_current_user,
+    require_session_owner,
+    get_current_user_optional,
+    can_access_session_content,
+)
 import structlog
 
 logger = structlog.get_logger()
@@ -97,22 +102,52 @@ async def create_session(
 
 
 @router.get("/{session_id}", response_model=SessionWithEvent)
-async def get_session(session_id: int, db: Session = Depends(get_db)):
-    """Get a session by ID."""
+async def get_session(
+    session_id: int,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Get a session by ID. Published sessions are public; drafts visible only to owner."""
     db_session = session_crud.read(db, session_id)
     if not db_session:
         logger.warning("session_not_found", session_id=session_id)
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Check access based on publication status
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "session_access_denied",
+            session_id=session_id,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
     return db_session
 
 
 @router.get("/by-uri/{uri}", response_model=SessionWithEvent)
-async def get_session_by_uri(uri: str, db: Session = Depends(get_db)):
-    """Get a session by URI."""
+async def get_session_by_uri(
+    uri: str,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Get a session by URI. Published sessions are public; drafts visible only to owner."""
     db_session = session_crud.read_by_uri(db, uri)
     if not db_session:
         logger.warning("session_not_found_by_uri", uri=uri)
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Check access based on publication status
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "session_access_denied_by_uri",
+            uri=uri,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
     return db_session
 
 
@@ -122,27 +157,32 @@ async def list_sessions(
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
     status: str = Query(None, description="Filter by status (draft, published)"),
     event_id: int = Query(None, description="Filter by event ID"),
-    published_only: bool = Query(False, description="Return only published sessions"),
+    current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """
     List all sessions with optional filtering and pagination.
 
+    Public users see only published sessions. Authenticated users also see their own drafts.
+
     - **skip**: Number of records to skip (default: 0)
     - **limit**: Maximum records to return (default: 100, max: 1000)
-    - **status**: Filter by status (optional)
+    - **status**: Filter by status (optional, e.g., "published" for published sessions only)
     - **event_id**: Filter by event ID (optional)
-    - **published_only**: Return only published sessions (optional)
     """
-    if published_only:
-        sessions = session_crud.list_published(db, skip=skip, limit=limit)
-    elif event_id:
+    if event_id:
         sessions = session_crud.list_by_event(db, event_id, skip=skip, limit=limit)
     elif status:
         sessions = session_crud.list_by_status(db, status, skip=skip, limit=limit)
     else:
         sessions = session_crud.list_all(db, skip=skip, limit=limit)
-    return sessions
+
+    # Filter results: only include published sessions or user's own drafts
+    filtered_sessions = [
+        s for s in sessions if can_access_session_content(s, current_user)
+    ]
+
+    return filtered_sessions
 
 
 @router.patch("/{session_id}", response_model=SessionWithEvent)
@@ -203,9 +243,14 @@ async def list_event_sessions(
     event_id: int,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
+    current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """List all sessions for a specific event."""
+    """
+    List all sessions for a specific event.
+
+    Public users see only published sessions. Authenticated users also see their own drafts.
+    """
     # Verify event exists
     event = event_crud.read(db, event_id)
     if not event:
@@ -213,73 +258,42 @@ async def list_event_sessions(
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
 
     sessions = session_crud.list_by_event(db, event_id, skip=skip, limit=limit)
-    return sessions
+
+    # Filter results: only include published sessions or user's own drafts
+    filtered_sessions = [
+        s for s in sessions if can_access_session_content(s, current_user)
+    ]
+
+    return filtered_sessions
 
 
 # Content Management Endpoints
 
 
-@router.get(
-    "/{session_id}/content", response_model=SessionContentListResponse
-)
-async def get_available_content(session_id: int, db: Session = Depends(get_db)):
-    """Get list of available content identifiers for session."""
+@router.get("/{session_id}/content", response_model=SessionContentListResponse)
+async def get_available_content(
+    session_id: int,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Get list of available content identifiers for session (public access to published sessions only)."""
     db_session = session_crud.read(db, session_id)
     if not db_session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Check access based on publication status
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "content_list_access_denied",
+            session_id=session_id,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
     return SessionContentListResponse(
         available_content=db_session.available_content_identifiers
     )
-
-
-@router.post(
-    "/{session_id}/content/transcription",
-    response_model=GeneratedContentResponse,
-    status_code=HTTP_201_CREATED,
-)
-async def add_transcription(
-    session_id: int,
-    content_in: GeneratedContentCreate,
-    session: SessionModel = Depends(require_session_owner),
-    db: Session = Depends(get_db),
-):
-    """
-    Add transcription content to session (owner only).
-    
-    This creates a GeneratedContent record with identifier="transcription"
-    and workflow_execution_id=NULL to indicate it was manually provided.
-    """
-    # Check if transcription already exists
-    existing_tx = content_crud.get_content_by_identifier(db, session_id, "transcription")
-    if existing_tx:
-        logger.warning("transcription_already_exists", session_id=session_id)
-        raise HTTPException(
-            status_code=HTTP_409_CONFLICT,
-            detail="Transcription already exists for this session. Delete and re-create to update.",
-        )
-
-    # Create transcription content
-    db_content = content_crud.create_content(
-        db=db,
-        session_id=session_id,
-        identifier="transcription",
-        content=content_in.content,
-        content_type="plain_text",
-        workflow_execution_id=None,  # Manually provided
-        meta_info=content_in.meta_info,
-    )
-
-    # Update session's available content
-    session_crud.add_available_content_identifier(db, session_id, "transcription")
-
-    logger.info(
-        "transcription_added",
-        session_id=session_id,
-        content_id=db_content.id,
-    )
-
-    return db_content
 
 
 @router.get(
@@ -289,11 +303,27 @@ async def add_transcription(
 async def get_content_by_identifier(
     session_id: int,
     identifier: str,
+    current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    """Retrieve latest generated content for a session and identifier."""
+    """
+    Retrieve latest generated content for a session and identifier.
+
+    Public access to published sessions only; drafts visible only to owner.
+    """
     db_session = session_crud.read(db, session_id)
     if not db_session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Check access based on publication status
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "content_access_denied",
+            session_id=session_id,
+            identifier=identifier,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
     db_content = content_crud.get_content_by_identifier(db, session_id, identifier)
@@ -302,6 +332,64 @@ async def get_content_by_identifier(
             status_code=HTTP_404_NOT_FOUND,
             detail=f"Content with identifier '{identifier}' not found for this session",
         )
+
+    return db_content
+
+
+@router.post(
+    "/{session_id}/content/{identifier}",
+    response_model=GeneratedContentResponse,
+    status_code=HTTP_201_CREATED,
+)
+async def create_content(
+    session_id: int,
+    identifier: str,
+    content_in: GeneratedContentCreate,
+    session: SessionModel = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+):
+    """
+    Create content with a specific identifier (owner only).
+
+    This is a generic endpoint that allows creating any type of content by specifying the identifier.
+    For example:
+    - POST /sessions/1/content/transcription
+    - POST /sessions/1/content/notes
+    - POST /sessions/1/content/custom-data
+    """
+    # Check if content with this identifier already exists
+    existing = content_crud.get_content_by_identifier(db, session_id, identifier)
+    if existing:
+        logger.warning(
+            "content_already_exists",
+            session_id=session_id,
+            identifier=identifier,
+        )
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail=f"Content with identifier '{identifier}' already exists. Delete and re-create to update.",
+        )
+
+    # Create the content
+    db_content = content_crud.create_content(
+        db=db,
+        session_id=session_id,
+        identifier=identifier,
+        content=content_in.content,
+        content_type=content_in.content_type or "plain_text",
+        workflow_execution_id=None,  # Manually provided
+        meta_info=content_in.meta_info,
+    )
+
+    # Update session's available content
+    session_crud.add_available_content_identifier(db, session_id, identifier)
+
+    logger.info(
+        "content_created",
+        session_id=session_id,
+        identifier=identifier,
+        content_id=db_content.id,
+    )
 
     return db_content
 
@@ -375,66 +463,62 @@ async def delete_content(
 
 
 @router.post(
-    "/{session_id}/workflow",
+    "/{session_id}/workflow/{workflow_type}",
     response_model=WorkflowExecutionResponse,
     status_code=HTTP_202_ACCEPTED,
 )
 async def trigger_workflow(
     session_id: int,
-    target: str = Query("talk_workflow", description="Workflow target: 'talk_workflow' for all steps, or individual step name"),
+    workflow_type: str,
     session: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """
     Trigger content generation workflow for a session (owner only).
-    
+
     Returns immediately with execution ID. Use GET /{session_id}/workflow/{execution_id} to check status.
-    
-    **target** options (query parameter):
-    - `talk_workflow` - Generate all content (default): summary, tags, takeaways, diagram, image
+
+    **workflow_type** options (path parameter):
+    - `talk_workflow` - Generate all content: summary, tags, takeaways, diagram, image
     - Individual steps: `summary`, `tags`, `key_takeaways`, `mermaid`, `image`
     """
     try:
         # Lazy import to avoid circular imports
         from app.workflows.services.execution_service import WorkflowExecutionService
-        
+
         # Get current user from session dependency (already validated ownership)
-        current_user = (
-            db.query(User)
-            .filter(User.id == session.owner_id)
-            .first()
-        )
-        
+        current_user = db.query(User).filter(User.id == session.owner_id).first()
+
         # Service layer handles validation, resolving, and queuing
         workflow_exec, celery_task_id = WorkflowExecutionService.create_and_queue(
             session_id=session_id,
-            target=target,
+            target=workflow_type,
             db=db,
             triggered_by="user_triggered",
             created_by_user_id=current_user.id if current_user else None,
         )
-        
+
         logger.info(
             "workflow_triggered",
             session_id=session_id,
-            target=target,
+            workflow_type=workflow_type,
             workflow_execution_id=workflow_exec.id,
             celery_task_id=celery_task_id,
             triggered_by_user_id=current_user.id if current_user else None,
         )
-        
+
         return WorkflowExecutionResponse(
             task_id=str(workflow_exec.id),
-            workflow_type=target,
+            workflow_type=workflow_type,
             status="queued",
             created_at=workflow_exec.created_at,
         )
-    
+
     except ValueError as e:
         logger.warning(
             "workflow_trigger_error",
             session_id=session_id,
-            target=target,
+            workflow_type=workflow_type,
             error=str(e),
         )
         raise HTTPException(status_code=400, detail=str(e))
@@ -447,32 +531,23 @@ async def trigger_workflow(
 async def get_workflow_status(
     session_id: int,
     execution_id: int,
+    session: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """
-    Check workflow execution status.
-    
+    Check workflow execution status (owner only).
+
     Returns current status and created content when completed.
     """
-    # Validate session exists
-    db_session = session_crud.read(db, session_id)
-    if not db_session:
-        logger.warning(
-            "workflow_status_session_not_found",
-            session_id=session_id,
-            execution_id=execution_id,
-        )
-        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
-    
     logger.info(
         "workflow_status_requested",
         session_id=session_id,
         execution_id=execution_id,
     )
-    
+
     # Lazy import to avoid circular imports
     from app.workflows.services.execution_service import WorkflowExecutionService
-    
+
     # Get execution by ID
     workflow_exec = WorkflowExecutionService.get_execution_status(execution_id, db)
     if not workflow_exec or workflow_exec.session_id != session_id:
@@ -485,7 +560,7 @@ async def get_workflow_status(
             status_code=HTTP_404_NOT_FOUND,
             detail=f"Workflow execution {execution_id} not found for this session",
         )
-    
+
     # Get generated content if completed
     created_content = []
     if workflow_exec.status == "completed":
@@ -502,7 +577,7 @@ async def get_workflow_status(
             for c in contents
             if c.workflow_execution_id == workflow_exec.id
         ]
-    
+
     logger.info(
         "workflow_status_returned",
         session_id=session_id,
@@ -511,7 +586,7 @@ async def get_workflow_status(
         created_content_count=len(created_content),
         error=workflow_exec.error,
     )
-    
+
     return WorkflowStatusResponse(
         status=workflow_exec.status,
         created_at=workflow_exec.created_at,

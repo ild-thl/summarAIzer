@@ -97,8 +97,8 @@ DELETE /api/v2/sessions/{id}/content/{identifier}         Delete content (owner 
 
 ### Workflows
 ```
-POST   /api/v2/sessions/{id}/workflow/{target}           Trigger generation (owner only)
-  target: 'talk_workflow' (all steps) or individual steps
+POST   /api/v2/sessions/{id}/workflow/{workflow_type}           Trigger generation (owner only)
+  workflow_type: 'talk_workflow' (all steps) or individual steps
 GET    /api/v2/sessions/{id}/workflow/{execution_id}     Check job status
 ```
 
