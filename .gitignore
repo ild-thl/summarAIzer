@@ -1,6 +1,58 @@
-venv
-resources/
-resources/talks/*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
 .env
-__pycache__
-resources/temp_images/*
+.env.local
+.env.*.local
+
+# Celery
+celerybeat-schedule
+dump.rdb
+
+# Logs
+*.log
+logs/
+
+# Data
+data/*.json
+!data/sample_sessionize.json

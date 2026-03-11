@@ -25,5 +25,5 @@ COPY . /app
 RUN useradd --create-home --shell /bin/bash app || true
 RUN chown -R app:app /app || true
 
-# default command for dev (uvicorn reload)
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--reload"]
+# Start uvicorn - run migrations and seed data manually
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860", "--reload"]
