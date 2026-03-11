@@ -210,7 +210,7 @@ class SessionResponse(SessionBase):
     available_content: List[str] = Field(
         default_factory=list,
         alias="available_content_identifiers",
-        description="List of available content identifiers"
+        description="List of available content identifiers",
     )
     created_at: datetime
     updated_at: datetime

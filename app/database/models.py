@@ -102,7 +102,9 @@ class Session(Base):
         Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True
     )
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    available_content_identifiers = Column(JSON, default=list, nullable=False)  # ["transcription", "summary", "tags"]
+    available_content_identifiers = Column(
+        JSON, default=list, nullable=False
+    )  # ["transcription", "summary", "tags"]
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -171,16 +173,23 @@ class WorkflowExecution(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(
-        Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    target = Column(String(255), nullable=False, index=True)  # "talk_workflow", "summary", etc.
+    target = Column(
+        String(255), nullable=False, index=True
+    )  # "talk_workflow", "summary", etc.
     status = Column(
         SQLEnum(WorkflowExecutionStatus),
         default=WorkflowExecutionStatus.QUEUED,
         nullable=False,
         index=True,
     )
-    celery_task_id = Column(String(255), nullable=True, index=True)  # For tracking Celery tasks
+    celery_task_id = Column(
+        String(255), nullable=True, index=True
+    )  # For tracking Celery tasks
     error = Column(Text, nullable=True)
     triggered_by = Column(
         String(20), nullable=False, default="manual"
@@ -207,7 +216,10 @@ class GeneratedContent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(
-        Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     identifier = Column(
         String(255), nullable=False, index=True
@@ -217,7 +229,9 @@ class GeneratedContent(Base):
     )  # "plain_text", "markdown", "json_array", "json_object", "image_url", etc.
     content = Column(Text, nullable=False)  # The actual content payload
     workflow_execution_id = Column(
-        Integer, ForeignKey("workflow_executions.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey("workflow_executions.id", ondelete="SET NULL"),
+        nullable=True,
     )  # NULL = manually provided content (e.g., transcription on creation)
     meta_info = Column(JSON, nullable=True)  # Optional: {model, tokens, source, etc.}
     created_by_user_id = Column(

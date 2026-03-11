@@ -26,10 +26,15 @@ kombu>=5.3.0
 watchdog>=3.0.0  # Required for Celery autoreload
 
 # LLM & AI
-langchain>=0.1.0
-langchain-openai>=0.0.1
+langchain>=0.2.6
+langchain-community==0.2.6
+langchain-openai>=0.1.14
+langchain-huggingface==0.0.3
 openai>=1.0.0
 langgraph>=0.0.1
+
+# Vector Database Support (Chroma for semantic search)
+chromadb==0.6.2
 
 # Cloud & Storage
 boto3>=1.26.0  # AWS S3 and S3-compatible storage (IONOS S3)
@@ -41,6 +46,9 @@ httpx
 
 # Logging & Monitoring
 structlog==23.2.0
+
+# HTTP & Requests
+requests>=2.31.0
 
 # Utilities
 python-dateutil

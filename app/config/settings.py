@@ -36,7 +36,9 @@ class Settings(BaseSettings):
 
     # Celery & Redis
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-    celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+    celery_result_backend: str = os.getenv(
+        "CELERY_RESULT_BACKEND", "redis://localhost:6379/1"
+    )
     celery_task_timeout: int = int(os.getenv("CELERY_TASK_TIMEOUT", "3600"))
 
     # LLM Configuration
@@ -48,10 +50,29 @@ class Settings(BaseSettings):
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
     llm_top_p: float = float(os.getenv("LLM_TOP_P", "1.0"))
 
+    # Embedding Configuration for semantic search
+    enable_embeddings: bool = os.getenv("ENABLE_EMBEDDINGS", "true").lower() == "true"
+    embedding_provider: str = os.getenv(
+        "EMBEDDING_PROVIDER", "huggingface"
+    )  # "openai" or "huggingface"
+    embedding_model_name: str = os.getenv(
+        "EMBEDDING_MODEL_NAME", "intfloat/e5-mistral-7b-instruct"
+    )
+    embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "")
+    embedding_api_base_url: str = os.getenv("EMBEDDING_API_BASE_URL", "")
+    embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+
+    # Chroma Configuration for vector storage
+    chroma_host: str = os.getenv("CHROMA_HOST", "localhost")
+    chroma_port: int = int(os.getenv("CHROMA_PORT", "8000"))
+    chroma_credentials: str = os.getenv("CHROMA_CREDENTIALS", "")
+    chroma_provider: str = os.getenv("CHROMA_PROVIDER", "")
+    chroma_tenant: str = os.getenv("CHROMA_TENANT", "default_tenant")
+
     # Image Generation Configuration
     image_generation_api_url: str = os.getenv(
-        "IMAGE_GENERATION_API_URL", 
-        "https://chat-ai.academiccloud.de/v1/images/generations"
+        "IMAGE_GENERATION_API_URL",
+        "https://chat-ai.academiccloud.de/v1/images/generations",
     )
     image_generation_api_key: str = os.getenv("IMAGE_GENERATION_API_KEY", "")
 
