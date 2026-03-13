@@ -26,12 +26,10 @@ jobs:
                   cache: "pip"
 
             - name: Install dependencies
-              working-directory: ./summaraizer
               run: |
                   python -m pip install --upgrade pip
                   pip install -r requirements.txt
 
             - name: Run isolated unit tests
-              working-directory: ./summaraizer
               run: |
                   pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing
