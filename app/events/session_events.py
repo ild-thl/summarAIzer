@@ -180,7 +180,13 @@ def _handle_session_deleted(session_id: int, **kwargs) -> None:
         )
 
 
-# Register event handlers at module load time
-SessionEventBus.subscribe("session_published", _handle_session_published)
-SessionEventBus.subscribe("session_unpublished", _handle_session_unpublished)
-SessionEventBus.subscribe("session_deleted", _handle_session_deleted)
+# Register event handlers at module load time (only if embeddings enabled)
+from app.config.settings import get_settings
+
+if get_settings().enable_embeddings:
+    SessionEventBus.subscribe("session_published", _handle_session_published)
+    SessionEventBus.subscribe("session_unpublished", _handle_session_unpublished)
+    SessionEventBus.subscribe("session_deleted", _handle_session_deleted)
+    logger.info("embedding_event_handlers_registered")
+else:
+    logger.info("embedding_event_handlers_disabled_by_config")

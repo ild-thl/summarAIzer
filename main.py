@@ -14,7 +14,14 @@ load_dotenv()
 from app.config.settings import get_settings
 from app.database.connection import engine
 from app.database.models import Base
-from app.routes import event, session, workflow_debug
+from app.routes import (
+    event,
+    session,
+    session_content,
+    session_workflow,
+    workflow_debug,
+    embedding,
+)
 
 # Configure logging
 structlog.configure(
@@ -49,11 +56,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("application_startup_starting")
     from app.workflows.initialization import initialize_workflows
+
     initialize_workflows()
     logger.info("application_startup_completed")
-    
+
     yield
-    
+
     # Shutdown (if needed in future)
     # logger.info("application_shutdown")
 
@@ -82,7 +90,16 @@ if settings.enable_cors:
 # Include routers
 app.include_router(event.router, prefix="/api/v2")
 app.include_router(session.router, prefix="/api/v2")
+app.include_router(session_content.router, prefix="/api/v2")
+app.include_router(session_workflow.router, prefix="/api/v2")
 app.include_router(workflow_debug.router, prefix="/api/v2")
+
+# Include embeddings router if feature is enabled
+if settings.enable_embeddings:
+    app.include_router(embedding.router, prefix="/api/v2")
+    logger.info("embedding_routes_registered")
+else:
+    logger.info("embedding_routes_disabled_by_config")
 
 
 @app.get("/health")
