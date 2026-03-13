@@ -1,7 +1,7 @@
 """Celery tasks for workflow execution."""
 
 from datetime import datetime
-from typing import Optional, Callable, Dict, Any
+from typing import Optional
 import asyncio
 import structlog
 from sqlalchemy.orm import Session
@@ -19,7 +19,6 @@ from app.crud.session import session_crud
 from app.services.embedding_service import EmbeddingService
 from app.services.embedding_factory import get_embedding_service
 from app.services.embedding_exceptions import ChromaConnectionError
-from app.constants.embedding import ENTITY_TYPE_SESSION, ENTITY_TYPE_EVENT
 
 logger = structlog.get_logger()
 
@@ -127,114 +126,61 @@ def _is_transient_error(exception: Exception) -> bool:
     return False
 
 
-def _prepare_embedding_text_factory(entity_type: str) -> Callable[[Any, ...], str]:
+def _prepare_session_embedding_text(service, session) -> str:
     """
-    Factory for text preparation functions based on entity type.
+    Prepare text for session embedding.
+
+    Fetches summary if available and combines with title and description.
 
     Args:
-        entity_type: ENTITY_TYPE_SESSION or ENTITY_TYPE_EVENT
+        service: EmbeddingService instance
+        session: Session entity
 
     Returns:
-        Function to prepare text for given entity type
+        Text prepared for embedding
     """
-    from app.crud import event as event_crud_module
+    # Try to fetch summary as fallback
+    summary_content = None
+    db = SessionLocal()
+    try:
+        summary_content = content_crud.get_content_by_identifier(
+            db, session.id, "summary"
+        )
+    except Exception as e:
+        logger.debug(
+            "embedding_summary_fetch_failed",
+            session_id=session.id,
+            error=str(e),
+        )
+    finally:
+        db.close()
 
-    if entity_type == ENTITY_TYPE_SESSION:
-
-        def prepare_session(service, entity):
-            # Try to fetch summary as fallback
-            summary_content = None
-            db = SessionLocal()
-            try:
-                summary_content = content_crud.get_content_by_identifier(
-                    db, entity.id, "summary"
-                )
-            except Exception as e:
-                logger.debug(
-                    "embedding_summary_fetch_failed",
-                    entity_id=entity.id,
-                    error=str(e),
-                )
-            finally:
-                db.close()
-
-            summary_text = summary_content.content if summary_content else None
-            return service._prepare_session_text(
-                title=entity.title,
-                short_description=entity.short_description,
-                summary=summary_text,
-            )
-
-        return prepare_session
-
-    elif entity_type == ENTITY_TYPE_EVENT:
-
-        def prepare_event(service, entity):
-            return service._prepare_event_text(
-                title=entity.title,
-                description=entity.description,
-            )
-
-        return prepare_event
-
-    else:
-        raise ValueError(f"Unknown entity type: {entity_type}")
+    summary_text = summary_content.content if summary_content else None
+    return service._prepare_session_text(
+        title=session.title,
+        short_description=session.short_description,
+        summary=summary_text,
+    )
 
 
-def _crud_mapper(entity_type: str) -> Dict[str, Any]:
-    """
-    Map entity type to CRUD operations and collection methods.
-
-    Args:
-        entity_type: ENTITY_TYPE_SESSION or ENTITY_TYPE_EVENT
-
-    Returns:
-        Dict with: crud_read, store_fn, log_prefix, entity_name
-    """
-    from app.crud import event as event_crud_module
-
-    if entity_type == ENTITY_TYPE_SESSION:
-        return {
-            "read": session_crud.read,
-            "store": lambda svc, entity_id, emb, text: svc.store_session_embedding(
-                entity_id, emb, text
-            ),
-            "log_prefix": "session",
-            "entity_name": "session",
-        }
-    elif entity_type == ENTITY_TYPE_EVENT:
-        return {
-            "read": event_crud_module.event_crud.read,
-            "store": lambda svc, entity_id, emb, text: svc.store_event_embedding(
-                entity_id, emb, text
-            ),
-            "log_prefix": "event",
-            "entity_name": "event",
-        }
-    else:
-        raise ValueError(f"Unknown entity type: {entity_type}")
-
-
-async def _generate_embedding_base(
-    entity_type: str,
-    entity_id: int,
+async def _generate_session_embedding_base(
+    session_id: int,
     embedding_text: Optional[str] = None,
 ) -> None:
     """
-    Generic embedding generation logic for both sessions and events.
+    Generate embedding for a session.
 
-    Performs the embedding pipeline: validate config → fetch service → fetch entity →
+    Performs the embedding pipeline: validate config → fetch service → fetch session →
     prepare/validate text → generate embedding → store in Chroma → update metadata.
 
     This is an async helper function, not a Celery task (no retry logic here).
 
     Args:
-        entity_type: ENTITY_TYPE_SESSION or ENTITY_TYPE_EVENT
-        entity_id: ID of entity to embed
-        embedding_text: Pre-computed text to embed (if None, will fetch from entity)
+        session_id: Session ID to embed
+        embedding_text: Pre-computed text to embed (if None, will fetch from session)
 
     Raises:
-        ValueError: If entity not found or text validation fails
+        ValueError: If session not found or text validation fails
         Exception: If embedding or storage fails
     """
     from app.config.settings import get_settings
@@ -244,8 +190,8 @@ async def _generate_embedding_base(
         # Check if embeddings are enabled
         if not get_settings().enable_embeddings:
             logger.info(
-                f"embedding_generation_disabled",
-                **{f"{entity_type}_id": entity_id},
+                "embedding_generation_disabled",
+                session_id=session_id,
             )
             return
 
@@ -255,42 +201,36 @@ async def _generate_embedding_base(
         except ChromaConnectionError as e:
             logger.error(
                 "embedding_service_initialization_failed",
-                **{f"{entity_type}_id": entity_id},
+                session_id=session_id,
                 error=str(e),
             )
             raise
 
         db = SessionLocal()
 
-        # Get CRUD operations for entity type
-        crud_ops = _crud_mapper(entity_type)
-
-        # Fetch entity
-        entity = crud_ops["read"](db, entity_id)
-        if not entity:
+        # Fetch session
+        session = session_crud.read(db, session_id)
+        if not session:
             logger.warning(
-                f"embedding_{entity_type}_not_found",
-                **{f"{entity_type}_id": entity_id},
+                "embedding_session_not_found",
+                session_id=session_id,
             )
             return
 
         logger.info(
             "embedding_generation_started",
-            entity_type=entity_type,
-            **{f"{entity_type}_id": entity_id},
+            session_id=session_id,
         )
 
         # Prepare text if not provided
         if embedding_text is None:
-            prepare_fn = _prepare_embedding_text_factory(entity_type)
-            embedding_text = prepare_fn(service, entity)
+            embedding_text = _prepare_session_embedding_text(service, session)
 
         # Validate text
         if not EmbeddingService.validate_embedding_text(embedding_text):
             logger.warning(
                 "embedding_text_validation_failed",
-                entity_type=entity_type,
-                **{f"{entity_type}_id": entity_id},
+                session_id=session_id,
                 text_length=len(embedding_text) if embedding_text else 0,
             )
             return
@@ -299,18 +239,17 @@ async def _generate_embedding_base(
         embedding = await service.embed_query(embedding_text)
 
         # Store embedding in Chroma (async)
-        await crud_ops["store"](service, entity_id, embedding, embedding_text)
+        await service.store_session_embedding(session_id, embedding, embedding_text)
 
         # Update embedding metadata in database
-        entity.embedding_model = get_settings().embedding_model_name
-        entity.embedding_generated_at = datetime.utcnow()
-        db.add(entity)
+        session.embedding_model = get_settings().embedding_model_name
+        session.embedding_generated_at = datetime.utcnow()
+        db.add(session)
         db.commit()
 
         logger.info(
             "embedding_generation_completed",
-            entity_type=entity_type,
-            **{f"{entity_type}_id": entity_id},
+            session_id=session_id,
             embedding_model=get_settings().embedding_model_name,
             embedding_dimension=len(embedding),
         )
@@ -318,8 +257,7 @@ async def _generate_embedding_base(
     except Exception as e:
         logger.error(
             "embedding_generation_failed",
-            entity_type=entity_type,
-            **{f"{entity_type}_id": entity_id},
+            session_id=session_id,
             error=str(e),
             error_type=type(e).__name__,
         )
@@ -331,27 +269,22 @@ async def _generate_embedding_base(
 
 
 @app.task(
-    name="app.async_jobs.tasks.generate_embedding",
+    name="app.async_jobs.tasks.generate_session_embedding",
     bind=True,
     max_retries=2,
     queue="embeds",
 )
-def generate_embedding(
+def generate_session_embedding(
     self,
-    entity_type: str,
-    entity_id: int,
+    session_id: int,
     embedding_text: Optional[str] = None,
 ):
     """
-    Generic Celery task for embedding generation (session or event).
-
-    Wraps the async helper with retry logic and error handling specific to Celery.
-    Silently fails - embedding should never block entity operations.
+    Generate and store embedding for a session asynchronously.
 
     Args:
-        entity_type: ENTITY_TYPE_SESSION or ENTITY_TYPE_EVENT
-        entity_id: ID of entity to embed
-        embedding_text: Pre-computed text to embed (if None, will fetch from entity)
+        session_id: Session ID to embed
+        embedding_text: Pre-computed text to embed (if None, will fetch from session)
     """
     db: Optional[Session] = None
     try:
@@ -360,9 +293,8 @@ def generate_embedding(
         asyncio.set_event_loop(loop)
         try:
             loop.run_until_complete(
-                _generate_embedding_base(
-                    entity_type=entity_type,
-                    entity_id=entity_id,
+                _generate_session_embedding_base(
+                    session_id=session_id,
                     embedding_text=embedding_text,
                 )
             )
@@ -372,8 +304,7 @@ def generate_embedding(
     except Exception as e:
         logger.error(
             "embedding_generation_failed_at_task_level",
-            entity_type=entity_type,
-            **{f"{entity_type}_id": entity_id},
+            session_id=session_id,
             error=str(e),
             error_type=type(e).__name__,
         )
@@ -383,8 +314,7 @@ def generate_embedding(
             logger.info(
                 "embedding_generation_retrying",
                 task_id=self.request.id,
-                entity_type=entity_type,
-                **{f"{entity_type}_id": entity_id},
+                session_id=session_id,
                 retry_count=self.request.retries,
             )
             raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
@@ -711,60 +641,39 @@ def execute_generated_content(
 
 
 @app.task(
-    name="app.async_jobs.tasks.generate_session_embedding",
+    name="app.async_jobs.tasks.delete_session_embedding",
     bind=True,
     max_retries=2,
     queue="embeds",
 )
-def generate_session_embedding(
-    self,
-    session_id: int,
-    embedding_text: Optional[str] = None,
-):
+def delete_session_embedding(self, session_id: int):
     """
-    Generate and store embedding for a session asynchronously.
-
-    Delegates to generic generate_embedding task.
+    Delete embedding for a session asynchronously.
 
     Args:
-        session_id: Session ID to embed
-        embedding_text: Pre-computed text to embed (if None, will fetch from session)
+        session_id: Session ID whose embedding should be deleted
     """
-    return generate_embedding.apply_async(
-        args=[ENTITY_TYPE_SESSION, session_id],
-        kwargs={"embedding_text": embedding_text},
-        queue="embeds",
-    )
+    try:
+        embedding_service = get_embedding_service()
+
+        asyncio.run(embedding_service.delete_session_embedding(session_id))
+
+        logger.info(
+            "session_embedding_deleted",
+            session_id=session_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "delete_session_embedding_failed",
+            session_id=session_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        raise self.retry(exc=exc, countdown=60)
 
 
-@app.task(
-    name="app.async_jobs.tasks.generate_event_embedding",
-    bind=True,
-    max_retries=2,
-    queue="embeds",
-)
-def generate_event_embedding(
-    self,
-    event_id: int,
-    embedding_text: Optional[str] = None,
-):
-    """
-    Generate and store embedding for an event asynchronously.
-
-    Delegates to generic generate_embedding task.
-
-    Args:
-        event_id: Event ID to embed
-        embedding_text: Pre-computed text to embed (if None, will fetch from event)
-    """
-    return generate_embedding.apply_async(
-        args=[ENTITY_TYPE_EVENT, event_id],
-        kwargs={"embedding_text": embedding_text},
-        queue="embeds",
-    )
-
-
-# Health check task (unchanged)
+# Health check task
 @app.task(name="app.async_jobs.tasks.health_check")
 def health_check():
     """Health check task for Celery worker."""

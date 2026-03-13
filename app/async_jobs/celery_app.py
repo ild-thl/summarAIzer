@@ -9,7 +9,7 @@ import structlog
 logger = structlog.get_logger()
 
 # Create Celery app
-app = Celery("summaraizerv2_backend")
+app = Celery("summaraizer_backend")
 
 # Configuration
 broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -110,6 +110,7 @@ def worker_ready_handler(sender, **kwargs):
 # This must be done AFTER the app is created and configured
 try:
     from app.async_jobs import tasks as _tasks  # noqa: F401
+
     logger.info("celery_tasks_module_imported")
 except ImportError as e:
     logger.error(

@@ -52,6 +52,18 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 event_id=db_obj.event_id,
                 owner_id=owner_id,
             )
+
+            # Emit event if session is published
+            if db_obj.status == "published":
+                from app.events import SessionEventBus
+
+                SessionEventBus.emit(
+                    "session_published",
+                    session_id=db_obj.id,
+                    uri=db_obj.uri,
+                    event_id=db_obj.event_id,
+                )
+
             return db_obj
         except SQLAlchemyError as e:
             db.rollback()
@@ -123,6 +135,9 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             if not db_obj:
                 return None
 
+            # Track previous status to detect published transition
+            previous_status = db_obj.status
+
             update_data = obj_in.model_dump(exclude_unset=True)
 
             # Handle URL serialization
@@ -136,6 +151,29 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db.commit()
             db.refresh(db_obj)
             logger.info("session_updated", session_id=id)
+
+            from app.events import SessionEventBus
+
+            # Emit event if status changed to published
+            if previous_status != "published" and db_obj.status == "published":
+                SessionEventBus.emit(
+                    "session_published",
+                    session_id=db_obj.id,
+                    uri=db_obj.uri,
+                    event_id=db_obj.event_id,
+                    previous_status=previous_status,
+                )
+
+            # Emit event if status changed from published to draft (unpublished)
+            elif previous_status == "published" and db_obj.status == "draft":
+                SessionEventBus.emit(
+                    "session_unpublished",
+                    session_id=db_obj.id,
+                    uri=db_obj.uri,
+                    event_id=db_obj.event_id,
+                    previous_status=previous_status,
+                )
+
             return db_obj
         except SQLAlchemyError as e:
             db.rollback()
@@ -149,9 +187,27 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             if not db_obj:
                 return False
 
+            # Store details before deletion
+            session_id = db_obj.id
+            uri = db_obj.uri
+            event_id = db_obj.event_id
+            was_published = db_obj.status == "published"
+
             db.delete(db_obj)
             db.commit()
             logger.info("session_deleted", session_id=id)
+
+            # Emit event for deletion (only if session was published - had embeddings)
+            if was_published:
+                from app.events import SessionEventBus
+
+                SessionEventBus.emit(
+                    "session_deleted",
+                    session_id=session_id,
+                    uri=uri,
+                    event_id=event_id,
+                )
+
             return True
         except SQLAlchemyError as e:
             db.rollback()
@@ -209,7 +265,11 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
             if identifier in db_obj.available_content_identifiers:
                 # Explicitly reassign to trigger SQLAlchemy's change tracking for JSON columns
-                updated_list = [item for item in db_obj.available_content_identifiers if item != identifier]
+                updated_list = [
+                    item
+                    for item in db_obj.available_content_identifiers
+                    if item != identifier
+                ]
                 db_obj.available_content_identifiers = updated_list
                 db.add(db_obj)
                 db.commit()

@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Database
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://postgres:postgres@localhost:5432/summaraizerv2",
+        "postgresql://postgres:postgres@localhost:5432/summaraizer",
     )
     database_echo: bool = os.getenv("DATABASE_ECHO", "False").lower() == "true"
 

@@ -7,7 +7,6 @@ from chromadb.config import Settings as ChromaSettings
 from app.services.embeddings_manager import create_embeddings_backend
 from app.constants.embedding import (
     SESSIONS_COLLECTION,
-    EVENTS_COLLECTION,
     COLLECTION_METADATA_COSINE,
     MAX_EMBEDDING_TEXT_LENGTH,
 )
@@ -135,8 +134,7 @@ class EmbeddingService:
 
             # Get or create collections with explicit configuration
             self.sessions_collection = self._init_collection(SESSIONS_COLLECTION)
-            self.events_collection = self._init_collection(EVENTS_COLLECTION)
-            logger.info("embedding_collections_ready", sessions=True, events=True)
+            logger.info("embedding_collections_ready", sessions=True)
 
         except Exception as e:
             logger.error(
@@ -287,25 +285,6 @@ class EmbeddingService:
             fields=[short_description, summary_truncated],
         )
 
-    def _prepare_event_text(self, title: str, description: Optional[str] = None) -> str:
-        """
-        Prepare text for event embedding.
-
-        Combines title and description.
-        Delegates to generic _prepare_text method.
-
-        Args:
-            title: Event title
-            description: Event description
-
-        Returns:
-            Combined text for embedding
-        """
-        return self._prepare_text(
-            title=title,
-            fields=[description] if description else None,
-        )
-
     @staticmethod
     def validate_embedding_text(
         text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH
@@ -367,40 +346,6 @@ class EmbeddingService:
             )
             raise
 
-    async def store_event_embedding(
-        self, event_id: int, embedding: List[float], text: str
-    ) -> None:
-        """
-        Store event embedding in Chroma.
-
-        Args:
-            event_id: Event ID
-            embedding: Embedding vector
-            text: Original text that was embedded
-
-        Raises:
-            Exception: If storing fails
-        """
-        try:
-            self.events_collection.upsert(
-                ids=[f"event_{event_id}"],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[{"event_id": event_id, "type": "event"}],
-            )
-            logger.info(
-                "event_embedding_stored",
-                event_id=event_id,
-                embedding_dimension=len(embedding),
-            )
-        except Exception as e:
-            logger.error(
-                "event_embedding_store_failed",
-                event_id=event_id,
-                error=str(e),
-            )
-            raise
-
     async def search_similar_sessions(
         self, embedding: List[float], limit: int = 10
     ) -> List[Tuple[int, float, str]]:
@@ -447,48 +392,28 @@ class EmbeddingService:
             )
             raise
 
-    async def search_similar_events(
-        self, embedding: List[float], limit: int = 10
-    ) -> List[Tuple[int, float, str]]:
+    async def delete_session_embedding(self, session_id: int) -> bool:
         """
-        Search for similar events in Chroma.
+        Delete session embedding from Chroma.
 
         Args:
-            embedding: Query embedding
-            limit: Maximum number of results
+            session_id: Session ID
 
         Returns:
-            List of tuples: (event_id, similarity_score, text)
+            True if deleted successfully, False if not found
 
         Raises:
-            Exception: If search fails
+            Exception: If deletion fails
         """
         try:
-            results = self.events_collection.query(
-                query_embeddings=[embedding],
-                n_results=limit,
-            )
-
-            # Extract event_ids and similarity scores
-            output = []
-            if results["ids"] and len(results["ids"]) > 0:
-                for i, chroma_id in enumerate(results["ids"][0]):
-                    event_id = int(chroma_id.split("_")[1])
-                    # Chroma returns distances, convert to similarity (1 - distance for cosine)
-                    similarity = 1 - results["distances"][0][i]
-                    text = results["documents"][0][i] if results["documents"] else ""
-                    output.append((event_id, similarity, text))
-
-            logger.info(
-                "event_search_complete",
-                query_dimension=len(embedding),
-                results_found=len(output),
-            )
-            return output
-
+            chroma_id = f"session_{session_id}"
+            self.sessions_collection.delete(ids=[chroma_id])
+            logger.info("session_embedding_deleted", session_id=session_id)
+            return True
         except Exception as e:
             logger.error(
-                "event_search_failed",
+                "session_embedding_deletion_failed",
+                session_id=session_id,
                 error=str(e),
             )
             raise
