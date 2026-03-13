@@ -1,6 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import pytest
+from unittest import mock
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, event as sqlalchemy_event
 from sqlalchemy.orm import sessionmaker
@@ -18,6 +19,23 @@ from app.database.models import (
 )
 from app.database.connection import get_db
 from main import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_boto3_for_tests():
+    """
+    Mock boto3.client globally for all tests.
+
+    This prevents actual S3 connections during test runs.
+    Tests don't need real S3 access - they only care about service logic.
+    """
+    with mock.patch("boto3.client") as mock_client:
+        # Create a mock S3 client that doesn't try to connect
+        mock_s3_client = mock.MagicMock()
+        mock_s3_client.put_object.return_value = {}
+        mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
+        mock_client.return_value = mock_s3_client
+        yield mock_client
 
 
 @pytest.fixture(autouse=True)
