@@ -42,6 +42,7 @@ boto3>=1.26.0  # AWS S3 and S3-compatible storage (IONOS S3)
 # Testing
 pytest>=7.0
 pytest-asyncio
+pytest-cov
 httpx
 
 # Logging & Monitoring

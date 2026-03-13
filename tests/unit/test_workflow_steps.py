@@ -13,7 +13,7 @@ from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
 )
-from tests.test_workflows_utils import (
+from .test_workflows_utils import (
     MockStep,
     create_mock_step,
     mock_db_session,
@@ -318,7 +318,7 @@ async def test_workflow_with_dependencies(
     StepRegistry.register(step2)
 
     # Register workflow class for this test
-    from tests.test_workflows_utils import create_test_workflow
+    from .test_workflows_utils import create_test_workflow
 
     workflow_class = create_test_workflow("dependent_workflow", ["step1", "step2"])
     WorkflowRegistry.register_workflow_class("dependent_workflow", workflow_class)

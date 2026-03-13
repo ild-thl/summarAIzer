@@ -18,6 +18,7 @@ def _hash_api_key(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
+@pytest.mark.integration
 class TestSessionAPI:
     """Test suite for Session API endpoints."""
 

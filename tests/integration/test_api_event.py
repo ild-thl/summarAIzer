@@ -11,6 +11,7 @@ from starlette.status import (
 )
 
 
+@pytest.mark.integration
 class TestEventAPI:
     """Test suite for Event API endpoints."""
 

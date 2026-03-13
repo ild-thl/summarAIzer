@@ -38,6 +38,7 @@ def session_with_event(
     )  # Return both session data and the API key for later tests
 
 
+@pytest.mark.integration
 class TestContentEndpoints:
     """Test content management endpoints."""
 
@@ -190,6 +191,7 @@ class TestContentEndpoints:
         assert response.status_code == 404
 
 
+@pytest.mark.integration
 class TestWorkflowEndpoints:
     """Test workflow execution endpoints."""
 
@@ -314,6 +316,7 @@ class TestWorkflowEndpoints:
         assert data["status"] == "queued"
 
 
+@pytest.mark.integration
 class TestTranscriptionStorage:
     """Test suite for transcription storage."""
 
