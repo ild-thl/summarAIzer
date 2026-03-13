@@ -1,7 +1,19 @@
 """Pytest configuration and fixtures."""
 
-import pytest
+# CRITICAL: Mock boto3 BEFORE any app imports to prevent S3 client initialization
+# during module import time (ImageStep registers itself at module load)
 from unittest import mock
+import sys
+
+_boto3_patcher = mock.patch("boto3.client")
+_mock_boto3 = _boto3_patcher.start()
+# Configure the mock to return a safe mock client
+_mock_s3_client = mock.MagicMock()
+_mock_s3_client.put_object.return_value = {}
+_mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
+_mock_boto3.return_value = _mock_s3_client
+
+import pytest
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine, event as sqlalchemy_event
 from sqlalchemy.orm import sessionmaker
@@ -21,21 +33,15 @@ from app.database.connection import get_db
 from main import app
 
 
-@pytest.fixture(scope="session", autouse=True)
-def mock_boto3_for_tests():
-    """
-    Mock boto3.client globally for all tests.
+def pytest_configure(config):
+    """Ensure boto3 mock stays active for entire test session."""
+    # The mock started at module level continues throughout all tests
+    pass
 
-    This prevents actual S3 connections during test runs.
-    Tests don't need real S3 access - they only care about service logic.
-    """
-    with mock.patch("boto3.client") as mock_client:
-        # Create a mock S3 client that doesn't try to connect
-        mock_s3_client = mock.MagicMock()
-        mock_s3_client.put_object.return_value = {}
-        mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
-        mock_client.return_value = mock_s3_client
-        yield mock_client
+
+def pytest_sessionfinish(session, exitstatus):
+    """Clean up boto3 mock after tests complete."""
+    _boto3_patcher.stop()
 
 
 @pytest.fixture(autouse=True)
