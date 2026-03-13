@@ -23,19 +23,77 @@ AI-powered content processing system that transforms session transcriptions into
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.11+, PostgreSQL 14+, Redis 6+
+- Docker & Docker Compose (recommended)
+- Or Python 3.11+, PostgreSQL 14+, Redis 6+ (for local development)
 
-Services: API (7860), Worker, PostgreSQL, Redis
+### Setup with Docker (Recommended)
 
-### Local Development
+**1. Start services:**
+```bash
+docker compose up -d
+```
+
+This starts:
+- API server (port 7860) - http://localhost:7860
+- Celery worker (background tasks)
+- PostgreSQL (port 5432)
+- Redis (port 6379)
+- Chroma (port 8000, for embeddings)
+
+**2. Initialize database:**
+```bash
+# Run database migrations
+docker exec summaraizer alembic upgrade head
+
+# Seed development data (creates default API user with token)
+docker exec summaraizer python seed_dev_data.py
+```
+
+This creates a development API user with token for testing endpoints locally.
+
+**3. Verify everything is running:**
+```bash
+docker compose ps
+# All services should show "Up"
+
+curl http://localhost:7860/health
+# Returns: {"status": "ok"}
+```
+
+**4. Access the API:**
+- **Swagger UI:** http://localhost:7860/docs
+- **ReDoc:** http://localhost:7860/redoc
+
+**5. Run tests:**
+```bash
+# Unit tests (fast, ~24 seconds)
+docker exec summaraizer pytest tests/unit/ -v
+
+# All tests with coverage
+docker exec summaraizer pytest tests/unit/ --cov=app --cov-report=term-missing
+```
+
+**6. Stop services:**
+```bash
+docker compose down
+```
+
+### Setup for Local Development (Alternative)
+
+If you prefer running without Docker:
 
 ```bash
-cd backend
+# Create virtual environment
 python -m venv venv && source venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 
+# Setup database
 cp .env.example .env
+# Edit .env with localhost URLs for local databases
 alembic upgrade head
+python seed_dev_data.py
 
 # Terminal 1: API
 uvicorn main:app --reload
@@ -43,6 +101,17 @@ uvicorn main:app --reload
 # Terminal 2: Worker
 celery -A app.async_jobs.celery_app worker --loglevel=info
 ```
+
+### Multi-Service Development
+
+If you're developing with other DLC services (hub, uff-sync):
+
+```bash
+cd ../hub
+docker compose -f docker-compose.yml -f build/local/docker-compose.summaraizer.yml up -d
+```
+
+This shares postgres/redis/chroma with other services.
 
 ## 🔒 Authentication
 

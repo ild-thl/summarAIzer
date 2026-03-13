@@ -1,29 +1,49 @@
-# Lightweight dev Dockerfile
+# Optimized dev Dockerfile with persistent venv
 FROM python:3.11-slim
 
-# set workdir
+# Workdir and environment
 WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_INPUT=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:$PATH"
 
-# env
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-
-# install build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies (cached layer)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
+    git \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# copy only requirements and install
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Create virtual environment (will be mounted as volume in compose)
+RUN python -m venv /app/.venv
 
-# copy app
+# Copy only requirements for pip install layer (cached by BuildKit)
+COPY requirements.txt /app/requirements.txt
+
+# Install Python dependencies with pip caching
+# Note: If venv exists in volume mount, pip will skip already-installed packages
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --upgrade pip setuptools wheel && \
+    pip install -r /app/requirements.txt
+
+# Copy application code
 COPY . /app
 
-# create app user
-RUN useradd --create-home --shell /bin/bash app || true
-RUN chown -R app:app /app || true
+# Create app user for non-root execution
+RUN useradd --create-home --shell /bin/bash app || true && \
+    chown -R app:app /app
 
-# Start uvicorn - run migrations and seed data manually
+USER app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:7860/health || exit 1
+
+# Start uvicorn with reload for development
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860", "--reload"]
