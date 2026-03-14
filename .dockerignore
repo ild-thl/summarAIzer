@@ -1,0 +1,105 @@
+# Git files and directories
+.git
+.gitignore
+.gitattributes
+
+# GitHub specific
+.github
+.github/**
+
+# CI/CD
+.gitlab-ci.yml
+.circleci
+azure-pipelines.yml
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.env.local
+.env.*.local
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV/
+env/
+.pytest_cache
+.mypy_cache
+.coverage
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Documentation and markdown
+*.md
+LICENSE
+docs/
+*.rst
+
+# Development and testing
+tests/
+pytest.ini
+conftest.py
+tox.ini
+.pre-commit-config.yaml
+
+# Docker compose development files
+docker-compose*.yml
+docker-compose*.yaml
+Dockerfile.dev
+
+# Application config and secrets
+.env
+.env.example
+.env.*
+
+# Node modules (if any frontend)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Temporary files and backups
+*.tmp
+*.bak
+*.log
+logs/
+tmp/
+
+# OS specific
+Thumbs.db
+.DS_Store
+._*
+
+# Build artifacts
+*.mo
+*.po~
+
+# watchdog artifact
+.watchmedo.log
+
+# IDE temp files
+.editorconfig
+.vscode/**
+
+# Asset and cache
+.cache/
+*.cache
+.pytest_cache/
+
+# Misc
+__pycache__/
+.turbo/
+.next/
+out/

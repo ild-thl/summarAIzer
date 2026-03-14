@@ -40,13 +40,15 @@ services:
       - ""
 
   chroma:
-    image: ghcr.io/chroma-core/chroma:latest
+    image: chromadb/chroma:1.5.5
     container_name: summaraizer-chroma
     environment:
       ALLOW_RESET: "true"
       IS_PERSISTENT: "false"
     ports:
       - "8000:8000"
+    volumes:
+      - chroma_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
       interval: 30s
@@ -141,6 +143,8 @@ services:
 
 volumes:
   postgres-data:
+    driver: local
+  chroma_data:
     driver: local
   redis-data:
     driver: local
