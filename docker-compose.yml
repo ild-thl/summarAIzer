@@ -5,7 +5,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     container_name: summaraizer-postgres
     environment:
       POSTGRES_DB: summaraizer
@@ -14,14 +14,12 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U summaraizer -d summaraizer"]
       interval: 10s
       timeout: 5s
       retries: 5
-    profiles:
-      - "" # Default profile (always starts unless explicitly excluded)
 
   redis:
     image: redis:7-alpine
@@ -29,15 +27,13 @@ services:
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
     command: redis-server --appendonly yes
-    profiles:
-      - ""
 
   chroma:
     image: chromadb/chroma:1.5.5
@@ -49,13 +45,6 @@ services:
       - "8000:8000"
     volumes:
       - chroma_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    profiles:
-      - ""
 
   summaraizer:
     build:
@@ -73,23 +62,22 @@ services:
       REDIS_RESULT_URL: redis://redis:6379/1
       CHROMA_URL: http://chroma:8000
     volumes:
-      # Mount app code for live reload
       - ./:/app:z
-      # Mount virtual environment as named volume for pip persistence
-      - summaraizer-venv:/app/.venv
-      # Exclude node_modules and other build artifacts
-      - /app/.venv
+      - summaraizer_venv:/app/.venv
+    stdin_open: true
+    tty: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       chroma:
-        condition: service_healthy
-    stdin_open: true
-    tty: true
-    profiles:
-      - ""
+        condition: service_started
 
   celery-worker:
     build:
@@ -106,13 +94,7 @@ services:
       CHROMA_URL: http://chroma:8000
     volumes:
       - ./:/app:z
-      - summaraizer-venv:/app/.venv
-      - /app/.venv
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - summaraizer_venv:/app/.venv
     command:
       [
         "watchmedo",
@@ -138,17 +120,20 @@ services:
       retries: 3
     stdin_open: true
     tty: true
-    profiles:
-      - ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
-  postgres-data:
+  postgres_data:
     driver: local
   chroma_data:
     driver: local
-  redis-data:
+  redis_data:
     driver: local
-  summaraizer-venv:
+  summaraizer_venv:
     driver: local
 
 networks:
