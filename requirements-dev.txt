@@ -1,0 +1,18 @@
+# Development & Code Quality Tools
+# Use: pip install -r requirements-dev.txt
+
+# Linting & Formatting
+ruff==0.3.5          # Fast linter (replaces flake8, pylint, isort)
+black==24.1.1        # Code formatter
+mypy==1.8.0          # Static type checker
+
+# Code Analysis
+pre-commit==3.6.0    # Git hooks framework
+
+# Testing enhancements
+pytest-xdist         # Parallel test execution
+pytest-timeout       # Timeout for hanging tests
+
+# Documentation
+mkdocs==1.5.3        # Documentation generator
+mkdocs-material      # Material theme for docs

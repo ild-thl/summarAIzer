@@ -25,12 +25,13 @@ RUN python -m venv /app/.venv
 
 # Copy only requirements for pip install layer (cached by BuildKit)
 COPY requirements.txt /app/requirements.txt
+COPY requirements-dev.txt /app/requirements-dev.txt
 
 # Install Python dependencies with pip caching
 # Note: If venv exists in volume mount, pip will skip already-installed packages
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     pip install --upgrade pip setuptools wheel && \
-    pip install -r /app/requirements.txt
+    pip install -r /app/requirements.txt -r /app/requirements-dev.txt
 
 # Copy application code
 COPY . /app
