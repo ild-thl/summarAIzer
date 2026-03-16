@@ -1,13 +1,14 @@
 """Tags step - generates topic tags for session categorization."""
 
 import json
-from typing import Dict, Any, List
-import structlog
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from typing import Any, Dict, List
 
-from app.workflows.steps.prompt_template import PromptTemplate
-from app.workflows.chat_models import ChatModelConfig
+import structlog
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
 from app.database.models import Session as SessionModel
+from app.workflows.chat_models import ChatModelConfig
+from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
 
@@ -15,7 +16,7 @@ logger = structlog.get_logger()
 class TagsStep(PromptTemplate):
     """
     Generates 10-15 topic tags for session categorization.
-    
+
     Independent step (no dependencies) - can run in parallel with other steps
     Input: Session metadata + summary
     Output: JSON array of tag strings
@@ -40,13 +41,11 @@ class TagsStep(PromptTemplate):
             top_p=0.9,
         )
 
-    def get_messages(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
         """Generate tags messages with context injection."""
         categories = ", ".join(session.categories) if session.categories else "General"
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
-        
+
         return [
             SystemMessage(
                 content="""Du bist Expert:in für Kategorisierung technischer Inhalte mit relevanten Tags.
@@ -97,5 +96,6 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
 
 # Auto-register this step when imported
 from app.workflows.execution_context import StepRegistry
+
 _tags_step = TagsStep()
 StepRegistry.register(_tags_step)

@@ -1,8 +1,10 @@
 """Tests for schema validation."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from pydantic import ValidationError
+
 from app.schemas.session import (
     EventCreate,
     EventUpdate,

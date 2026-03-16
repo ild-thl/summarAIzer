@@ -1,12 +1,14 @@
 """CRUD operations for Event model."""
 
-from typing import Optional, List
+from typing import List, Optional
+
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
+from app.crud.base import CRUDBase
 from app.database.models import Event
 from app.schemas.session import EventCreate, EventUpdate
-from app.crud.base import CRUDBase
-from sqlalchemy.exc import SQLAlchemyError
-import structlog
 
 logger = structlog.get_logger()
 
@@ -33,9 +35,7 @@ class CRUDEvent(CRUDBase[Event, EventCreate, EventUpdate]):
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
-            logger.info(
-                "event_created", event_id=db_obj.id, uri=db_obj.uri, owner_id=owner_id
-            )
+            logger.info("event_created", event_id=db_obj.id, uri=db_obj.uri, owner_id=owner_id)
             return db_obj
         except SQLAlchemyError as e:
             db.rollback()
@@ -61,11 +61,7 @@ class CRUDEvent(CRUDBase[Event, EventCreate, EventUpdate]):
         """List events filtered by status."""
         limit = min(limit, 1000)
         return (
-            db.query(self.model)
-            .filter(self.model.status == status)
-            .offset(skip)
-            .limit(limit)
-            .all()
+            db.query(self.model).filter(self.model.status == status).offset(skip).limit(limit).all()
         )
 
     def update(self, db: Session, id: int, obj_in: EventUpdate) -> Optional[Event]:

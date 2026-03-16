@@ -8,9 +8,9 @@ This package contains all workflow implementations. Each workflow:
 
 import structlog
 
+from app.workflows.execution_context import WorkflowRegistry
 from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.flows.talk_workflow import TalkWorkflow
-from app.workflows.execution_context import WorkflowRegistry
 
 logger = structlog.get_logger()
 

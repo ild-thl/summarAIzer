@@ -1,24 +1,25 @@
 """Celery tasks for workflow execution."""
 
+import asyncio
 from datetime import datetime
 from typing import Optional
-import asyncio
+
 import structlog
 from sqlalchemy.orm import Session
 
 from app.async_jobs.celery_app import app
-from app.database.connection import SessionLocal
-from app.workflows.execution_context import (
-    GenerationState,
-    resolve_target_to_workflow_class,
-    WorkflowRegistry,
-)
-from app.workflows.services.execution_service import WorkflowExecutionService
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_factory import get_embedding_service
+from app.database.connection import SessionLocal
 from app.services.embedding_exceptions import ChromaConnectionError
+from app.services.embedding_factory import get_embedding_service
+from app.services.embedding_service import EmbeddingService
+from app.workflows.execution_context import (
+    GenerationState,
+    WorkflowRegistry,
+    resolve_target_to_workflow_class,
+)
+from app.workflows.services.execution_service import WorkflowExecutionService
 
 logger = structlog.get_logger()
 
@@ -143,9 +144,7 @@ def _prepare_session_embedding_text(service, session) -> str:
     summary_content = None
     db = SessionLocal()
     try:
-        summary_content = content_crud.get_content_by_identifier(
-            db, session.id, "summary"
-        )
+        summary_content = content_crud.get_content_by_identifier(db, session.id, "summary")
     except Exception as e:
         logger.debug(
             "embedding_summary_fetch_failed",
@@ -376,9 +375,7 @@ def execute_generated_content(
         )
 
         # Fetch transcription and session data
-        tx_content = content_crud.get_content_by_identifier(
-            db, session_id, "transcription"
-        )
+        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
         if not tx_content:
             raise ValueError(f"Transcription not found for session {session_id}")
 
@@ -523,9 +520,7 @@ def execute_generated_content(
 
         # Get created content IDs for logging
         created_content = content_crud.get_content_list(db, session_id)
-        created_ids = [
-            c.id for c in created_content if c.workflow_execution_id == execution_id
-        ]
+        created_ids = [c.id for c in created_content if c.workflow_execution_id == execution_id]
 
         logger.info(
             "created_content_retrieved_for_logging",
@@ -681,9 +676,7 @@ def health_check():
         "celery_health_check_executed",
         status="ok",
         worker_name=(
-            health_check.request.hostname
-            if hasattr(health_check, "request")
-            else "unknown"
+            health_check.request.hostname if hasattr(health_check, "request") else "unknown"
         ),
     )
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}

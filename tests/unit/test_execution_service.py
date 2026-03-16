@@ -1,23 +1,25 @@
 """Tests for WorkflowExecutionService layer."""
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime
 import uuid
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from app.workflows.services.execution_service import WorkflowExecutionService
+import pytest
+
+from app.database.models import WorkflowExecution, WorkflowExecutionStatus
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
     is_workflow_target,
 )
-from app.database.models import WorkflowExecution, WorkflowExecutionStatus
+from app.workflows.services.execution_service import WorkflowExecutionService
+
 from .test_workflows_utils import (
+    clean_registries,
+    create_generation_state,
     create_mock_step,
     mock_db_session,
     mock_session_model,
-    clean_registries,
-    create_generation_state,
 )
 
 
@@ -50,9 +52,7 @@ async def test_create_and_queue_with_full_workflow(
     )
 
     # Mock Celery task
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Execute
@@ -95,9 +95,7 @@ async def test_create_and_queue_with_individual_step(
     )
 
     # Mock Celery task
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Execute individual step
@@ -164,9 +162,7 @@ def test_mark_running(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -192,9 +188,7 @@ def test_mark_completed(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -218,9 +212,7 @@ def test_mark_failed(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -252,9 +244,7 @@ def test_get_execution_status(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
 
     # Execute
@@ -385,9 +375,7 @@ async def test_create_and_queue_returns_correct_structure(
 
     mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
 
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         result = WorkflowExecutionService.create_and_queue(
@@ -432,9 +420,7 @@ async def test_multiple_executions_independent(
 
     mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
 
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Create two executions

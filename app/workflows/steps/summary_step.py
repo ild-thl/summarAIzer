@@ -1,13 +1,14 @@
 """Summary step - generates markdown summary of session."""
 
-from typing import Dict, Any, List
-from sqlalchemy.orm import Session
+from typing import Any, Dict, List
+
 import structlog
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from sqlalchemy.orm import Session
 
 from app.database.models import Session as SessionModel
-from app.workflows.steps.prompt_template import PromptTemplate
 from app.workflows.chat_models import ChatModelConfig
+from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
 
@@ -15,7 +16,7 @@ logger = structlog.get_logger()
 class SummaryStep(PromptTemplate):
     """
     Generates a comprehensive markdown summary of a session.
-    
+
     Input: Session metadata + transcription
     Output: Markdown formatted summary with:
         - Übersicht (Overview)
@@ -42,14 +43,12 @@ class SummaryStep(PromptTemplate):
             top_p=0.95,
         )
 
-    def get_messages(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
         """Generate summary messages with context injection."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
         duration = session.duration or 0
         categories = ", ".join(session.categories) if session.categories else "General"
-        
+
         return [
             SystemMessage(
                 content="""Du bist ein Assistent, der Veranstaltungen zusammenfasst. Du erstellst Dokumentationen aus Transkripten mit folgenden Eigenschaften:
@@ -85,7 +84,7 @@ Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
     def process_response(self, response: Any) -> Dict[str, Any]:
         """Process LLM response into summary output."""
         summary = response.content if hasattr(response, "content") else str(response)
-        
+
         return {
             "content": summary,
             "content_type": "markdown",
@@ -98,5 +97,6 @@ Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
 
 # Auto-register this step when imported
 from app.workflows.execution_context import StepRegistry
+
 _summary_step = SummaryStep()
 StepRegistry.register(_summary_step)

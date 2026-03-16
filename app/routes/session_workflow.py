@@ -1,22 +1,23 @@
 """API routes for Session Workflow Management (sub-resource)."""
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_202_ACCEPTED,
     HTTP_404_NOT_FOUND,
 )
-import structlog
 
+from app.crud import generated_content as content_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Session as SessionModel
+from app.database.models import User
 from app.schemas.content import (
     GeneratedContentListItem,
     WorkflowExecutionResponse,
     WorkflowStatusResponse,
 )
-from app.crud.session import session_crud
-from app.crud import generated_content as content_crud
-from app.database.models import User, Session as SessionModel
 from app.security.auth import require_session_owner
 
 logger = structlog.get_logger()

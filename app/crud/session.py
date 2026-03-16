@@ -1,12 +1,14 @@
 """CRUD operations for Session model."""
 
-from typing import Optional, List
+from typing import List, Optional
+
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+
+from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
 from app.schemas.session import SessionCreate, SessionUpdate
-from app.crud.base import CRUDBase
-from sqlalchemy.exc import SQLAlchemyError
-import structlog
 
 logger = structlog.get_logger()
 
@@ -17,9 +19,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     def __init__(self):
         super().__init__(SessionModel)
 
-    def create(
-        self, db: Session, obj_in: SessionCreate, owner_id: int = None
-    ) -> SessionModel:
+    def create(self, db: Session, obj_in: SessionCreate, owner_id: int = None) -> SessionModel:
         """Create a new session."""
         try:
             db_obj = self.model(
@@ -30,9 +30,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 location=obj_in.location,
                 start_datetime=obj_in.start_datetime,
                 end_datetime=obj_in.end_datetime,
-                recording_url=(
-                    str(obj_in.recording_url) if obj_in.recording_url else None
-                ),
+                recording_url=(str(obj_in.recording_url) if obj_in.recording_url else None),
                 status=obj_in.status,
                 session_format=obj_in.session_format,
                 duration=obj_in.duration,
@@ -78,9 +76,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         """Read a session by URI."""
         return db.query(self.model).filter(self.model.uri == uri.lower()).first()
 
-    def list_all(
-        self, db: Session, skip: int = 0, limit: int = 100
-    ) -> List[SessionModel]:
+    def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> List[SessionModel]:
         """List all sessions with pagination."""
         limit = min(limit, 1000)  # Cap limit to prevent abuse
         return db.query(self.model).offset(skip).limit(limit).all()
@@ -104,16 +100,10 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         """List sessions filtered by status."""
         limit = min(limit, 1000)
         return (
-            db.query(self.model)
-            .filter(self.model.status == status)
-            .offset(skip)
-            .limit(limit)
-            .all()
+            db.query(self.model).filter(self.model.status == status).offset(skip).limit(limit).all()
         )
 
-    def list_published(
-        self, db: Session, skip: int = 0, limit: int = 100
-    ) -> List[SessionModel]:
+    def list_published(self, db: Session, skip: int = 0, limit: int = 100) -> List[SessionModel]:
         """List only published sessions."""
         from app.database.models import SessionStatus
 
@@ -126,9 +116,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             .all()
         )
 
-    def update(
-        self, db: Session, id: int, obj_in: SessionUpdate
-    ) -> Optional[SessionModel]:
+    def update(self, db: Session, id: int, obj_in: SessionUpdate) -> Optional[SessionModel]:
         """Update a session."""
         try:
             db_obj = self.read(db, id)
@@ -266,9 +254,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             if identifier in db_obj.available_content_identifiers:
                 # Explicitly reassign to trigger SQLAlchemy's change tracking for JSON columns
                 updated_list = [
-                    item
-                    for item in db_obj.available_content_identifiers
-                    if item != identifier
+                    item for item in db_obj.available_content_identifiers if item != identifier
                 ]
                 db_obj.available_content_identifiers = updated_list
                 db.add(db_obj)

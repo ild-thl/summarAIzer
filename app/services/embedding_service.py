@@ -1,15 +1,17 @@
 """Embedding service for semantic search using configurable embeddings and Chroma storage."""
 
-import structlog
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
+
 import chromadb
+import structlog
 from chromadb.config import Settings as ChromaSettings
-from app.services.embeddings_manager import create_embeddings_backend
+
 from app.constants.embedding import (
-    SESSIONS_COLLECTION,
     COLLECTION_METADATA_COSINE,
     MAX_EMBEDDING_TEXT_LENGTH,
+    SESSIONS_COLLECTION,
 )
+from app.services.embeddings_manager import create_embeddings_backend
 
 logger = structlog.get_logger()
 
@@ -51,9 +53,7 @@ class EmbeddingService:
         try:
             # Initialize embeddings backend based on provider
             if embedding_provider == "openai":
-                if not all(
-                    [embedding_api_key, embedding_api_base_url, embedding_model_name]
-                ):
+                if not all([embedding_api_key, embedding_api_base_url, embedding_model_name]):
                     raise ValueError(
                         "OpenAI embeddings requires: embedding_api_key, embedding_api_base_url, embedding_model_name"
                     )
@@ -237,9 +237,7 @@ class EmbeddingService:
             )
             raise
 
-    def _prepare_text(
-        self, title: str, fields: Optional[List[Optional[str]]] = None
-    ) -> str:
+    def _prepare_text(self, title: str, fields: Optional[List[Optional[str]]] = None) -> str:
         """
         Generic text preparation for embedding.
 
@@ -286,9 +284,7 @@ class EmbeddingService:
         )
 
     @staticmethod
-    def validate_embedding_text(
-        text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH
-    ) -> bool:
+    def validate_embedding_text(text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH) -> bool:
         """
         Validate that text is suitable for embedding.
 

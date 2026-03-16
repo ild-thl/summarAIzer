@@ -4,12 +4,13 @@ import hashlib
 from datetime import datetime
 from typing import Optional
 
-from fastapi import HTTPException, Header, Depends, status
-from sqlalchemy.orm import Session
 import structlog
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
-from app.database.models import User, APIKey, Event, Session as SessionModel
+from app.database.models import APIKey, Event, User
+from app.database.models import Session as SessionModel
 
 logger = structlog.get_logger()
 

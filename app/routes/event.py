@@ -1,33 +1,36 @@
 """API routes for Event management."""
 
 from typing import List, Optional
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from starlette.status import (
-    HTTP_201_CREATED,
     HTTP_200_OK,
+    HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
+
+from app.crud.event import event_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event, User, Session as SessionModel
+from app.database.models import Event, User
+from app.database.models import Session as SessionModel
+from app.schemas.session import (
+    EventCreate,
+    EventResponse,
+    EventUpdate,
+    SessionCreate,
+    SessionResponse,
+    SessionUpdate,
+)
 from app.security.auth import (
     get_current_user,
     require_event_owner,
     require_session_owner,
 )
-from app.schemas.session import (
-    EventCreate,
-    EventUpdate,
-    EventResponse,
-    SessionCreate,
-    SessionUpdate,
-    SessionResponse,
-)
-from app.crud.event import event_crud
-from app.crud.session import session_crud
-import structlog
 
 logger = structlog.get_logger()
 
@@ -88,9 +91,7 @@ async def get_event_by_uri(uri: str, db: Session = Depends(get_db)):
 async def list_events(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
-    status: str = Query(
-        None, description="Filter by status (draft, published, archived)"
-    ),
+    status: str = Query(None, description="Filter by status (draft, published, archived)"),
     db: Session = Depends(get_db),
 ):
     """
@@ -123,9 +124,7 @@ async def update_event(
     if event_in.uri and event_in.uri != event.uri:
         existing = event_crud.read_by_uri(db, event_in.uri)
         if existing:
-            logger.warning(
-                "event_uri_conflict_on_update", event_id=event_id, uri=event_in.uri
-            )
+            logger.warning("event_uri_conflict_on_update", event_id=event_id, uri=event_in.uri)
             raise HTTPException(
                 status_code=HTTP_409_CONFLICT,
                 detail=f"Event with URI '{event_in.uri}' already exists",
@@ -147,9 +146,7 @@ async def delete_event(
 
 
 # Nested session management endpoints under events
-@router.post(
-    "/{event_id}/sessions", response_model=SessionResponse, status_code=HTTP_201_CREATED
-)
+@router.post("/{event_id}/sessions", response_model=SessionResponse, status_code=HTTP_201_CREATED)
 async def create_session_in_event(
     event_id: int,
     session_in: SessionCreate,
@@ -176,9 +173,7 @@ async def create_session_in_event(
         .first()
     )
     if existing:
-        logger.warning(
-            "session_uri_conflict_in_event", event_id=event_id, uri=session_in.uri
-        )
+        logger.warning("session_uri_conflict_in_event", event_id=event_id, uri=session_in.uri)
         raise HTTPException(
             status_code=HTTP_409_CONFLICT,
             detail=f"Session with URI '{session_in.uri}' already exists in this event",
@@ -211,9 +206,7 @@ async def sync_session(
     if not event:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
     if event.owner_id != current_user.id:
-        logger.warning(
-            "sync_unauthorized_event_access", user_id=current_user.id, event_id=event_id
-        )
+        logger.warning("sync_unauthorized_event_access", user_id=current_user.id, event_id=event_id)
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Check if session exists
@@ -270,9 +263,7 @@ async def refresh_event_embedding(
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
 
     if event.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Forbidden - event ownership required"
-        )
+        raise HTTPException(status_code=403, detail="Forbidden - event ownership required")
 
     logger.info(
         "event_embedding_refresh_requested",
@@ -296,9 +287,7 @@ async def refresh_event_embedding(
 
 @router.get("/search/similar", response_model=List[EventResponse])
 async def search_similar_events(
-    query: str = Query(
-        ..., min_length=1, max_length=8000, description="Query text to search"
-    ),
+    query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     db: Session = Depends(get_db),
 ):
@@ -314,11 +303,11 @@ async def search_similar_events(
     Returns:
         List of similar published events
     """
-    from app.services.embedding_factory import get_search_service
     from app.services.embedding_exceptions import (
-        InvalidEmbeddingTextError,
         EmbeddingError,
+        InvalidEmbeddingTextError,
     )
+    from app.services.embedding_factory import get_search_service
 
     try:
         # Get search service via dependency injection

@@ -1,9 +1,10 @@
 """Embeddings manager supporting multiple embedding backends."""
 
-import structlog
-from typing import List, Optional
 from abc import ABC, abstractmethod
+from typing import List, Optional
+
 import requests
+import structlog
 
 logger = structlog.get_logger()
 
@@ -97,9 +98,7 @@ def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackend:
     if provider == "openai":
         required_keys = {"api_key", "api_base_url", "model"}
         if not required_keys.issubset(kwargs.keys()):
-            raise ValueError(
-                f"OpenAI embeddings requires: {required_keys}. Got: {kwargs.keys()}"
-            )
+            raise ValueError(f"OpenAI embeddings requires: {required_keys}. Got: {kwargs.keys()}")
         return OpenAIEmbeddingsBackend(
             api_key=kwargs["api_key"],
             api_base_url=kwargs["api_base_url"],
@@ -116,6 +115,4 @@ def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackend:
             api_base_url=kwargs["api_base_url"],
         )
     else:
-        raise ValueError(
-            f"Unknown embeddings provider: {provider}. Use 'openai' or 'huggingface'"
-        )
+        raise ValueError(f"Unknown embeddings provider: {provider}. Use 'openai' or 'huggingface'")

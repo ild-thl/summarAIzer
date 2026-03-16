@@ -1,21 +1,20 @@
 """Tests for content management and workflow endpoints."""
 
-import pytest
+import json
 from datetime import datetime, timedelta
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_200_OK, HTTP_201_CREATED
-import json
 
-from app.database.models import GeneratedContent, WorkflowExecution
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
+from app.database.models import GeneratedContent, WorkflowExecution
 
 
 @pytest.fixture
-def session_with_event(
-    client: TestClient, test_db: Session, sample_event, sample_api_key
-):
+def session_with_event(client: TestClient, test_db: Session, sample_event, sample_api_key):
     """Create a session with transcription for testing."""
     api_key, plain_key = sample_api_key
     response = client.post(
@@ -63,9 +62,7 @@ class TestContentEndpoints:
         assert data["workflow_execution_id"] is None
         assert "AI" in data["content"]
 
-    def test_get_available_content(
-        self, client: TestClient, session_with_event, test_db: Session
-    ):
+    def test_get_available_content(self, client: TestClient, session_with_event, test_db: Session):
         """Test retrieving available content identifiers."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -155,9 +152,7 @@ class TestContentEndpoints:
         data = response.json()
         assert data["content"] == updated_content
 
-    def test_delete_content(
-        self, client: TestClient, session_with_event, test_db: Session
-    ):
+    def test_delete_content(self, client: TestClient, session_with_event, test_db: Session):
         """Test deleting content."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -195,9 +190,7 @@ class TestContentEndpoints:
 class TestWorkflowEndpoints:
     """Test workflow execution endpoints."""
 
-    def test_trigger_workflow_without_transcription(
-        self, client: TestClient, session_with_event
-    ):
+    def test_trigger_workflow_without_transcription(self, client: TestClient, session_with_event):
         """Test that workflow requires transcription."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -210,9 +203,7 @@ class TestWorkflowEndpoints:
         assert response.status_code == 400
         assert "transcription" in response.json()["detail"].lower()
 
-    def test_trigger_workflow_with_transcription(
-        self, client: TestClient, session_with_event
-    ):
+    def test_trigger_workflow_with_transcription(self, client: TestClient, session_with_event):
         """Test triggering workflow with transcription present."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -236,9 +227,7 @@ class TestWorkflowEndpoints:
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
 
-    def test_get_workflow_status_not_found(
-        self, client: TestClient, session_with_event
-    ):
+    def test_get_workflow_status_not_found(self, client: TestClient, session_with_event):
         """Test getting status of non-existent workflow."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -271,9 +260,7 @@ class TestWorkflowEndpoints:
         assert response.status_code == 400
         assert "unknown" in response.json()["detail"].lower()
 
-    def test_workflow_with_available_content_tracking(
-        self, client: TestClient, session_with_event
-    ):
+    def test_workflow_with_available_content_tracking(self, client: TestClient, session_with_event):
         """Test that workflow execution properly tracks available_content_identifiers in DB.
 
         This is an integration test that verifies the database schema includes

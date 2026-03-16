@@ -1,15 +1,16 @@
 """API routes for Embedding and Semantic Search (optional feature)."""
 
 from typing import List, Optional
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND
-import structlog
 
-from app.database.connection import get_db
-from app.schemas.session import SessionResponse
 from app.crud.session import session_crud
+from app.database.connection import get_db
 from app.database.models import User
+from app.schemas.session import SessionResponse
 from app.security.auth import get_current_user
 
 logger = structlog.get_logger()
@@ -47,9 +48,7 @@ async def refresh_session_embedding(
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
     if session.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Forbidden - session ownership required"
-        )
+        raise HTTPException(status_code=403, detail="Forbidden - session ownership required")
 
     logger.info(
         "session_embedding_refresh_requested",
@@ -73,9 +72,7 @@ async def refresh_session_embedding(
 
 @router.get("/search/similar", response_model=List[SessionResponse])
 async def search_similar_sessions(
-    query: str = Query(
-        ..., min_length=1, max_length=8000, description="Query text to search"
-    ),
+    query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     event_id: Optional[int] = Query(None, description="Filter by event ID"),
     db: Session = Depends(get_db),
@@ -93,11 +90,11 @@ async def search_similar_sessions(
     Returns:
         List of similar published sessions
     """
-    from app.services.embedding_factory import get_search_service
     from app.services.embedding_exceptions import (
-        InvalidEmbeddingTextError,
         EmbeddingError,
+        InvalidEmbeddingTextError,
     )
+    from app.services.embedding_factory import get_search_service
 
     try:
         # Get search service via dependency injection

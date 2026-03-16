@@ -1,14 +1,15 @@
 """Base class for workflow steps."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
-from sqlalchemy.orm import Session
-import structlog
+from typing import Any, Dict, List, Optional
 
-from app.workflows.chat_models import ChatModelConfig, create_chat_model
+import structlog
+from langchain_core.language_models.chat_models import BaseChatModel
+from sqlalchemy.orm import Session
+
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
-from langchain_core.language_models.chat_models import BaseChatModel
+from app.workflows.chat_models import ChatModelConfig, create_chat_model
 
 logger = structlog.get_logger()
 

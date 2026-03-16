@@ -1,15 +1,16 @@
 """Tests for Session API endpoints."""
 
-import pytest
 import hashlib
 from datetime import datetime, timedelta
+
+import pytest
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
-    HTTP_403_FORBIDDEN,
 )
 
 
@@ -192,9 +193,7 @@ class TestSessionAPI:
         assert data["title"] == "Updated Session Title"
         assert data["status"] == "published"
 
-    def test_update_session_change_event(
-        self, client, sample_api_key, session_with_owner
-    ):
+    def test_update_session_change_event(self, client, sample_api_key, session_with_owner):
         """Test changing a session's event."""
         api_key, plain_key = sample_api_key
         # Create another event
@@ -466,7 +465,7 @@ class TestSessionUpsertEndpoint:
         event_id = event_resp.json()["id"]
 
         # Create another user
-        from app.database.models import User, APIKey
+        from app.database.models import APIKey, User
 
         other_user = User(username="other-upsert-user", type="api")
         test_db.add(other_user)

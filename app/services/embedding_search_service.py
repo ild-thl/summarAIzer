@@ -6,18 +6,19 @@ to provide a clean interface for similarity search across sessions/events.
 """
 
 import asyncio
+from typing import Any, Callable, List, Optional, Tuple
+
 import structlog
-from typing import List, Optional, Tuple, Callable, Any
 from sqlalchemy.orm import Session
 
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_exceptions import (
-    InvalidEmbeddingTextError,
-    EmbeddingSearchError,
-)
-from app.database.models import SessionStatus, EventStatus
-from app.crud.session import session_crud
 from app.crud.event import event_crud
+from app.crud.session import session_crud
+from app.database.models import EventStatus, SessionStatus
+from app.services.embedding_exceptions import (
+    EmbeddingSearchError,
+    InvalidEmbeddingTextError,
+)
+from app.services.embedding_service import EmbeddingService
 
 logger = structlog.get_logger()
 

@@ -1,25 +1,26 @@
 """Integration tests for complete workflow execution."""
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from typing import Dict, Any
+from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from app.workflows.services.execution_service import WorkflowExecutionService
+import pytest
+
+from app.async_jobs.tasks import execute_generated_content
 from app.workflows.execution_context import (
     GenerationState,
     StepRegistry,
     WorkflowRegistry,
 )
-from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.flows import TalkWorkflow
-from app.workflows.execution_context import WorkflowRegistry
-from app.async_jobs.tasks import execute_generated_content
+from app.workflows.flows.base_workflow import BaseWorkflow
+from app.workflows.services.execution_service import WorkflowExecutionService
+
 from .test_workflows_utils import (
+    clean_registries,
+    create_generation_state,
     create_mock_step,
     mock_db_session,
     mock_session_model,
-    clean_registries,
-    create_generation_state,
 )
 
 
@@ -82,9 +83,7 @@ async def test_full_workflow_execution_talk_workflow(
     )
 
     # Create execution with actual Celery mocking
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_celery:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_celery:
         mock_celery.return_value = Mock(id="task-1")
         workflow_exec, celery_task_id = WorkflowExecutionService.create_and_queue(
             session_id=1,
@@ -98,9 +97,7 @@ async def test_full_workflow_execution_talk_workflow(
 
 
 @pytest.mark.asyncio
-async def test_individual_step_execution(
-    mock_db_session, mock_session_model, clean_registries
-):
+async def test_individual_step_execution(mock_db_session, mock_session_model, clean_registries):
     """Test execution of individual step without workflow."""
     # Register only summary step
     step = create_mock_step(
@@ -128,9 +125,7 @@ async def test_individual_step_execution(
     )
 
     # Create execution for just the step
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_celery:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_celery:
         mock_celery.return_value = Mock(id="task-1")
         workflow_exec, celery_task_id = WorkflowExecutionService.create_and_queue(
             session_id=1,
@@ -167,7 +162,8 @@ async def test_context_chaining_through_steps(clean_registries):
             return "chaining_workflow"
 
         def build_graph(self):
-            from langgraph.graph import StateGraph, START, END
+            from langgraph.graph import END, START, StateGraph
+
             from app.workflows.steps.node_factory import create_step_node
 
             builder = StateGraph(GenerationState)
@@ -233,7 +229,8 @@ async def test_parallel_independent_steps(clean_registries):
             return "parallel_test_workflow"
 
         def build_graph(self):
-            from langgraph.graph import StateGraph, START, END
+            from langgraph.graph import END, START, StateGraph
+
             from app.workflows.steps.node_factory import create_step_node
 
             builder = StateGraph(GenerationState)
@@ -278,7 +275,8 @@ async def test_long_dependency_chain(clean_registries):
             return "chain_test_workflow"
 
         def build_graph(self):
-            from langgraph.graph import StateGraph, START, END
+            from langgraph.graph import END, START, StateGraph
+
             from app.workflows.steps.node_factory import create_step_node
 
             builder = StateGraph(GenerationState)
@@ -303,8 +301,9 @@ async def test_long_dependency_chain(clean_registries):
 @pytest.mark.asyncio
 async def test_execution_status_tracking(mock_db_session, clean_registries):
     """Test that execution status is properly tracked through phases."""
-    from app.database.models import WorkflowExecutionStatus
     from datetime import datetime
+
+    from app.database.models import WorkflowExecutionStatus
 
     mock_execution = Mock(
         id=1,
@@ -316,9 +315,7 @@ async def test_execution_status_tracking(mock_db_session, clean_registries):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -345,9 +342,7 @@ async def test_failed_step_marks_execution_failed(mock_db_session, clean_registr
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -449,7 +444,8 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
             return "missing_dep_workflow"
 
         def build_graph(self):
-            from langgraph.graph import StateGraph, START, END
+            from langgraph.graph import END, START, StateGraph
+
             from app.workflows.steps.node_factory import create_step_node
 
             builder = StateGraph(GenerationState)
@@ -469,9 +465,7 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
 
 
 @pytest.mark.asyncio
-async def test_multiple_sessions_independent_execution(
-    mock_db_session, clean_registries
-):
+async def test_multiple_sessions_independent_execution(mock_db_session, clean_registries):
     """Test that executions for different sessions are independent."""
     step = create_mock_step(identifier="test_step", dependencies=[])
     StepRegistry.register(step)
@@ -484,13 +478,9 @@ async def test_multiple_sessions_independent_execution(
     def mock_query_side_effect(*args, **kwargs):
         call_count[0] += 1
         if call_count[0] % 2 == 1:
-            return Mock(
-                filter=Mock(return_value=Mock(first=Mock(return_value=mock_session1)))
-            )
+            return Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_session1))))
         else:
-            return Mock(
-                filter=Mock(return_value=Mock(first=Mock(return_value=mock_session2)))
-            )
+            return Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_session2))))
 
     mock_db_session.query = Mock(side_effect=mock_query_side_effect)
     mock_db_session.add = Mock()
@@ -506,9 +496,7 @@ async def test_multiple_sessions_independent_execution(
 
     mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
 
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_celery:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_celery:
         mock_celery.return_value = Mock(id="task_123")
 
         # Execute for session 1

@@ -1,6 +1,8 @@
 """API routes for Session CRUD management (core resource)."""
 
 from typing import List, Optional
+
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from starlette.status import (
@@ -9,23 +11,23 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
-import structlog
 
+from app.crud.event import event_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Session as SessionModel
+from app.database.models import User
 from app.schemas.session import (
     SessionCreate,
-    SessionUpdate,
     SessionResponse,
+    SessionUpdate,
     SessionWithEvent,
 )
-from app.crud.session import session_crud
-from app.crud.event import event_crud
-from app.database.models import User, Session as SessionModel
 from app.security.auth import (
-    get_current_user,
-    require_session_owner,
-    get_current_user_optional,
     can_access_session_content,
+    get_current_user,
+    get_current_user_optional,
+    require_session_owner,
 )
 
 logger = structlog.get_logger()
@@ -167,9 +169,7 @@ async def list_sessions(
         sessions = session_crud.list_all(db, skip=skip, limit=limit)
 
     # Filter results: only include published sessions or user's own drafts
-    filtered_sessions = [
-        s for s in sessions if can_access_session_content(s, current_user)
-    ]
+    filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions
 
@@ -204,9 +204,7 @@ async def update_session(
     if session_in.event_id and session_in.event_id != session.event_id:
         event = event_crud.read(db, session_in.event_id)
         if not event:
-            logger.warning(
-                "event_not_found_for_session_update", event_id=session_in.event_id
-            )
+            logger.warning("event_not_found_for_session_update", event_id=session_in.event_id)
             raise HTTPException(
                 status_code=HTTP_404_NOT_FOUND,
                 detail=f"Event with ID {session_in.event_id} not found",
@@ -249,8 +247,6 @@ async def list_event_sessions(
     sessions = session_crud.list_by_event(db, event_id, skip=skip, limit=limit)
 
     # Filter results: only include published sessions or user's own drafts
-    filtered_sessions = [
-        s for s in sessions if can_access_session_content(s, current_user)
-    ]
+    filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions

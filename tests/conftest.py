@@ -2,8 +2,8 @@
 
 # CRITICAL: Mock boto3 BEFORE any app imports to prevent S3 client initialization
 # during module import time (ImageStep registers itself at module load)
-from unittest import mock
 import sys
+from unittest import mock
 
 _boto3_patcher = mock.patch("boto3.client")
 _mock_boto3 = _boto3_patcher.start()
@@ -13,23 +13,27 @@ _mock_s3_client.put_object.return_value = {}
 _mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
 _mock_boto3.return_value = _mock_s3_client
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, event as sqlalchemy_event
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy import event as sqlalchemy_event
+from sqlalchemy.orm import sessionmaker
+
+from app.database.connection import get_db
 from app.database.models import (
+    APIKey,
     Base,
     Event,
-    Session as SessionModel,
-    SessionStatus,
     EventStatus,
     SessionFormat,
+    SessionStatus,
     User,
-    APIKey,
 )
-from app.database.connection import get_db
+from app.database.models import (
+    Session as SessionModel,
+)
 from main import app
 
 

@@ -8,16 +8,16 @@ Tests cover:
 - Generic/refactored components: unified embedding and search infrastructure
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import pytest
 from sqlalchemy.orm import Session
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_search_service import EmbeddingSearchService
-from app.database.models import SessionStatus, EventStatus
 
+from app.database.models import EventStatus, SessionStatus
+from app.services.embedding_search_service import EmbeddingSearchService
+from app.services.embedding_service import EmbeddingService
 
 # ============================================================================
 # EmbeddingService Tests
@@ -59,9 +59,7 @@ class TestEmbeddingService:
         """Test successful embedding generation."""
         # Mock the OpenAI embeddings
         test_embedding = [0.1] * 768
-        embedding_service.embeddings.aembed_query = AsyncMock(
-            return_value=test_embedding
-        )
+        embedding_service.embeddings.aembed_query = AsyncMock(return_value=test_embedding)
 
         result = await embedding_service.embed_query("test query")
 
@@ -88,9 +86,7 @@ class TestEmbeddingService:
         session_id = 123
         text = "test session text"
 
-        await embedding_service.store_session_embedding(
-            session_id, test_embedding, text
-        )
+        await embedding_service.store_session_embedding(session_id, test_embedding, text)
 
         # Verify Chroma upsert was called with correct data
         embedding_service.sessions_collection.upsert.assert_called_once()
@@ -108,13 +104,9 @@ class TestEmbeddingService:
             "distances": [[0.1, 0.3]],
             "documents": [["session 1 text", "session 2 text"]],
         }
-        embedding_service.sessions_collection.query = MagicMock(
-            return_value=mock_results
-        )
+        embedding_service.sessions_collection.query = MagicMock(return_value=mock_results)
 
-        results = await embedding_service.search_similar_sessions(
-            test_embedding, limit=2
-        )
+        results = await embedding_service.search_similar_sessions(test_embedding, limit=2)
 
         # Verify results: (session_id, similarity_score, text)
         assert len(results) == 2
@@ -284,9 +276,7 @@ class TestEmbeddingSearchService:
         assert results[0].event_id == 100
 
     @pytest.mark.asyncio
-    async def test_search_sessions_invalid_query(
-        self, search_service, mock_embedding_service
-    ):
+    async def test_search_sessions_invalid_query(self, search_service, mock_embedding_service):
         """Test search with invalid query raises InvalidEmbeddingTextError."""
         from app.services.embedding_exceptions import InvalidEmbeddingTextError
 
@@ -365,17 +355,14 @@ class TestEmbeddingIntegration:
         query_text = "python machine learning"
 
         # Mock the entire pipeline
-        with patch(
-            "app.services.embedding_service.EmbeddingService"
-        ) as MockEmbeddingService, patch(
-            "app.services.embedding_search_service.session_crud"
-        ) as mock_crud:
+        with (
+            patch("app.services.embedding_service.EmbeddingService") as MockEmbeddingService,
+            patch("app.services.embedding_search_service.session_crud") as mock_crud,
+        ):
 
             mock_service = AsyncMock()
             mock_service.embed_query = AsyncMock(return_value=[0.1] * 768)
-            mock_service.search_similar_sessions = AsyncMock(
-                return_value=[(1, 0.95, "text")]
-            )
+            mock_service.search_similar_sessions = AsyncMock(return_value=[(1, 0.95, "text")])
             MockEmbeddingService.return_value = mock_service
 
             mock_session = Mock()

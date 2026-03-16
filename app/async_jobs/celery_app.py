@@ -1,10 +1,11 @@
 """Celery configuration for backend generative workflows."""
 
 import os
+
+import structlog
 from celery import Celery
 from celery.signals import worker_ready
 from kombu import Exchange, Queue
-import structlog
 
 logger = structlog.get_logger()
 

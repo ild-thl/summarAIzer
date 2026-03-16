@@ -1,8 +1,9 @@
 """Execution context and state management for workflow execution with LangGraph."""
 
-from typing import TypedDict, Optional, List, Dict, Any
-from sqlalchemy.orm import Session
+from typing import Any, Dict, List, Optional, TypedDict
+
 import structlog
+from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
 
@@ -349,7 +350,7 @@ def resolve_target_to_workflow_class(target: str) -> Any:
                 return target
 
             def build_graph(self):
-                from langgraph.graph import StateGraph, START, END
+                from langgraph.graph import END, START, StateGraph
 
                 logger.info(
                     "building_single_step_workflow_graph",
@@ -360,9 +361,7 @@ def resolve_target_to_workflow_class(target: str) -> Any:
                 async def step_node(state: GenerationState) -> Dict[str, str]:
                     step = StepRegistry.get_step(target)
                     context = {
-                        k: v
-                        for k, v in state.items()
-                        if k not in ["session_id", "execution_id"]
+                        k: v for k, v in state.items() if k not in ["session_id", "execution_id"]
                     }
                     return await step.execute(
                         session_id=state["session_id"],

@@ -2,18 +2,18 @@
 
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
-from sqlalchemy.orm import Session
 import structlog
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from sqlalchemy.orm import Session
 
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.config.settings import get_settings
+from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.services.image_generation_service import ImageGenerationService
 from app.workflows.services.s3_image_service import S3ImageService
-from app.config.settings import get_settings
-from app.database.models import Session as SessionModel
+from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
 
@@ -21,30 +21,30 @@ logger = structlog.get_logger()
 class ImageStep(PromptTemplate):
     """
     Combined step for generating image descriptions and images.
-    
+
     Dependencies: ["summary"]
-    
+
     Workflow:
     1. Use LLM to generate detailed image prompt from summary
     2. Call image generation service to create image
     3. Upload image to S3
     4. Return public S3 URL
-    
+
     Output (to state):
     - image_url: Public S3 URL of the generated image
     - image_meta: Metadata about the image generation
     """
-    
+
     @property
     def identifier(self) -> str:
         """Step identifier."""
         return "image"
-    
+
     @property
     def dependencies(self) -> List[str]:
         """Depends on summary for content context."""
         return ["summary"]
-    
+
     def __init__(
         self,
         api_url: str = None,
@@ -56,7 +56,7 @@ class ImageStep(PromptTemplate):
     ):
         """
         Initialize the combined image generation step.
-        
+
         Args:
             api_url: URL of the Academic Cloud image generation API (reads from settings if None)
             api_key: API key for authentication with Academic Cloud (reads from settings if None)
@@ -66,27 +66,27 @@ class ImageStep(PromptTemplate):
             quality: Quality level - "standard" or "hd" (default: "standard")
         """
         super().__init__()
-        
+
         settings = get_settings()
-        
+
         # Use provided values or fallback to settings
         api_url = api_url or settings.image_generation_api_url
         api_key = api_key or settings.image_generation_api_key
-        
+
         self.image_service = ImageGenerationService(api_url=api_url, api_key=api_key)
         self.s3_service = S3ImageService()
         self.image_model = model
         self.width = width
         self.height = height
         self.quality = quality
-        
+
         # Warn if no API key configured
         if not api_key:
             logger.warning(
                 "image_generation_api_key_not_configured",
                 message="IMAGE_GENERATION_API_KEY not set in environment. Image generation will fail.",
             )
-    
+
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
@@ -95,14 +95,12 @@ class ImageStep(PromptTemplate):
             max_tokens=300,  # Short and concise
             top_p=0.95,
         )
-    
-    def get_messages(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> List[BaseMessage]:
+
+    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
         """Generate image description prompt messages."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
         categories = ", ".join(session.categories) if session.categories else "General"
-        
+
         return [
             SystemMessage(
                 content="""You create concise, high-quality English prompts optimized for AI image generation models.
@@ -130,24 +128,24 @@ Summary:
 Create a concise English prompt for a high-quality visualization image that represents the core concepts of this event. Output only the prompt text, no explanations."""
             ),
         ]
-    
+
     def process_response(self, response: Any) -> Dict[str, Any]:
         """Extract and clean image description from LLM response."""
         image_prompt = response.content if hasattr(response, "content") else str(response)
-        
+
         # Remove unnecessary quotes or backticks if present
         image_prompt = image_prompt.strip().strip('"').strip("'")
         if image_prompt.startswith("```"):
             image_prompt = image_prompt.strip("```").strip()
-        
+
         return image_prompt
-    
+
     async def _invoke_and_process(
         self, session: SessionModel, context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Override to combine image description generation and image creation.
-        
+
         Steps:
         1. Generate image description via LLM
         2. Generate image using image generation service
@@ -161,26 +159,26 @@ Create a concise English prompt for a high-quality visualization image that repr
                 width=self.width,
                 height=self.height,
             )
-            
+
             # Step 1: Generate image description via LLM
             messages = self.get_messages(session, context)
             response = await self.get_model().ainvoke(messages)
-            
+
             logger.debug(
                 "image_description_generated",
                 session_id=session.id,
                 model=self.get_model_config().model,
             )
-            
+
             # Extract image prompt from LLM response
             image_prompt = self.process_response(response)
-            
+
             logger.info(
                 "image_description_ready",
                 session_id=session.id,
                 prompt_length=len(image_prompt),
             )
-            
+
             # Step 2: Generate image using the service
             result = self.image_service.generate_image(
                 prompt=image_prompt,
@@ -190,7 +188,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                 num_images=1,  # Only single image per execution
                 quality=self.quality,
             )
-            
+
             if not result.get("success"):
                 error_msg = result.get("error", "Image generation failed")
                 logger.error(
@@ -198,7 +196,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-                
+
                 # Return failure result with error details
                 return {
                     "content": "",
@@ -211,7 +209,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                         "image_prompt": image_prompt,
                     },
                 }
-            
+
             images = result.get("images", [])
             if not images:
                 error_msg = "No images returned from generation service"
@@ -231,16 +229,18 @@ Create a concise English prompt for a high-quality visualization image that repr
                         "image_prompt": image_prompt,
                     },
                 }
-            
+
             # Get first image (we only request one)
             image = images[0]
             image_data = None
-            
+
             if isinstance(image, dict):
                 # Try b64_json first (Academic Cloud format), then base64
                 image_data = image.get("b64_json") or image.get("base64")
                 if not image_data:
-                    error_msg = f"No image data found in response. Available keys: {list(image.keys())}"
+                    error_msg = (
+                        f"No image data found in response. Available keys: {list(image.keys())}"
+                    )
                     logger.error(
                         "no_image_data_in_response",
                         session_id=session.id,
@@ -277,13 +277,13 @@ Create a concise English prompt for a high-quality visualization image that repr
                         "image_prompt": image_prompt,
                     },
                 }
-            
+
             logger.info(
                 "image_generated",
                 session_id=session.id,
                 image_size=len(image_data) if image_data else 0,
             )
-            
+
             # Step 3: Upload to S3
             try:
                 public_url = self.s3_service.upload_image_from_base64(
@@ -310,13 +310,13 @@ Create a concise English prompt for a high-quality visualization image that repr
                         "image_prompt": image_prompt,
                     },
                 }
-            
+
             logger.info(
                 "image_uploaded_to_s3",
                 session_id=session.id,
                 public_url=public_url,
             )
-            
+
             # Step 4: Return structured result with S3 URL
             return {
                 "content": public_url,  # Just the URL as content
@@ -330,7 +330,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     "size": f"{self.width}x{self.height}",
                 },
             }
-        
+
         except Exception as e:
             error_msg = f"Unexpected error in image generation: {str(e)}"
             logger.error(
@@ -349,12 +349,13 @@ Create a concise English prompt for a high-quality visualization image that repr
                     "error": error_msg,
                 },
             }
-    
+
     def __repr__(self) -> str:
         return f"ImageStep(model={self.image_model}, size={self.width}x{self.height})"
 
 
 # Auto-register this step when imported
 from app.workflows.execution_context import StepRegistry
+
 _image_step = ImageStep()
 StepRegistry.register(_image_step)

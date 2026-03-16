@@ -5,7 +5,8 @@ Node functions handle extracting context from state, executing the step, and man
 logging and error handling.
 """
 
-from typing import Dict, Callable, Any
+from typing import Any, Callable, Dict
+
 import structlog
 
 from app.workflows.execution_context import GenerationState, StepRegistry
@@ -16,35 +17,35 @@ logger = structlog.get_logger()
 def create_step_node(step_identifier: str) -> Callable:
     """
     Create a LangGraph node function for a given step.
-    
+
     The returned node function:
     1. Retrieves the step from the registry
     2. Builds context from the current state
     3. Executes the step (which handles content generation and persistence)
     4. Returns the result to update the graph state
     5. Handles logging and errors
-    
+
     This factory eliminates code duplication when defining workflows with multiple steps.
-    
+
     Args:
         step_identifier: Step identifier (e.g., "summary", "tags", "key_takeaways")
-        
+
     Returns:
         An async function suitable for use as a LangGraph node
-        
+
     Raises:
         ValueError: If step is not registered
     """
     # Validate step exists at creation time
     step = StepRegistry.get_step(step_identifier)
-    
+
     async def step_node(state: GenerationState) -> Dict[str, str]:
         """
         Execute a step and update state with result.
-        
+
         Args:
             state: Current execution state with session_id, execution_id, and context
-            
+
         Returns:
             Dict with step_identifier: content to update the state
         """
@@ -55,13 +56,10 @@ def create_step_node(step_identifier: str) -> Callable:
                 session_id=state.get("session_id"),
                 execution_id=state.get("execution_id"),
             )
-            
+
             # Build context for this step from state, excluding execution metadata
-            context = {
-                k: v for k, v in state.items()
-                if k not in ["session_id", "execution_id"]
-            }
-            
+            context = {k: v for k, v in state.items() if k not in ["session_id", "execution_id"]}
+
             # Validate that db was never added to state
             if "db" in context:
                 logger.error(
@@ -75,7 +73,7 @@ def create_step_node(step_identifier: str) -> Callable:
                     "This indicates state serialization/deserialization. "
                     "Steps should create their own SessionLocal() instances."
                 )
-            
+
             # Execute step (handles both content generation AND persistence)
             # Note: Step creates its own database session
             result = await step.execute(
@@ -83,18 +81,18 @@ def create_step_node(step_identifier: str) -> Callable:
                 execution_id=state["execution_id"],
                 context=context,
             )
-            
+
             logger.info(
                 "step_node_completed",
                 step_identifier=step_identifier,
                 session_id=state.get("session_id"),
                 execution_id=state.get("execution_id"),
             )
-            
+
             # Result is dict like {identifier: content_string}
             # Return it to update state
             return result
-            
+
         except Exception as e:
             logger.error(
                 "step_node_failed",
@@ -105,5 +103,5 @@ def create_step_node(step_identifier: str) -> Callable:
                 exc_info=True,
             )
             raise
-    
+
     return step_node

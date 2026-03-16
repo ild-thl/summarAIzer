@@ -1,8 +1,9 @@
 """Tests for authentication, authorization, and user/API key management."""
 
-import pytest
 import hashlib
 from datetime import datetime, timedelta
+
+import pytest
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,
@@ -269,7 +270,7 @@ class TestEventOwnershipAndCreation:
         event_id = response.json()["id"]
 
         # Create another user's API key
-        from app.database.models import User, APIKey
+        from app.database.models import APIKey, User
 
         other_user = User(username="other-user", type="api")
         test_db.add(other_user)
@@ -317,7 +318,7 @@ class TestEventOwnershipAndCreation:
         event_id = response.json()["id"]
 
         # Create another user
-        from app.database.models import User, APIKey
+        from app.database.models import APIKey, User
 
         other_user = User(username="other-user-2", type="api")
         test_db.add(other_user)

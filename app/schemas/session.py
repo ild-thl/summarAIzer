@@ -1,10 +1,11 @@
 """Pydantic schemas for request/response validation."""
 
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, HttpUrl, field_validator, ConfigDict
-from app.database.models import SessionFormat, SessionStatus, EventStatus
+from typing import List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+
+from app.database.models import EventStatus, SessionFormat, SessionStatus
 
 # ============================================================================
 # Event Schemas
@@ -15,25 +16,19 @@ class EventBase(BaseModel):
     """Base schema for Event with common fields."""
 
     title: str = Field(..., min_length=1, max_length=255, description="Event title")
-    description: Optional[str] = Field(
-        None, max_length=5000, description="Event description"
-    )
+    description: Optional[str] = Field(None, max_length=5000, description="Event description")
     start_date: datetime = Field(..., description="Event start datetime")
     end_date: datetime = Field(..., description="Event end datetime")
     location: Optional[str] = Field(None, max_length=255, description="Event location")
     status: EventStatus = Field(default=EventStatus.DRAFT, description="Event status")
-    uri: str = Field(
-        ..., min_length=1, max_length=255, description="URL-safe identifier"
-    )
+    uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
 
     @field_validator("uri")
     @classmethod
     def validate_uri(cls, v: str) -> str:
         """Validate URI is URL-safe."""
         if not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower()
 
     @field_validator("end_date")
@@ -67,9 +62,7 @@ class EventUpdate(BaseModel):
     def validate_uri(cls, v: Optional[str]) -> Optional[str]:
         """Validate URI is URL-safe."""
         if v is not None and not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower() if v else v
 
 
@@ -93,36 +86,20 @@ class SessionBase(BaseModel):
     """Base schema for Session with common fields."""
 
     title: str = Field(..., min_length=1, max_length=255, description="Session title")
-    speakers: Optional[List[str]] = Field(
-        default=None, description="List of speaker names"
-    )
-    categories: Optional[List[str]] = Field(
-        default=None, description="Session categories"
-    )
-    short_description: Optional[str] = Field(
-        None, max_length=1000, description="Short description"
-    )
-    location: Optional[str] = Field(
-        None, max_length=255, description="Session location"
-    )
+    speakers: Optional[List[str]] = Field(default=None, description="List of speaker names")
+    categories: Optional[List[str]] = Field(default=None, description="Session categories")
+    short_description: Optional[str] = Field(None, max_length=1000, description="Short description")
+    location: Optional[str] = Field(None, max_length=255, description="Session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
     end_datetime: datetime = Field(..., description="Session end datetime")
     recording_url: Optional[HttpUrl] = Field(None, description="Recording URL")
-    status: SessionStatus = Field(
-        default=SessionStatus.DRAFT, description="Session status"
-    )
-    session_format: Optional[SessionFormat] = Field(
-        None, description="Session format type"
-    )
-    duration: Optional[int] = Field(
-        None, ge=0, le=1440, description="Duration in minutes"
-    )
+    status: SessionStatus = Field(default=SessionStatus.DRAFT, description="Session status")
+    session_format: Optional[SessionFormat] = Field(None, description="Session format type")
+    duration: Optional[int] = Field(None, ge=0, le=1440, description="Duration in minutes")
     language: str = Field(
         default="en", min_length=2, max_length=10, description="ISO 639-1 language code"
     )
-    uri: str = Field(
-        ..., min_length=1, max_length=255, description="URL-safe identifier"
-    )
+    uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
     event_id: Optional[int] = Field(None, description="Associated event ID")
 
     @field_validator("uri")
@@ -130,9 +107,7 @@ class SessionBase(BaseModel):
     def validate_uri(cls, v: str) -> str:
         """Validate URI is URL-safe."""
         if not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower()
 
     @field_validator("end_datetime")
@@ -147,16 +122,9 @@ class SessionBase(BaseModel):
     @classmethod
     def validate_duration(cls, v: Optional[int], info) -> Optional[int]:
         """Validate duration matches time difference if both provided."""
-        if (
-            v is not None
-            and "start_datetime" in info.data
-            and "end_datetime" in info.data
-        ):
+        if v is not None and "start_datetime" in info.data and "end_datetime" in info.data:
             calculated_duration = int(
-                (
-                    info.data["end_datetime"] - info.data["start_datetime"]
-                ).total_seconds()
-                / 60
+                (info.data["end_datetime"] - info.data["start_datetime"]).total_seconds() / 60
             )
             if v != calculated_duration:
                 # Allow some tolerance for rounding
@@ -196,9 +164,7 @@ class SessionUpdate(BaseModel):
     def validate_uri(cls, v: Optional[str]) -> Optional[str]:
         """Validate URI is URL-safe."""
         if v is not None and not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower() if v else v
 
 

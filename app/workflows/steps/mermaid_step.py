@@ -1,13 +1,14 @@
 """Mermaid diagram step - creates structured Mermaid mindmaps from event content."""
 
 import re
-from typing import Dict, Any, List
-import structlog
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from typing import Any, Dict, List
 
-from app.workflows.steps.prompt_template import PromptTemplate
-from app.workflows.chat_models import ChatModelConfig
+import structlog
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
 from app.database.models import Session as SessionModel
+from app.workflows.chat_models import ChatModelConfig
+from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
 
@@ -15,7 +16,7 @@ logger = structlog.get_logger()
 class MermaidStep(PromptTemplate):
     """
     Creates structured Mermaid mindmaps from event content.
-    
+
     Visualizes key points, quotes and logical connections.
     """
 
@@ -38,12 +39,10 @@ class MermaidStep(PromptTemplate):
             top_p=0.9,
         )
 
-    def get_messages(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
         """Generate mermaid messages with context injection."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
-        
+
         return [
             SystemMessage(
                 content="""Du erstellst strukturierte Mermaid-Mindmaps für Bildungsveranstaltungen. Verwende die Mermaid-Mindmap-Syntax mit folgenden Regeln:
@@ -91,7 +90,7 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
     def process_response(self, response: Any) -> Dict[str, Any]:
         """Process LLM response to mermaid output."""
         mermaid_code = response.content if hasattr(response, "content") else str(response)
-        
+
         # Extract mermaid code from markdown code block if needed
         if "```mermaid" in mermaid_code:
             match = re.search(r"```mermaid\n(.*?)\n```", mermaid_code, re.DOTALL)
@@ -101,7 +100,7 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
             match = re.search(r"```\n(.*?)\n```", mermaid_code, re.DOTALL)
             if match:
                 mermaid_code = match.group(1)
-        
+
         return {
             "content": mermaid_code,
             "content_type": "mermaid",
@@ -115,5 +114,6 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
 
 # Auto-register this step when imported
 from app.workflows.execution_context import StepRegistry
+
 _mermaid_step = MermaidStep()
 StepRegistry.register(_mermaid_step)

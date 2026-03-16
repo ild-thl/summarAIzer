@@ -1,6 +1,7 @@
 """Event system for session domain events."""
 
 from typing import Callable, Dict, List
+
 import structlog
 
 logger = structlog.get_logger()

@@ -1,10 +1,12 @@
 """Tests for Event CRUD operations."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
+
 from app.crud.event import event_crud
-from app.schemas.session import EventCreate, EventUpdate
 from app.database.models import EventStatus
+from app.schemas.session import EventCreate, EventUpdate
 
 
 class TestEventCRUD:

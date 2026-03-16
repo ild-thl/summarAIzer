@@ -1,20 +1,22 @@
 """LLM chat model configuration using LangChain chat models."""
 
-from typing import Optional, Dict, Any
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
 from langchain.chat_models import init_chat_model
+
 from app.config.settings import get_settings
 
 
 @dataclass
 class ChatModelConfig:
     """Configuration for LLM model with model-specific settings."""
-    
+
     model: str
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_p: Optional[float] = None
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to kwargs dict for init_chat_model."""
         kwargs = {
@@ -39,13 +41,13 @@ class ChatModelConfig:
 def create_chat_model(config: ChatModelConfig):
     """
     Create a LangChain chat model from configuration.
-    
+
     Args:
         config: ChatModelConfig instance with model name and parameters
-        
+
     Returns:
         LangChain BaseChatModel instance
-        
+
     Raises:
         ValueError: If required API keys or configuration is missing
     """

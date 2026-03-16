@@ -1,7 +1,8 @@
 """Base CRUD operations interface."""
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, List, Optional
+from typing import Generic, List, Optional, TypeVar
+
 from sqlalchemy.orm import Session
 
 T = TypeVar("T")
