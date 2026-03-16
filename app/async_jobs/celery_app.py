@@ -88,7 +88,7 @@ logger.info(
 
 # Signal handler to ensure tasks are imported when worker starts
 @worker_ready.connect
-def worker_ready_handler(sender, **kwargs):
+def worker_ready_handler(sender, **_kwargs):
     """Log registered tasks when worker is ready."""
     try:
         # Get registered tasks

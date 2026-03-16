@@ -1,11 +1,9 @@
 """Integration tests for complete workflow execution."""
 
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from app.async_jobs.tasks import execute_generated_content
 from app.workflows.execution_context import (
     GenerationState,
     StepRegistry,
@@ -16,11 +14,8 @@ from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.services.execution_service import WorkflowExecutionService
 
 from .test_workflows_utils import (
-    clean_registries,
     create_generation_state,
     create_mock_step,
-    mock_db_session,
-    mock_session_model,
 )
 
 
@@ -175,7 +170,7 @@ async def test_context_chaining_through_steps(clean_registries):
             return builder.compile()
 
     # Build graph using the workflow
-    graph = WorkflowRegistry.get_or_build_graph(ChainingWorkflow)
+    WorkflowRegistry.get_or_build_graph(ChainingWorkflow)
 
     # Create state
     state = create_generation_state(
@@ -457,7 +452,7 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
     # Try to build workflow with missing dependency
     # Should either skip missing dependency or raise informative error
     try:
-        graph = WorkflowRegistry.get_or_build_graph(MissingDepWorkflow)
+        WorkflowRegistry.get_or_build_graph(MissingDepWorkflow)
         # If successful, that's ok - may be lenient
     except (KeyError, ValueError) as e:
         # If error, should be clear about what's wrong

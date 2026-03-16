@@ -66,7 +66,7 @@ def get_embedding_service() -> EmbeddingService:
             error=str(e),
             error_type=type(e).__name__,
         )
-        raise ChromaConnectionError(f"Failed to initialize embedding service: {str(e)}") from e
+        raise ChromaConnectionError(f"Failed to initialize embedding service: {e!s}") from e
 
 
 def get_search_service() -> EmbeddingSearchService:

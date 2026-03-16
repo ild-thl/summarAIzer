@@ -1,11 +1,11 @@
 """Debug endpoints for workflow execution troubleshooting."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_200_OK, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_404_NOT_FOUND
 
 from app.async_jobs.celery_app import app as celery_app
 from app.async_jobs.tasks import health_check
@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/debug", tags=["debug"])
 
 
-@router.get("/workflow-executions", response_model=List[Dict[str, Any]])
+@router.get("/workflow-executions", response_model=list[dict[str, Any]])
 async def list_workflow_executions(
     session_id: int = Query(None, description="Filter by session ID"),
     limit: int = Query(50, ge=1, le=500, description="Maximum records to return"),

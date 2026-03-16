@@ -1,9 +1,7 @@
 """API routes for Session CRUD management (core resource)."""
 
-from typing import List, Optional
-
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -84,7 +82,7 @@ async def create_session(
                 event_id=session_in.event_id,
             )
             raise HTTPException(
-                status_code=HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission denied: you do not own this event",
             )
 
@@ -142,7 +140,7 @@ async def get_session_by_uri(
     return db_session
 
 
-@router.get("", response_model=List[SessionResponse])
+@router.get("", response_model=list[SessionResponse])
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
@@ -217,7 +215,7 @@ async def update_session(
 @router.delete("/{session_id}", status_code=HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: int,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Delete a session (owner only)."""
@@ -225,7 +223,7 @@ async def delete_session(
     return None
 
 
-@router.get("/event/{event_id}/sessions", response_model=List[SessionResponse])
+@router.get("/event/{event_id}/sessions", response_model=list[SessionResponse])
 async def list_event_sessions(
     event_id: int,
     skip: int = Query(0, ge=0, description="Number of records to skip"),

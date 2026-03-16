@@ -1,7 +1,6 @@
 """Service layer for workflow execution lifecycle management."""
 
 from datetime import datetime
-from typing import List, Optional, Tuple
 
 import structlog
 from sqlalchemy.orm import Session
@@ -34,7 +33,7 @@ class WorkflowExecutionService:
         session_id: int,
         target: str,
         db: Session,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Validate prerequisites and determine execution type.
 
@@ -86,7 +85,7 @@ class WorkflowExecutionService:
                 target=target,
                 error=str(e),
             )
-            raise ValueError(f"Unknown target: '{target}'")
+            raise ValueError(f"Unknown target: '{target}'") from e
 
         # Determine execution type for logging
         execution_type = "workflow" if is_workflow else "step"
@@ -107,8 +106,8 @@ class WorkflowExecutionService:
         target: str,
         db: Session,
         triggered_by: str = "user_triggered",
-        created_by_user_id: Optional[int] = None,
-    ) -> Tuple[WorkflowExecution, str]:
+        created_by_user_id: int | None = None,
+    ) -> tuple[WorkflowExecution, str]:
         """
         Create execution record and queue Celery task.
 
@@ -201,7 +200,7 @@ class WorkflowExecutionService:
         return workflow_exec, celery_task_id
 
     @staticmethod
-    def get_execution_status(execution_id: int, db: Session) -> Optional[WorkflowExecution]:
+    def get_execution_status(execution_id: int, db: Session) -> WorkflowExecution | None:
         """
         Get current status of a workflow execution.
 
@@ -215,7 +214,7 @@ class WorkflowExecutionService:
         return content_crud.get_workflow_execution(db, execution_id)
 
     @staticmethod
-    def get_execution_by_celery_task_id(task_id: str, db: Session) -> Optional[WorkflowExecution]:
+    def get_execution_by_celery_task_id(task_id: str, db: Session) -> WorkflowExecution | None:
         """
         Get workflow execution by Celery task ID.
 
@@ -233,7 +232,7 @@ class WorkflowExecutionService:
     def mark_running(
         execution_id: int,
         db: Session,
-        celery_task_id: Optional[str] = None,
+        celery_task_id: str | None = None,
     ) -> None:
         """
         Mark execution as running.
@@ -270,7 +269,7 @@ class WorkflowExecutionService:
     def mark_completed(
         execution_id: int,
         db: Session,
-        created_content_ids: Optional[List[int]] = None,
+        created_content_ids: list[int] | None = None,
     ) -> None:
         """
         Mark execution as completed.

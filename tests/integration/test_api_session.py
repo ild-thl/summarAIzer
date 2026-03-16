@@ -164,7 +164,8 @@ class TestSessionAPI:
         # Should include the published session
         assert any(s["id"] == sample_session_no_event.id for s in data)
 
-    def test_list_sessions_by_status(self, client, sample_api_key, session_with_owner):
+    @pytest.mark.usefixtures("sample_session")
+    def test_list_sessions_by_status(self, client, sample_api_key):
         """Test listing sessions filtered by status (authenticated)."""
         api_key, plain_key = sample_api_key
         response = client.get(
@@ -249,7 +250,7 @@ class TestSessionAPI:
 class TestSessionURIUniquenessPerEvent:
     """Test suite for per-event URI uniqueness."""
 
-    def test_session_uri_unique_globally_fails(self, client, sample_api_key, test_db):
+    def test_session_uri_unique_globally_fails(self, client, sample_api_key):
         """Test that global URI uniqueness is removed (should allow per-event reuse)."""
         api_key, plain_key = sample_api_key
 

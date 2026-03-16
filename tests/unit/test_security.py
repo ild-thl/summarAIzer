@@ -1,7 +1,5 @@
 """Tests for security and input validation."""
 
-import pytest
-
 from app.security.validator import SecurityValidator
 
 

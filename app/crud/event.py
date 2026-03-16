@@ -1,7 +1,5 @@
 """CRUD operations for Event model."""
 
-from typing import List, Optional
-
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -19,7 +17,7 @@ class CRUDEvent(CRUDBase[Event, EventCreate, EventUpdate]):
     def __init__(self):
         super().__init__(Event)
 
-    def create(self, db: Session, obj_in: EventCreate, owner_id: int = None) -> Event:
+    def create(self, db: Session, obj_in: EventCreate, owner_id: int | None = None) -> Event:
         """Create a new event."""
         try:
             db_obj = self.model(
@@ -42,29 +40,29 @@ class CRUDEvent(CRUDBase[Event, EventCreate, EventUpdate]):
             logger.error("event_creation_failed", error=str(e))
             raise
 
-    def read(self, db: Session, id: int) -> Optional[Event]:
+    def read(self, db: Session, id: int) -> Event | None:
         """Read an event by ID."""
         return db.query(self.model).filter(self.model.id == id).first()
 
-    def read_by_uri(self, db: Session, uri: str) -> Optional[Event]:
+    def read_by_uri(self, db: Session, uri: str) -> Event | None:
         """Read an event by URI."""
         return db.query(self.model).filter(self.model.uri == uri.lower()).first()
 
-    def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> List[Event]:
+    def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> list[Event]:
         """List all events with pagination."""
         limit = min(limit, 1000)  # Cap limit to prevent abuse
         return db.query(self.model).offset(skip).limit(limit).all()
 
     def list_by_status(
         self, db: Session, status: str, skip: int = 0, limit: int = 100
-    ) -> List[Event]:
+    ) -> list[Event]:
         """List events filtered by status."""
         limit = min(limit, 1000)
         return (
             db.query(self.model).filter(self.model.status == status).offset(skip).limit(limit).all()
         )
 
-    def update(self, db: Session, id: int, obj_in: EventUpdate) -> Optional[Event]:
+    def update(self, db: Session, id: int, obj_in: EventUpdate) -> Event | None:
         """Update an event."""
         try:
             db_obj = self.read(db, id)

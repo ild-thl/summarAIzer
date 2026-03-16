@@ -1,9 +1,8 @@
 """Execution context and state management for workflow execution with LangGraph."""
 
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, ClassVar, TypedDict
 
 import structlog
-from sqlalchemy.orm import Session
 
 logger = structlog.get_logger()
 
@@ -40,8 +39,8 @@ class StepRegistry:
     and allowing the workflow to build execution plans based on step identifiers.
     """
 
-    _steps: Dict[str, Any] = {}
-    _step_dependencies: Dict[str, List[str]] = {}
+    _steps: ClassVar[dict[str, Any]] = {}
+    _step_dependencies: ClassVar[dict[str, int]] = {}
 
     @classmethod
     def register(cls, step_instance: Any) -> None:
@@ -80,7 +79,7 @@ class StepRegistry:
         return cls._steps[identifier]
 
     @classmethod
-    def get_dependencies(cls, identifier: str) -> List[str]:
+    def get_dependencies(cls, identifier: str) -> list[str]:
         """
         Get dependencies for a step.
 
@@ -98,7 +97,7 @@ class StepRegistry:
         return cls._step_dependencies[identifier]
 
     @classmethod
-    def get_all_steps(cls) -> Dict[str, Any]:
+    def get_all_steps(cls) -> dict[str, Any]:
         """
         Get all registered steps.
 
@@ -108,7 +107,7 @@ class StepRegistry:
         return cls._steps.copy()
 
     @classmethod
-    def resolve_execution_order(cls, step_ids: List[str]) -> List[str]:
+    def resolve_execution_order(cls, step_ids: list[str]) -> list[str]:
         """
         Resolve execution order for a set of steps based on dependencies.
 
@@ -174,8 +173,8 @@ class WorkflowRegistry:
     All workflows must be BaseWorkflow classes that define their own LangGraph orchestration.
     """
 
-    _workflow_classes: Dict[str, Any] = {}
-    _graph_cache: Dict[str, Any] = {}  # Caches compiled graphs to avoid rebuilding
+    _workflow_classes: ClassVar[dict[str, Any]] = {}
+    _graph_cache: ClassVar[dict[str, Any]] = {}  # Caches compiled graphs to avoid rebuilding
 
     @classmethod
     def register_workflow_class(cls, workflow_name: str, workflow_class: Any) -> None:
@@ -259,7 +258,7 @@ class WorkflowRegistry:
         return name in cls._workflow_classes
 
     @classmethod
-    def get_all_workflow_classes(cls) -> Dict[str, Any]:
+    def get_all_workflow_classes(cls) -> dict[str, Any]:
         """
         Get all registered workflow classes.
 
@@ -358,7 +357,7 @@ def resolve_target_to_workflow_class(target: str) -> Any:
                     step_identifier=target,
                 )
 
-                async def step_node(state: GenerationState) -> Dict[str, str]:
+                async def step_node(state: GenerationState) -> dict[str, str]:
                     step = StepRegistry.get_step(target)
                     context = {
                         k: v for k, v in state.items() if k not in ["session_id", "execution_id"]

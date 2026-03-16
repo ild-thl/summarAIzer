@@ -5,8 +5,8 @@ Coordinates embedding generation, Chroma queries, and database fetches
 to provide a clean interface for similarity search across sessions/events.
 """
 
-import asyncio
-from typing import Any, Callable, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from sqlalchemy.orm import Session
@@ -43,9 +43,9 @@ class EmbeddingSearchService:
         crud_read: Callable,
         status_filter: Any,
         limit: int = 10,
-        extra_filter: Optional[Callable[[Any], bool]] = None,
+        extra_filter: Callable[[Any], bool] | None = None,
         entity_name: str = "entity",
-    ) -> List:
+    ) -> list:
         """
         Generic search across any collection.
 
@@ -109,15 +109,15 @@ class EmbeddingSearchService:
                 query_length=len(query),
                 limit=limit,
             )
-            raise EmbeddingSearchError(f"{entity_name} search failed: {str(e)}") from e
+            raise EmbeddingSearchError(f"{entity_name} search failed: {e!s}") from e
 
     async def search_sessions(
         self,
         query: str,
         db: Session,
         limit: int = 10,
-        event_id: Optional[int] = None,
-    ) -> List:
+        event_id: int | None = None,
+    ) -> list:
         """
         Search for similar sessions by query text.
 
@@ -155,7 +155,7 @@ class EmbeddingSearchService:
         query: str,
         db: Session,
         limit: int = 10,
-    ) -> List:
+    ) -> list:
         """
         Search for similar events by query text.
 

@@ -1,7 +1,6 @@
 """Tests for LangGraph workflow graph caching."""
 
-from typing import Any, Dict
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -13,7 +12,6 @@ from app.workflows.execution_context import (
 from app.workflows.flows.base_workflow import BaseWorkflow
 
 from .test_workflows_utils import (
-    clean_registries,
     create_mock_step,
 )
 
@@ -89,7 +87,7 @@ def test_workflow_graph_cache_clear():
     """Test that cache can be cleared."""
     WorkflowRegistry.clear()
     assert len(WorkflowRegistry._graph_cache) == 0
-    logger = __import__("structlog").get_logger()
+    __import__("structlog").get_logger()
     # Just verify it doesn't error
 
 
@@ -241,7 +239,7 @@ async def test_workflow_graph_state_passes_through_steps(clean_registries):
     step1 = create_mock_step(identifier="step1", dependencies=[])
     StepRegistry.register(step1)
 
-    graph = WorkflowRegistry.get_or_build_graph(SampleWorkflow)
+    WorkflowRegistry.get_or_build_graph(SampleWorkflow)
 
     # Create initial state
     state = {
@@ -286,7 +284,7 @@ async def test_build_workflow_graph_handles_nonexistent_step(clean_registries):
     # Try to build graph with reference to nonexistent step
     # This should raise an error from the step factory
     try:
-        graph = WorkflowRegistry.get_or_build_graph(MissingStepWorkflow)
+        WorkflowRegistry.get_or_build_graph(MissingStepWorkflow)
     except (KeyError, ValueError) as e:
         # If it fails, it should be clear why
         assert "nonexistent_step" in str(e) or "not found" in str(e).lower()

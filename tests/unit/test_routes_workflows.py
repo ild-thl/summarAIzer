@@ -1,27 +1,20 @@
 """Tests for API routes triggering workflows."""
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from app.workflows.execution_context import StepRegistry, WorkflowRegistry
 from app.workflows.services.execution_service import WorkflowExecutionService
 
-from .test_workflows_utils import (
-    clean_registries,
-    create_mock_step,
-    mock_db_session,
-    mock_session_model,
-)
+from .test_workflows_utils import create_mock_step
 
 
 @pytest.fixture
 def test_client():
     """Create a test client for the FastAPI app."""
     # Import here to avoid circular imports
-    from sqlalchemy.orm import Session
 
     from main import app
 
@@ -33,7 +26,9 @@ def test_client():
 
 
 @pytest.mark.asyncio
-async def test_trigger_workflow_full_workflow(mock_db_session, clean_registries):
+async def test_trigger_workflow_full_workflow(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test triggering full workflow via API."""
     # Setup
     step1 = create_mock_step(identifier="summary", dependencies=[])
@@ -78,7 +73,9 @@ async def test_trigger_workflow_full_workflow(mock_db_session, clean_registries)
 
 
 @pytest.mark.asyncio
-async def test_trigger_workflow_individual_step(mock_db_session, clean_registries):
+async def test_trigger_workflow_individual_step(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test triggering individual step via API."""
     # Setup
     step = create_mock_step(identifier="summary", dependencies=[])
@@ -180,7 +177,9 @@ async def test_get_workflow_status_not_found(mock_db_session):
 
 
 @pytest.mark.asyncio
-async def test_trigger_workflow_creates_execution_record(mock_db_session, clean_registries):
+async def test_trigger_workflow_creates_execution_record(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test that triggering workflow creates execution record."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -215,7 +214,7 @@ async def test_trigger_workflow_creates_execution_record(mock_db_session, clean_
 
 
 @pytest.mark.asyncio
-async def test_trigger_workflow_queues_task(mock_db_session, clean_registries):
+async def test_trigger_workflow_queues_task(mock_db_session, mock_session_model, clean_registries):
     """Test that workflow trigger queues async task."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -238,7 +237,7 @@ async def test_trigger_workflow_queues_task(mock_db_session, clean_registries):
     # Track Celery task queuing
     with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(id="task_123")
-        result = WorkflowExecutionService.create_and_queue(
+        WorkflowExecutionService.create_and_queue(
             session_id=1,
             target="summary",
             db=mock_db_session,
@@ -249,7 +248,9 @@ async def test_trigger_workflow_queues_task(mock_db_session, clean_registries):
 
 
 @pytest.mark.asyncio
-async def test_trigger_workflow_returns_execution_id(mock_db_session, clean_registries):
+async def test_trigger_workflow_returns_execution_id(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test that trigger workflow returns execution ID."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -282,7 +283,7 @@ async def test_trigger_workflow_returns_execution_id(mock_db_session, clean_regi
 
 
 @pytest.mark.asyncio
-async def test_invalid_target_error_message(mock_db_session, clean_registries):
+async def test_invalid_target_error_message(mock_db_session, mock_session_model, clean_registries):
     """Test error message for invalid target."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -306,7 +307,9 @@ async def test_invalid_target_error_message(mock_db_session, clean_registries):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_workflow_executions(mock_db_session, clean_registries):
+async def test_concurrent_workflow_executions(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test that multiple workflows can be triggered concurrently."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -348,7 +351,9 @@ async def test_concurrent_workflow_executions(mock_db_session, clean_registries)
 
 
 @pytest.mark.asyncio
-async def test_workflow_with_special_characters_in_target(mock_db_session, clean_registries):
+async def test_workflow_with_special_characters_in_target(
+    mock_db_session, mock_session_model, clean_registries
+):
     """Test triggering workflow with special characters in target name."""
     # Register workflow with dash in name
     step = create_mock_step(identifier="my-step", dependencies=[])

@@ -1,7 +1,7 @@
 """Base class for workflow steps."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -35,7 +35,7 @@ class WorkflowStep(ABC):
 
     @property
     @abstractmethod
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         """List of step identifiers this step depends on (e.g., ['summary'])."""
         pass
 
@@ -81,8 +81,8 @@ class WorkflowStep(ABC):
         self,
         session_id: int,
         execution_id: int,
-        context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Execute the step: generate content AND persist to database.
 
@@ -105,7 +105,7 @@ class WorkflowStep(ABC):
         """
         from app.database.connection import SessionLocal
 
-        db: Optional[Session] = None
+        db: Session | None = None
         try:
             # Create database session for this step execution
             db = SessionLocal()
@@ -179,8 +179,8 @@ class WorkflowStep(ABC):
 
     @abstractmethod
     async def _generate(
-        self, session_id: int, db: Session, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, session_id: int, db: Session, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Generate content using LLM.
 
@@ -207,7 +207,7 @@ class WorkflowStep(ABC):
         session_id: int,
         execution_id: int,
         identifier: str,
-        content: Dict[str, Any],
+        content: dict[str, Any],
     ) -> None:
         """
         Save generated content to database.

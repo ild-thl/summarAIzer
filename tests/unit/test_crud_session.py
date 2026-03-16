@@ -177,13 +177,15 @@ class TestSessionCRUD:
         assert result is True
         assert session_crud.read(test_db, session_id) is None
 
-    def test_count_sessions(self, test_db, sample_session):
+    @pytest.mark.usefixtures("sample_session")
+    def test_count_sessions(self, test_db):
         """Test counting sessions."""
         count = session_crud.count(test_db)
 
         assert count >= 1
 
-    def test_count_sessions_by_event(self, test_db, sample_event, sample_session):
+    @pytest.mark.usefixtures("sample_session")
+    def test_count_sessions_by_event(self, test_db, sample_event):
         """Test counting sessions in an event."""
         count = session_crud.count_by_event(test_db, sample_event.id)
 
@@ -243,7 +245,7 @@ class TestSessionEventEmissions:
         )
 
         with patch.object(SessionEventBus, "emit") as mock_emit:
-            session = session_crud.create(test_db, session_create)
+            session_crud.create(test_db, session_create)
 
             # Verify event was NOT emitted
             mock_emit.assert_not_called()
@@ -268,7 +270,7 @@ class TestSessionEventEmissions:
 
         with patch.object(SessionEventBus, "emit") as mock_emit:
             update_data = SessionUpdate(status=SessionStatus.PUBLISHED)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify event WAS emitted
             mock_emit.assert_called_once()
@@ -301,7 +303,7 @@ class TestSessionEventEmissions:
 
             # Update other field, keep status as PUBLISHED
             update_data = SessionUpdate(title="Updated Title")
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify event was NOT emitted (no status change)
             mock_emit.assert_not_called()
@@ -338,10 +340,9 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_when_event_emitted(self, test_db, sample_event):
         """Test that the embedding handler is actually called when event is emitted."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from app.async_jobs.tasks import generate_session_embedding
-        from app.events import SessionEventBus
 
         now = datetime.utcnow()
         session_create = SessionCreate(
@@ -385,7 +386,7 @@ class TestSessionEventEmissions:
 
             # Update status from PUBLISHED to DRAFT
             update_data = SessionUpdate(status=SessionStatus.DRAFT)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify unpublish event WAS emitted
             mock_emit.assert_called_once()
@@ -396,10 +397,9 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_on_unpublish(self, test_db, sample_event):
         """Test that deletion handler is called when session is unpublished."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from app.async_jobs.tasks import delete_session_embedding
-        from app.events import SessionEventBus
 
         now = datetime.utcnow()
         # Create a published session
@@ -417,7 +417,7 @@ class TestSessionEventEmissions:
         with patch.object(delete_session_embedding, "delay") as mock_delay:
             # Update to draft to trigger unpublish event
             update_data = SessionUpdate(status=SessionStatus.DRAFT)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify the deletion task was queued
             mock_delay.assert_called_once_with(session.id)
@@ -494,10 +494,9 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_on_delete(self, test_db, sample_event):
         """Test that deletion handler is called when a published session is deleted."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         from app.async_jobs.tasks import delete_session_embedding
-        from app.events import SessionEventBus
 
         now = datetime.utcnow()
         # Create a published session

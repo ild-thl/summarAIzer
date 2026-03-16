@@ -1,7 +1,6 @@
 """CRUD operations for generated content."""
 
 from datetime import datetime
-from typing import List, Optional
 
 from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session as SQLSession
@@ -15,9 +14,9 @@ def create_content(
     identifier: str,
     content: str,
     content_type: str = "plain_text",
-    workflow_execution_id: Optional[int] = None,
-    created_by_user_id: Optional[int] = None,
-    meta_info: Optional[dict] = None,
+    workflow_execution_id: int | None = None,
+    created_by_user_id: int | None = None,
+    meta_info: dict | None = None,
 ) -> GeneratedContent:
     """Create new generated content record."""
     db_content = GeneratedContent(
@@ -41,9 +40,9 @@ def create_or_update_content(
     identifier: str,
     content: str,
     content_type: str = "plain_text",
-    workflow_execution_id: Optional[int] = None,
-    created_by_user_id: Optional[int] = None,
-    meta_info: Optional[dict] = None,
+    workflow_execution_id: int | None = None,
+    created_by_user_id: int | None = None,
+    meta_info: dict | None = None,
 ) -> GeneratedContent:
     """
     Create new content or update existing if already exists.
@@ -100,14 +99,14 @@ def create_or_update_content(
         )
 
 
-def get_content_by_id(db: SQLSession, content_id: int) -> Optional[GeneratedContent]:
+def get_content_by_id(db: SQLSession, content_id: int) -> GeneratedContent | None:
     """Get content by ID."""
     return db.query(GeneratedContent).filter(GeneratedContent.id == content_id).first()
 
 
 def get_content_by_identifier(
     db: SQLSession, session_id: int, identifier: str
-) -> Optional[GeneratedContent]:
+) -> GeneratedContent | None:
     """Get latest generated content for a session and identifier."""
     return (
         db.query(GeneratedContent)
@@ -123,8 +122,8 @@ def get_content_by_identifier(
 
 
 def get_content_list(
-    db: SQLSession, session_id: int, identifier: Optional[str] = None
-) -> List[GeneratedContent]:
+    db: SQLSession, session_id: int, identifier: str | None = None
+) -> list[GeneratedContent]:
     """List content for session, optionally filtered by identifier."""
     query = db.query(GeneratedContent).filter(GeneratedContent.session_id == session_id)
     if identifier:
@@ -132,7 +131,7 @@ def get_content_list(
     return query.order_by(desc(GeneratedContent.created_at)).all()
 
 
-def list_content_identifiers(db: SQLSession, session_id: int) -> List[str]:
+def list_content_identifiers(db: SQLSession, session_id: int) -> list[str]:
     """Get list of available identifiers for session."""
     contents = (
         db.query(GeneratedContent.identifier)
@@ -147,8 +146,8 @@ def update_content(
     db: SQLSession,
     content_id: int,
     content: str,
-    meta_info: Optional[dict] = None,
-) -> Optional[GeneratedContent]:
+    meta_info: dict | None = None,
+) -> GeneratedContent | None:
     """Update content (for manual edits)."""
     db_content = get_content_by_id(db, content_id)
     if db_content:
@@ -195,8 +194,8 @@ def create_workflow_execution(
     session_id: int,
     target: str,
     triggered_by: str = "user_triggered",
-    created_by_user_id: Optional[int] = None,
-    celery_task_id: Optional[str] = None,
+    created_by_user_id: int | None = None,
+    celery_task_id: str | None = None,
 ) -> WorkflowExecution:
     """Create new workflow execution record."""
     from app.database.models import WorkflowExecutionStatus
@@ -215,12 +214,12 @@ def create_workflow_execution(
     return db_exec
 
 
-def get_workflow_execution(db: SQLSession, execution_id: int) -> Optional[WorkflowExecution]:
+def get_workflow_execution(db: SQLSession, execution_id: int) -> WorkflowExecution | None:
     """Get workflow execution by ID."""
     return db.query(WorkflowExecution).filter(WorkflowExecution.id == execution_id).first()
 
 
-def get_workflow_execution_by_task_id(db: SQLSession, task_id: str) -> Optional[WorkflowExecution]:
+def get_workflow_execution_by_task_id(db: SQLSession, task_id: str) -> WorkflowExecution | None:
     """Get workflow execution by Celery task ID."""
     return db.query(WorkflowExecution).filter(WorkflowExecution.celery_task_id == task_id).first()
 
@@ -229,9 +228,9 @@ def update_workflow_status(
     db: SQLSession,
     execution_id: int,
     status: str,
-    error_message: Optional[str] = None,
-    completed_at: Optional[datetime] = None,
-) -> Optional[WorkflowExecution]:
+    error_message: str | None = None,
+    completed_at: datetime | None = None,
+) -> WorkflowExecution | None:
     """Update workflow execution status."""
     db_exec = get_workflow_execution(db, execution_id)
     if db_exec:
@@ -245,7 +244,7 @@ def update_workflow_status(
     return db_exec
 
 
-def get_workflow_executions_for_session(db: SQLSession, session_id: int) -> List[WorkflowExecution]:
+def get_workflow_executions_for_session(db: SQLSession, session_id: int) -> list[WorkflowExecution]:
     """Get all workflow executions for a session."""
     return (
         db.query(WorkflowExecution)

@@ -1,7 +1,5 @@
 """API routes for Session Content Management (sub-resource)."""
 
-from typing import List
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -19,7 +17,6 @@ from app.database.models import Session as SessionModel
 from app.database.models import User
 from app.schemas.content import (
     GeneratedContentCreate,
-    GeneratedContentListItem,
     GeneratedContentResponse,
     GeneratedContentUpdate,
     SessionContentListResponse,
@@ -108,7 +105,7 @@ async def create_content(
     session_id: int,
     identifier: str,
     content_in: GeneratedContentCreate,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -165,7 +162,7 @@ async def update_content(
     session_id: int,
     identifier: str,
     content_in: GeneratedContentUpdate,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Update generated content (owner only, e.g., manual edits after generation)."""
@@ -200,7 +197,7 @@ async def update_content(
 async def delete_content(
     session_id: int,
     identifier: str,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Delete content with specific identifier (owner only)."""

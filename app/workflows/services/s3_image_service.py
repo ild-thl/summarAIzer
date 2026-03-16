@@ -1,13 +1,9 @@
 """S3 image storage service for generated images."""
 
-import io
-import logging
 from datetime import datetime
-from pathlib import Path
 
 import boto3
 import structlog
-from botocore.exceptions import ClientError
 
 from app.config.settings import get_settings
 

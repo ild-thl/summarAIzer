@@ -1,7 +1,6 @@
 """Security utilities for input validation and SQL injection prevention."""
 
 import re
-from typing import Any
 
 
 class SecurityValidator:

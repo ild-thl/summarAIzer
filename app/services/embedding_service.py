@@ -1,7 +1,5 @@
 """Embedding service for semantic search using configurable embeddings and Chroma storage."""
 
-from typing import List, Optional, Tuple
-
 import chromadb
 import structlog
 from chromadb.config import Settings as ChromaSettings
@@ -22,14 +20,14 @@ class EmbeddingService:
     def __init__(
         self,
         embedding_provider: str = "huggingface",
-        embedding_api_key: Optional[str] = None,
-        embedding_api_base_url: Optional[str] = None,
-        embedding_model_name: Optional[str] = None,
+        embedding_api_key: str | None = None,
+        embedding_api_base_url: str | None = None,
+        embedding_model_name: str | None = None,
         chroma_host: str = "localhost",
         chroma_port: int = 8000,
         chroma_tenant: str = "default_tenant",
-        chroma_credentials: Optional[str] = None,
-        chroma_provider: Optional[str] = None,
+        chroma_credentials: str | None = None,
+        chroma_provider: str | None = None,
         embedding_dimension: int = 768,
     ):
         """
@@ -89,7 +87,6 @@ class EmbeddingService:
                 )
 
             # Initialize Chroma client
-            chroma_url = f"http://{chroma_host}:{chroma_port}"
             if chroma_credentials and chroma_provider:
                 logger.info(
                     "chroma_client_auth_enabled",
@@ -185,7 +182,7 @@ class EmbeddingService:
                 )
                 raise
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         """
         Generate embedding for a query/document text.
 
@@ -237,7 +234,7 @@ class EmbeddingService:
             )
             raise
 
-    def _prepare_text(self, title: str, fields: Optional[List[Optional[str]]] = None) -> str:
+    def _prepare_text(self, title: str, fields: list[str | None] | None = None) -> str:
         """
         Generic text preparation for embedding.
 
@@ -259,8 +256,8 @@ class EmbeddingService:
     def _prepare_session_text(
         self,
         title: str,
-        short_description: Optional[str] = None,
-        summary: Optional[str] = None,
+        short_description: str | None = None,
+        summary: str | None = None,
     ) -> str:
         """
         Prepare text for session embedding.
@@ -309,7 +306,7 @@ class EmbeddingService:
         return True
 
     async def store_session_embedding(
-        self, session_id: int, embedding: List[float], text: str
+        self, session_id: int, embedding: list[float], text: str
     ) -> None:
         """
         Store session embedding in Chroma.
@@ -343,8 +340,8 @@ class EmbeddingService:
             raise
 
     async def search_similar_sessions(
-        self, embedding: List[float], limit: int = 10
-    ) -> List[Tuple[int, float, str]]:
+        self, embedding: list[float], limit: int = 10
+    ) -> list[tuple[int, float, str]]:
         """
         Search for similar sessions in Chroma.
 

@@ -1,12 +1,9 @@
 """API routes for Event management."""
 
-from typing import List, Optional
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from starlette.status import (
-    HTTP_200_OK,
     HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
     HTTP_404_NOT_FOUND,
@@ -24,12 +21,10 @@ from app.schemas.session import (
     EventUpdate,
     SessionCreate,
     SessionResponse,
-    SessionUpdate,
 )
 from app.security.auth import (
     get_current_user,
     require_event_owner,
-    require_session_owner,
 )
 
 logger = structlog.get_logger()
@@ -87,7 +82,7 @@ async def get_event_by_uri(uri: str, db: Session = Depends(get_db)):
     return db_event
 
 
-@router.get("", response_model=List[EventResponse])
+@router.get("", response_model=list[EventResponse])
 async def list_events(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
@@ -137,7 +132,7 @@ async def update_event(
 @router.delete("/{event_id}", status_code=HTTP_204_NO_CONTENT)
 async def delete_event(
     event_id: int,
-    event: Event = Depends(require_event_owner),
+    _: Event = Depends(require_event_owner),
     db: Session = Depends(get_db),
 ):
     """Delete an event and all associated sessions (owner only)."""
@@ -285,7 +280,7 @@ async def refresh_event_embedding(
     }
 
 
-@router.get("/search/similar", response_model=List[EventResponse])
+@router.get("/search/similar", response_model=list[EventResponse])
 async def search_similar_events(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
@@ -331,10 +326,10 @@ async def search_similar_events(
         return [EventResponse.model_validate(e) for e in events]
 
     except InvalidEmbeddingTextError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except EmbeddingError as e:
         logger.error("event_search_embedding_error", error=str(e))
-        raise HTTPException(status_code=503, detail="Search service unavailable")
+        raise HTTPException(status_code=503, detail="Search service unavailable") from e
     except HTTPException:
         raise
     except Exception as e:
@@ -348,4 +343,4 @@ async def search_similar_events(
         raise HTTPException(
             status_code=500,
             detail="Similarity search failed",
-        )
+        ) from e

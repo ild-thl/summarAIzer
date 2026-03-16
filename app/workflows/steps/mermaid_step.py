@@ -1,13 +1,14 @@
 """Mermaid diagram step - creates structured Mermaid mindmaps from event content."""
 
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
+from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
@@ -26,7 +27,7 @@ class MermaidStep(PromptTemplate):
         return "mermaid"
 
     @property
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         """Depends on summary for context."""
         return ["summary"]
 
@@ -39,7 +40,7 @@ class MermaidStep(PromptTemplate):
             top_p=0.9,
         )
 
-    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate mermaid messages with context injection."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
 
@@ -87,7 +88,7 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
             ),
         ]
 
-    def process_response(self, response: Any) -> Dict[str, Any]:
+    def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response to mermaid output."""
         mermaid_code = response.content if hasattr(response, "content") else str(response)
 
@@ -113,7 +114,5 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
 
 
 # Auto-register this step when imported
-from app.workflows.execution_context import StepRegistry
-
 _mermaid_step = MermaidStep()
 StepRegistry.register(_mermaid_step)

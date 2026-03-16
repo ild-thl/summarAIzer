@@ -33,7 +33,7 @@ class MyWorkflow(BaseWorkflow):
     @property
     def workflow_type(self) -> str:
         return "my_workflow"
-    
+
     def build_graph(self):
         builder = StateGraph(GenerationState)
         builder.add_node("step1", create_step_node("step1"))

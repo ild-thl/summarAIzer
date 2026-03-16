@@ -1,16 +1,11 @@
 """Tests for content management and workflow endpoints."""
 
-import json
 from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_200_OK, HTTP_201_CREATED
-
-from app.crud import generated_content as content_crud
-from app.crud.session import session_crud
-from app.database.models import GeneratedContent, WorkflowExecution
 
 
 @pytest.fixture
@@ -62,7 +57,7 @@ class TestContentEndpoints:
         assert data["workflow_execution_id"] is None
         assert "AI" in data["content"]
 
-    def test_get_available_content(self, client: TestClient, session_with_event, test_db: Session):
+    def test_get_available_content(self, client: TestClient, session_with_event):
         """Test retrieving available content identifiers."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
@@ -152,7 +147,7 @@ class TestContentEndpoints:
         data = response.json()
         assert data["content"] == updated_content
 
-    def test_delete_content(self, client: TestClient, session_with_event, test_db: Session):
+    def test_delete_content(self, client: TestClient, session_with_event):
         """Test deleting content."""
         session_data, plain_key = session_with_event
         session_id = session_data["id"]

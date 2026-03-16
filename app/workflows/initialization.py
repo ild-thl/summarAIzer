@@ -17,9 +17,7 @@ def initialize_workflows():
     logger.info("initializing_workflow_execution_system")
 
     # Lazy imports to avoid circular imports at module load time
-    from app.workflows import steps
     from app.workflows.execution_context import StepRegistry, WorkflowRegistry
-    from app.workflows.flows import TalkWorkflow
 
     # Log registered steps
     registered_steps = StepRegistry.get_all_steps()

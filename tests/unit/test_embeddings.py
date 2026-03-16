@@ -8,8 +8,6 @@ Tests cover:
 - Generic/refactored components: unified embedding and search infrastructure
 """
 
-import asyncio
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -41,17 +39,19 @@ class TestEmbeddingService:
     @pytest.fixture
     def embedding_service(self, mock_chroma_client):
         """Create EmbeddingService with mocked Chroma and backends."""
-        with patch("chromadb.HttpClient", return_value=mock_chroma_client):
-            with patch("app.services.embedding_service.create_embeddings_backend"):
-                service = EmbeddingService(
-                    embedding_provider="huggingface",
-                    embedding_api_key="test-key",
-                    embedding_api_base_url="http://test",
-                    chroma_host="localhost",
-                    chroma_port=8000,
-                    chroma_tenant="test_tenant",
-                    embedding_dimension=768,
-                )
+        with (
+            patch("chromadb.HttpClient", return_value=mock_chroma_client),
+            patch("app.services.embedding_service.create_embeddings_backend"),
+        ):
+            service = EmbeddingService(
+                embedding_provider="huggingface",
+                embedding_api_key="test-key",
+                embedding_api_base_url="http://test",
+                chroma_host="localhost",
+                chroma_port=8000,
+                chroma_tenant="test_tenant",
+                embedding_dimension=768,
+            )
         return service
 
     @pytest.mark.asyncio
@@ -276,22 +276,23 @@ class TestEmbeddingSearchService:
         assert results[0].event_id == 100
 
     @pytest.mark.asyncio
-    async def test_search_sessions_invalid_query(self, search_service, mock_embedding_service):
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_search_sessions_invalid_query(self, search_service):
         """Test search with invalid query raises InvalidEmbeddingTextError."""
         from app.services.embedding_exceptions import InvalidEmbeddingTextError
 
-        with patch(
-            "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
-            return_value=False,
+        with (
+            patch(
+                "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
+                return_value=False,
+            ),
+            pytest.raises(InvalidEmbeddingTextError, match="Query text is invalid or too long"),
         ):
-            with pytest.raises(
-                InvalidEmbeddingTextError, match="Query text is invalid or too long"
-            ):
-                await search_service.search_sessions(
-                    query="x" * 9000,  # Too long
-                    db=Mock(),
-                    limit=10,
-                )
+            await search_service.search_sessions(
+                query="x" * 9000,  # Too long
+                db=Mock(),
+                limit=10,
+            )
 
     @pytest.mark.asyncio
     async def test_search_events_success(

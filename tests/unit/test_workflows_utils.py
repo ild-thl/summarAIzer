@@ -1,14 +1,13 @@
 """Test utilities and fixtures for workflow testing."""
 
 import asyncio
-from typing import Any, Dict, List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import Any, ClassVar
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.database.models import Session as SessionModel
-from app.workflows.execution_context import GenerationState, StepRegistry, WorkflowRegistry
+from app.workflows.execution_context import GenerationState
 from app.workflows.steps.base_step import WorkflowStep
 
 
@@ -16,20 +15,18 @@ class MockStep(WorkflowStep):
     """Mock step for testing."""
 
     _identifier: str = "mock_step"
-    _dependencies: List[str] = []
-    _generate_result: Dict[str, Any] = {}
+    _dependencies: ClassVar[list[str]] = []
+    _generate_result: ClassVar[dict[str, Any]] = {}
 
     @property
     def identifier(self) -> str:
         return self._identifier
 
     @property
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         return self._dependencies
 
-    async def _generate(
-        self, session_id: int, db: Session, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def _generate(self, session_id: int, _, context: dict[str, Any]) -> dict[str, Any]:
         """Return predefined result or raise error if configured."""
         if callable(self._generate_result):
             return self._generate_result(session_id, context)
@@ -38,8 +35,8 @@ class MockStep(WorkflowStep):
 
 def create_mock_step(
     identifier: str,
-    dependencies: List[str] = None,
-    generate_result: Dict[str, Any] = None,
+    dependencies: list[str] | None = None,
+    generate_result: dict[str, Any] | None = None,
 ) -> MockStep:
     """
     Create a mock step for testing.
@@ -63,63 +60,12 @@ def create_mock_step(
     return step
 
 
-@pytest.fixture
-def mock_db_session():
-    """Create a mock database session."""
-    db = Mock(spec=Session)
-    db.query = Mock()
-    db.add = Mock()
-    db.commit = Mock()
-    db.rollback = Mock()
-
-    # Configure refresh to assign an ID if the object doesn't have one
-    def refresh_side_effect(obj):
-        if hasattr(obj, "id") and obj.id is None:
-            obj.id = 1  # Assign mock ID
-
-    db.refresh = Mock(side_effect=refresh_side_effect)
-    return db
+# NOTE: mock_db_session, mock_session_model, and clean_registries fixtures
+# are defined in conftest.py to serve as central fixtures for all tests.
+# They are automatically available to all test modules.
 
 
-@pytest.fixture
-def mock_session_model():
-    """Create a mock Session database model."""
-    session = Mock(spec=SessionModel)
-    session.id = 1
-    session.title = "Test Session"
-    session.speakers = ["Speaker 1", "Speaker 2"]
-    session.categories = ["Category 1"]
-    session.duration = 60
-    return session
-
-
-@pytest.fixture
-def clean_registries():
-    """Clear and restore registries for testing."""
-    # Save original state
-    original_steps = StepRegistry.get_all_steps().copy()
-    original_workflow_classes = WorkflowRegistry.get_all_workflow_classes().copy()
-
-    # Clear registries
-    StepRegistry.clear()
-    WorkflowRegistry.clear()
-
-    yield
-
-    # Restore original state
-    StepRegistry.clear()
-    WorkflowRegistry.clear()
-
-    # Re-register original steps
-    for step_id, step in original_steps.items():
-        StepRegistry.register(step)
-
-    # Re-register original workflow classes
-    for workflow_name, workflow_class in original_workflow_classes.items():
-        WorkflowRegistry.register_workflow_class(workflow_name, workflow_class)
-
-
-def create_test_workflow(workflow_name: str, step_ids: List[str]):
+def create_test_workflow(workflow_name: str, step_ids: list[str]):
     """
     Create a simple test workflow class.
 

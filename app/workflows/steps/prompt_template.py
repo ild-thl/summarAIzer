@@ -1,14 +1,13 @@
 """Template base class for prompt-based workflow steps."""
 
 from abc import abstractmethod
-from typing import Any, Dict, List
+from typing import Any
 
 import structlog
 from langchain_core.messages import BaseMessage
 from sqlalchemy.orm import Session
 
 from app.database.models import Session as SessionModel
-from app.workflows.chat_models import ChatModelConfig
 from app.workflows.steps.base_step import WorkflowStep
 
 logger = structlog.get_logger()
@@ -33,7 +32,7 @@ class PromptTemplate(WorkflowStep):
     """
 
     @abstractmethod
-    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """
         Generate LLM messages for this step with context injection.
 
@@ -50,7 +49,7 @@ class PromptTemplate(WorkflowStep):
         pass
 
     @abstractmethod
-    def process_response(self, response: Any) -> Dict[str, Any]:
+    def process_response(self, response: Any) -> dict[str, Any]:
         """
         Process LLM response into step output.
 
@@ -63,8 +62,8 @@ class PromptTemplate(WorkflowStep):
         pass
 
     async def _invoke_and_process(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, session: SessionModel, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Invoke LLM and process response.
 
@@ -97,8 +96,8 @@ class PromptTemplate(WorkflowStep):
         return result
 
     async def _generate(
-        self, session_id: int, db: Session, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, session_id: int, db: Session, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Execute prompt-based generation.
 

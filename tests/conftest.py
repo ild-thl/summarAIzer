@@ -2,18 +2,8 @@
 
 # CRITICAL: Mock boto3 BEFORE any app imports to prevent S3 client initialization
 # during module import time (ImageStep registers itself at module load)
-import sys
-from unittest import mock
-
-_boto3_patcher = mock.patch("boto3.client")
-_mock_boto3 = _boto3_patcher.start()
-# Configure the mock to return a safe mock client
-_mock_s3_client = mock.MagicMock()
-_mock_s3_client.put_object.return_value = {}
-_mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
-_mock_boto3.return_value = _mock_s3_client
-
 from datetime import datetime, timedelta
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +25,14 @@ from app.database.models import (
     Session as SessionModel,
 )
 from main import app
+
+_boto3_patcher = mock.patch("boto3.client")
+_mock_boto3 = _boto3_patcher.start()
+# Configure the mock to return a safe mock client
+_mock_s3_client = mock.MagicMock()
+_mock_s3_client.put_object.return_value = {}
+_mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
+_mock_boto3.return_value = _mock_s3_client
 
 
 def pytest_configure(config):
@@ -308,3 +306,66 @@ def published_session(test_db, sample_event, sample_user):
     test_db.commit()
     test_db.refresh(session)
     return session
+
+
+@pytest.fixture
+def mock_db_session():
+    """Create a mock database session with common methods and refresh side effect."""
+    from sqlalchemy.orm import Session as SQLSession
+
+    db = mock.Mock(spec=SQLSession)
+    db.query = mock.Mock()
+    db.add = mock.Mock()
+    db.commit = mock.Mock()
+    db.rollback = mock.Mock()
+
+    # Configure refresh to assign an ID if the object doesn't have one
+    def refresh_side_effect(obj):
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = 1  # Assign mock ID
+
+    db.refresh = mock.Mock(side_effect=refresh_side_effect)
+    return db
+
+
+@pytest.fixture
+def mock_session_model():
+    """Create a mock Session database model with realistic test data."""
+    session_mock = mock.Mock(spec=SessionModel)
+    session_mock.id = 1
+    session_mock.title = "Test Session"
+    session_mock.speakers = ["Speaker 1", "Speaker 2"]
+    session_mock.categories = ["Category 1"]
+    session_mock.duration = 60
+    return session_mock
+
+
+@pytest.fixture
+def clean_registries():
+    """Clean step and workflow registries before and after each test.
+
+    Saves and restores original state to avoid contaminating other tests.
+    """
+    from app.workflows.execution_context import StepRegistry, WorkflowRegistry
+
+    # Save original state
+    original_steps = StepRegistry.get_all_steps().copy()
+    original_workflow_classes = WorkflowRegistry.get_all_workflow_classes().copy()
+
+    # Clear before test
+    StepRegistry.clear()
+    WorkflowRegistry.clear()
+
+    yield
+
+    # Restore original state
+    StepRegistry.clear()
+    WorkflowRegistry.clear()
+
+    # Re-register original steps
+    for _, step in original_steps.items():
+        StepRegistry.register(step)
+
+    # Re-register original workflow classes
+    for workflow_name, workflow_class in original_workflow_classes.items():
+        WorkflowRegistry.register_workflow_class(workflow_name, workflow_class)

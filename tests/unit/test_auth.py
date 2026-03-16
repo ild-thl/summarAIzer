@@ -3,9 +3,7 @@
 import hashlib
 from datetime import datetime, timedelta
 
-import pytest
 from starlette.status import (
-    HTTP_200_OK,
     HTTP_201_CREATED,
     HTTP_401_UNAUTHORIZED,
     HTTP_403_FORBIDDEN,
@@ -145,7 +143,7 @@ class TestAuthenticationMiddleware:
         )
         assert response.status_code == HTTP_401_UNAUTHORIZED
 
-    def test_valid_authentication(self, client, sample_user, sample_api_key):
+    def test_valid_authentication(self, client, sample_api_key):
         """Test successful authentication."""
         api_key, plain_key = sample_api_key
 
@@ -249,7 +247,6 @@ class TestEventOwnershipAndCreation:
         self,
         client,
         test_db,
-        sample_user,
         sample_api_key,
     ):
         """Test that updating an event requires ownership."""
@@ -297,7 +294,6 @@ class TestEventOwnershipAndCreation:
         self,
         client,
         test_db,
-        sample_user,
         sample_api_key,
     ):
         """Test that deleting an event requires ownership."""

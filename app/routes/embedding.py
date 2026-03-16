@@ -1,7 +1,5 @@
 """API routes for Embedding and Semantic Search (optional feature)."""
 
-from typing import List, Optional
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -70,11 +68,11 @@ async def refresh_session_embedding(
     }
 
 
-@router.get("/search/similar", response_model=List[SessionResponse])
+@router.get("/search/similar", response_model=list[SessionResponse])
 async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
-    event_id: Optional[int] = Query(None, description="Filter by event ID"),
+    event_id: int | None = Query(None, description="Filter by event ID"),
     db: Session = Depends(get_db),
 ):
     """
@@ -120,10 +118,10 @@ async def search_similar_sessions(
         return [SessionResponse.model_validate(s) for s in sessions]
 
     except InvalidEmbeddingTextError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except EmbeddingError as e:
         logger.error("session_search_embedding_error", error=str(e))
-        raise HTTPException(status_code=503, detail="Search service unavailable")
+        raise HTTPException(status_code=503, detail="Search service unavailable") from e
     except HTTPException:
         raise
     except Exception as e:
@@ -136,4 +134,4 @@ async def search_similar_sessions(
         raise HTTPException(
             status_code=500,
             detail="Similarity search failed",
-        )
+        ) from e

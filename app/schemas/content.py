@@ -1,7 +1,7 @@
 """Pydantic schemas for content and workflow operations."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,7 +14,7 @@ class GeneratedContentCreate(BaseModel):
         default="plain_text",
         description="Content format type (e.g., 'plain_text', 'markdown', 'json_array')",
     )
-    meta_info: Optional[Dict[str, Any]] = Field(
+    meta_info: dict[str, Any] | None = Field(
         default=None,
         description="Optional metadata (e.g., model, tokens used, source)",
     )
@@ -24,7 +24,7 @@ class GeneratedContentUpdate(BaseModel):
     """Schema for updating existing content (identifier is in URL, not body)."""
 
     content: str = Field(..., description="The updated content payload")
-    meta_info: Optional[Dict[str, Any]] = Field(
+    meta_info: dict[str, Any] | None = Field(
         default=None,
         description="Optional metadata to update",
     )
@@ -40,9 +40,9 @@ class GeneratedContentResponse(BaseModel):
     identifier: str
     content_type: str
     content: str
-    workflow_execution_id: Optional[int] = None
-    meta_info: Optional[Dict[str, Any]] = None
-    created_by_user_id: Optional[int] = None
+    workflow_execution_id: int | None = None
+    meta_info: dict[str, Any] | None = None
+    created_by_user_id: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -55,9 +55,9 @@ class GeneratedContentListItem(BaseModel):
     id: int
     identifier: str
     content_type: str
-    workflow_execution_id: Optional[int] = None
+    workflow_execution_id: int | None = None
     created_at: datetime
-    created_by_user_id: Optional[int] = None
+    created_by_user_id: int | None = None
 
 
 class WorkflowExecutionCreate(BaseModel):
@@ -80,9 +80,9 @@ class WorkflowStatusResponse(BaseModel):
 
     status: str  # "queued", "running", "completed", "failed"
     created_at: datetime
-    completed_at: Optional[datetime] = None
-    error_message: Optional[str] = None
-    created_content: List[GeneratedContentListItem] = Field(
+    completed_at: datetime | None = None
+    error_message: str | None = None
+    created_content: list[GeneratedContentListItem] = Field(
         default_factory=list,
         description="Content items created by workflow (populated when completed)",
     )
@@ -91,7 +91,7 @@ class WorkflowStatusResponse(BaseModel):
 class SessionContentListResponse(BaseModel):
     """Session response with available content identifiers."""
 
-    available_content: List[str] = Field(
+    available_content: list[str] = Field(
         default_factory=list,
         description="List of available content identifiers for session",
     )
@@ -101,7 +101,7 @@ class ContentPublishRequest(BaseModel):
     """Request to publish/approve generated content (future feature)."""
 
     identifier: str = Field(..., description="Content identifier to publish")
-    content_id: Optional[int] = Field(
+    content_id: int | None = Field(
         None,
         description="Specific generated_content ID to publish (if multiple versions exist)",
     )

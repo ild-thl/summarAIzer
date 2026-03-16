@@ -171,7 +171,8 @@ class TestEventCRUD:
 
         assert result is False
 
-    def test_count_events(self, test_db, sample_event):
+    @pytest.mark.usefixtures("sample_event")
+    def test_count_events(self, test_db):
         """Test counting events."""
         count = event_crud.count(test_db)
 

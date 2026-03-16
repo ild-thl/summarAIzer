@@ -5,7 +5,7 @@ Node functions handle extracting context from state, executing the step, and man
 logging and error handling.
 """
 
-from typing import Any, Callable, Dict
+from collections.abc import Callable
 
 import structlog
 
@@ -39,7 +39,7 @@ def create_step_node(step_identifier: str) -> Callable:
     # Validate step exists at creation time
     step = StepRegistry.get_step(step_identifier)
 
-    async def step_node(state: GenerationState) -> Dict[str, str]:
+    async def step_node(state: GenerationState) -> dict[str, str]:
         """
         Execute a step and update state with result.
 

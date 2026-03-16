@@ -1,16 +1,14 @@
 """Combined step for generating image descriptions and images."""
 
-import json
-import logging
-from typing import Any, Dict, List
+from typing import Any
 
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from sqlalchemy.orm import Session
 
 from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
+from app.workflows.execution_context import StepRegistry
 from app.workflows.services.image_generation_service import ImageGenerationService
 from app.workflows.services.s3_image_service import S3ImageService
 from app.workflows.steps.prompt_template import PromptTemplate
@@ -41,14 +39,14 @@ class ImageStep(PromptTemplate):
         return "image"
 
     @property
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         """Depends on summary for content context."""
         return ["summary"]
 
     def __init__(
         self,
-        api_url: str = None,
-        api_key: str = None,
+        api_url: str | None = None,
+        api_key: str | None = None,
         model: str = "flux",
         width: int = 1024,
         height: int = 768,
@@ -96,7 +94,7 @@ class ImageStep(PromptTemplate):
             top_p=0.95,
         )
 
-    def get_messages(self, session: SessionModel, context: Dict[str, Any]) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate image description prompt messages."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
         categories = ", ".join(session.categories) if session.categories else "General"
@@ -129,20 +127,15 @@ Create a concise English prompt for a high-quality visualization image that repr
             ),
         ]
 
-    def process_response(self, response: Any) -> Dict[str, Any]:
+    def process_response(self, response: Any) -> dict[str, Any]:
         """Extract and clean image description from LLM response."""
         image_prompt = response.content if hasattr(response, "content") else str(response)
-
-        # Remove unnecessary quotes or backticks if present
-        image_prompt = image_prompt.strip().strip('"').strip("'")
-        if image_prompt.startswith("```"):
-            image_prompt = image_prompt.strip("```").strip()
 
         return image_prompt
 
     async def _invoke_and_process(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, session: SessionModel, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Override to combine image description generation and image creation.
 
@@ -292,7 +285,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     step_name="generated_image",
                 )
             except Exception as upload_error:
-                error_msg = f"Failed to upload image to S3: {str(upload_error)}"
+                error_msg = f"Failed to upload image to S3: {upload_error!s}"
                 logger.error(
                     "s3_upload_failed",
                     session_id=session.id,
@@ -332,7 +325,7 @@ Create a concise English prompt for a high-quality visualization image that repr
             }
 
         except Exception as e:
-            error_msg = f"Unexpected error in image generation: {str(e)}"
+            error_msg = f"Unexpected error in image generation: {e!s}"
             logger.error(
                 "image_step_failed",
                 session_id=session.id,
@@ -355,7 +348,5 @@ Create a concise English prompt for a high-quality visualization image that repr
 
 
 # Auto-register this step when imported
-from app.workflows.execution_context import StepRegistry
-
 _image_step = ImageStep()
 StepRegistry.register(_image_step)
