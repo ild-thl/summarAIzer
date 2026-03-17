@@ -230,10 +230,10 @@ graph TB
     
     style API fill:#ADD8E6,stroke:#333,color:#000
     style Redis fill:#FFB6C1,stroke:#333,color:#000
-    style Worker fill:#90EE90,stroke:#333,color:#000
-    style Postgres fill:#87CEEB,stroke:#333,color:#000
+    style Worker fill:#ADD8E6,stroke:#333,color:#000
+    style Postgres fill:#E8E8E8,stroke:#333,color:#000
     style Chroma fill:#E8E8E8,stroke:#333,color:#000
-    style Client fill:#FFD700,stroke:#333,color:#000
+    style Client fill:#90EE90,stroke:#333,color:#000
 ```
 
 ### Workflow Execution
