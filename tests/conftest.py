@@ -1,7 +1,5 @@
 """Pytest configuration and fixtures."""
 
-# CRITICAL: Mock boto3 BEFORE any app imports to prevent S3 client initialization
-# during module import time (ImageStep registers itself at module load)
 from datetime import datetime, timedelta
 from unittest import mock
 
@@ -26,24 +24,37 @@ from app.database.models import (
 )
 from main import app
 
-_boto3_patcher = mock.patch("boto3.client")
-_mock_boto3 = _boto3_patcher.start()
-# Configure the mock to return a safe mock client
-_mock_s3_client = mock.MagicMock()
-_mock_s3_client.put_object.return_value = {}
-_mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
-_mock_boto3.return_value = _mock_s3_client
+# Global reference to boto3 patcher for lifecycle management
+_boto3_patcher = None
 
 
 def pytest_configure(config):
-    """Ensure boto3 mock stays active for entire test session."""
-    # The mock started at module level continues throughout all tests
-    pass
+    """
+    Configure pytest session.
+
+    Sets up mocks and ensures boto3 client initialization is mocked
+    before any app imports that depend on S3 services.
+    """
+    global _boto3_patcher
+
+    # Mock boto3.client before any S3 service initialization
+    # This allows S3ImageService to defer client creation via lazy property
+    _boto3_patcher = mock.patch("boto3.client")
+    mock_boto3 = _boto3_patcher.start()
+
+    # Configure the mock to return a safe mock S3 client
+    mock_s3_client = mock.MagicMock()
+    mock_s3_client.put_object.return_value = {}
+    mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
+    mock_boto3.return_value = mock_s3_client
 
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up boto3 mock after tests complete."""
-    _boto3_patcher.stop()
+    global _boto3_patcher
+    if _boto3_patcher is not None:
+        _boto3_patcher.stop()
+        _boto3_patcher = None
 
 
 @pytest.fixture(autouse=True)

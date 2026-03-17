@@ -18,7 +18,7 @@ class S3ImageService:
     """
 
     def __init__(self):
-        """Initialize S3 client with configuration."""
+        """Initialize S3 service configuration (defer client creation)."""
         settings = get_settings()
 
         self.bucket = settings.aws_bucket
@@ -39,17 +39,8 @@ class S3ImageService:
                 endpoint_url=bool(self.endpoint_url),
             )
 
-        # Initialize S3 client
-        self.s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=self.access_key,
-            aws_secret_access_key=self.secret_key,
-            region_name=self.region,
-            endpoint_url=self.endpoint_url,
-            config=boto3.session.Config(
-                s3={"addressing_style": "path" if self.use_path_style else "virtual"}
-            ),
-        )
+        # Defer S3 client initialization until first use (allows mocking in tests)
+        self._s3_client = None
 
         logger.info(
             "s3_service_initialized",
@@ -57,6 +48,22 @@ class S3ImageService:
             endpoint=self.endpoint_url,
             use_path_style=self.use_path_style,
         )
+
+    @property
+    def s3_client(self):
+        """Lazy initialization of S3 client on first use."""
+        if self._s3_client is None:
+            self._s3_client = boto3.client(
+                "s3",
+                aws_access_key_id=self.access_key,
+                aws_secret_access_key=self.secret_key,
+                region_name=self.region,
+                endpoint_url=self.endpoint_url,
+                config=boto3.session.Config(
+                    s3={"addressing_style": "path" if self.use_path_style else "virtual"}
+                ),
+            )
+        return self._s3_client
 
     def upload_image_from_base64(
         self, base64_data: str, session_id: int, step_name: str = "image"
