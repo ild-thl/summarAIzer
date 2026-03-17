@@ -8,16 +8,14 @@ Tests cover:
 - Generic/refactored components: unified embedding and search infrastructure
 """
 
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-import asyncio
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime
-
 from sqlalchemy.orm import Session
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_search_service import EmbeddingSearchService
-from app.database.models import SessionStatus, EventStatus
 
+from app.database.models import EventStatus, SessionStatus
+from app.services.embedding_search_service import EmbeddingSearchService
+from app.services.embedding_service import EmbeddingService
 
 # ============================================================================
 # EmbeddingService Tests
@@ -41,17 +39,19 @@ class TestEmbeddingService:
     @pytest.fixture
     def embedding_service(self, mock_chroma_client):
         """Create EmbeddingService with mocked Chroma and backends."""
-        with patch("chromadb.HttpClient", return_value=mock_chroma_client):
-            with patch("app.services.embedding_service.create_embeddings_backend"):
-                service = EmbeddingService(
-                    embedding_provider="huggingface",
-                    embedding_api_key="test-key",
-                    embedding_api_base_url="http://test",
-                    chroma_host="localhost",
-                    chroma_port=8000,
-                    chroma_tenant="test_tenant",
-                    embedding_dimension=768,
-                )
+        with (
+            patch("chromadb.HttpClient", return_value=mock_chroma_client),
+            patch("app.services.embedding_service.create_embeddings_backend"),
+        ):
+            service = EmbeddingService(
+                embedding_provider="huggingface",
+                embedding_api_key="test-key",
+                embedding_api_base_url="http://test",
+                chroma_host="localhost",
+                chroma_port=8000,
+                chroma_tenant="test_tenant",
+                embedding_dimension=768,
+            )
         return service
 
     @pytest.mark.asyncio
@@ -59,9 +59,7 @@ class TestEmbeddingService:
         """Test successful embedding generation."""
         # Mock the OpenAI embeddings
         test_embedding = [0.1] * 768
-        embedding_service.embeddings.aembed_query = AsyncMock(
-            return_value=test_embedding
-        )
+        embedding_service.embeddings.aembed_query = AsyncMock(return_value=test_embedding)
 
         result = await embedding_service.embed_query("test query")
 
@@ -88,9 +86,7 @@ class TestEmbeddingService:
         session_id = 123
         text = "test session text"
 
-        await embedding_service.store_session_embedding(
-            session_id, test_embedding, text
-        )
+        await embedding_service.store_session_embedding(session_id, test_embedding, text)
 
         # Verify Chroma upsert was called with correct data
         embedding_service.sessions_collection.upsert.assert_called_once()
@@ -108,13 +104,9 @@ class TestEmbeddingService:
             "distances": [[0.1, 0.3]],
             "documents": [["session 1 text", "session 2 text"]],
         }
-        embedding_service.sessions_collection.query = MagicMock(
-            return_value=mock_results
-        )
+        embedding_service.sessions_collection.query = MagicMock(return_value=mock_results)
 
-        results = await embedding_service.search_similar_sessions(
-            test_embedding, limit=2
-        )
+        results = await embedding_service.search_similar_sessions(test_embedding, limit=2)
 
         # Verify results: (session_id, similarity_score, text)
         assert len(results) == 2
@@ -284,24 +276,23 @@ class TestEmbeddingSearchService:
         assert results[0].event_id == 100
 
     @pytest.mark.asyncio
-    async def test_search_sessions_invalid_query(
-        self, search_service, mock_embedding_service
-    ):
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_search_sessions_invalid_query(self, search_service):
         """Test search with invalid query raises InvalidEmbeddingTextError."""
         from app.services.embedding_exceptions import InvalidEmbeddingTextError
 
-        with patch(
-            "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
-            return_value=False,
+        with (
+            patch(
+                "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
+                return_value=False,
+            ),
+            pytest.raises(InvalidEmbeddingTextError, match="Query text is invalid or too long"),
         ):
-            with pytest.raises(
-                InvalidEmbeddingTextError, match="Query text is invalid or too long"
-            ):
-                await search_service.search_sessions(
-                    query="x" * 9000,  # Too long
-                    db=Mock(),
-                    limit=10,
-                )
+            await search_service.search_sessions(
+                query="x" * 9000,  # Too long
+                db=Mock(),
+                limit=10,
+            )
 
     @pytest.mark.asyncio
     async def test_search_events_success(
@@ -365,17 +356,14 @@ class TestEmbeddingIntegration:
         query_text = "python machine learning"
 
         # Mock the entire pipeline
-        with patch(
-            "app.services.embedding_service.EmbeddingService"
-        ) as MockEmbeddingService, patch(
-            "app.services.embedding_search_service.session_crud"
-        ) as mock_crud:
+        with (
+            patch("app.services.embedding_service.EmbeddingService") as MockEmbeddingService,
+            patch("app.services.embedding_search_service.session_crud") as mock_crud,
+        ):
 
             mock_service = AsyncMock()
             mock_service.embed_query = AsyncMock(return_value=[0.1] * 768)
-            mock_service.search_similar_sessions = AsyncMock(
-                return_value=[(1, 0.95, "text")]
-            )
+            mock_service.search_similar_sessions = AsyncMock(return_value=[(1, 0.95, "text")])
             MockEmbeddingService.return_value = mock_service
 
             mock_session = Mock()
@@ -390,6 +378,254 @@ class TestEmbeddingIntegration:
             )
 
             assert len(results) == 1
+
+
+# ============================================================================
+# Tag Filtering Edge Cases Tests
+# ============================================================================
+
+
+class TestTagFilteringWhereClause:
+    """Test Chroma where clause construction for tag filtering.
+
+    Specifically tests the fix for single tag filtering which was throwing:
+    "Expected where value for $and or $or to be a list with at least two..."
+    """
+
+    @pytest.fixture
+    def mock_embedding_service(self):
+        """Create mock EmbeddingService."""
+        service = AsyncMock(spec=EmbeddingService)
+        service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        service.search_similar_sessions = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_db_session(self):
+        """Create mock database session."""
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def search_service(self, mock_embedding_service):
+        """Create EmbeddingSearchService with mocked EmbeddingService."""
+        return EmbeddingSearchService(mock_embedding_service)
+
+    @pytest.mark.asyncio
+    async def test_search_with_single_tag_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with single tag doesn't use $or (was causing error).
+
+        Regression test for: "Expected where value for $and or $or to be a list
+        with at least two where expressions, got [{'tags': {'$contains': 'design-patterns'}}]"
+        """
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            # Call with single tag - should work without throwing
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns"],  # Single tag
+            )
+
+        assert len(results) == 1
+        # Verify the where clause was passed to Chroma
+        assert mock_embedding_service.search_similar_sessions.called
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+
+        # Single tag should NOT wrap in $or, should be direct condition
+        assert where_clause == {"tags": {"$contains": "design-patterns"}}
+
+    @pytest.mark.asyncio
+    async def test_search_with_multiple_tags_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with multiple tags uses $or correctly."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [
+            (1, 0.95, "text 1"),
+            (2, 0.87, "text 2"),
+        ]
+
+        mock_session_1 = Mock()
+        mock_session_1.id = 1
+        mock_session_1.status = SessionStatus.PUBLISHED
+
+        mock_session_2 = Mock()
+        mock_session_2.id = 2
+        mock_session_2.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.side_effect = [mock_session_1, mock_session_2]
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns", "machine-learning"],  # Multiple tags
+            )
+
+        assert len(results) == 2
+
+        # Verify the where clause uses $or for multiple tags
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$or": [
+                {"tags": {"$contains": "design-patterns"}},
+                {"tags": {"$contains": "machine-learning"}},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_single_tag_and_format_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test single tag combined with session_format uses $and correctly."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns"],  # Single tag
+                session_format="workshop",  # Format filter
+            )
+
+        assert len(results) == 1
+
+        # Should combine with $and, and single tag should NOT use $or
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$and": [
+                {"session_format": "workshop"},
+                {"tags": {"$contains": "design-patterns"}},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_multiple_tags_and_format_and_language_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test multiple tags combined with format and language filters."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design", "patterns"],  # Multiple tags
+                session_format="workshop",
+                language="en",
+            )
+
+        assert len(results) == 1
+
+        # Should combine all with $and, multiple tags use $or
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$and": [
+                {"session_format": "workshop"},
+                {"language": "en"},
+                {
+                    "$or": [
+                        {"tags": {"$contains": "design"}},
+                        {"tags": {"$contains": "patterns"}},
+                    ]
+                },
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_only_format_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with only format filter (no tags)."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                session_format="Lighting Talk",
+            )
+
+        assert len(results) == 1
+
+        # Single condition should not be wrapped
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {"session_format": "Lighting Talk"}
+
+    @pytest.mark.asyncio
+    async def test_search_with_no_filters(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with no metadata filters."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+            )
+
+        assert len(results) == 1
+
+        # No where clause should be passed
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause is None
 
 
 # ============================================================================

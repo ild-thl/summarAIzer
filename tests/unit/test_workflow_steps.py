@@ -1,25 +1,19 @@
 """Tests for WorkflowStep base class and step execution."""
 
-import json
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from sqlalchemy.orm import Session
+from unittest.mock import AsyncMock, Mock, patch
 
-from app.workflows.services.execution_service import WorkflowExecutionService
-from app.workflows.steps.base_step import WorkflowStep
+import pytest
+
 from app.database.models import WorkflowExecutionStatus
 from app.workflows.execution_context import (
-    GenerationState,
     StepRegistry,
     WorkflowRegistry,
 )
+from app.workflows.services.execution_service import WorkflowExecutionService
+
 from .test_workflows_utils import (
-    MockStep,
-    create_mock_step,
-    mock_db_session,
-    mock_session_model,
-    clean_registries,
     create_generation_state,
+    create_mock_step,
 )
 
 
@@ -40,7 +34,7 @@ async def test_step_execute_generates_and_persists(mock_db_session):
     step._save_to_db = Mock()
 
     # Create state
-    state = create_generation_state(
+    create_generation_state(
         session_id=1,
         execution_id=1,
         db_session=mock_db_session,
@@ -72,7 +66,7 @@ async def test_step_execute_handles_errors(mock_db_session):
     # Make _generate raise an error
     step._generate = AsyncMock(side_effect=ValueError("Test error"))
 
-    state = create_generation_state(db_session=mock_db_session)
+    create_generation_state(db_session=mock_db_session)
 
     # Execute should raise
     with pytest.raises(ValueError, match="Test error"):
@@ -136,7 +130,7 @@ def test_step_get_model_config():
 
 
 @pytest.mark.asyncio
-async def test_summary_step_integration(mock_db_session, mock_session_model):
+async def test_summary_step_integration(test_db, sample_session):
     """Test SummaryStep with mocked LLM."""
     from app.workflows.steps.summary_step import SummaryStep
 
@@ -146,32 +140,24 @@ async def test_summary_step_integration(mock_db_session, mock_session_model):
     mock_response = Mock()
     mock_response.content = "# Test Summary\n\nSummary content"
 
-    with patch.object(step, "get_model") as mock_get_model, patch(
-        "app.database.connection.SessionLocal"
-    ) as mock_session_local:
+    with (
+        patch.object(step, "get_model") as mock_get_model,
+        patch("app.database.connection.SessionLocal") as mock_session_local,
+    ):
         # Create mock LLM with ainvoke method
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
         mock_get_model.return_value = mock_llm
 
-        # Mock database session creation
-        mock_session_local.return_value = mock_db_session
+        # Mock database session creation to return real test database
+        mock_session_local.return_value = test_db
 
-        # Mock database query
-        mock_db_session.query = Mock(
-            return_value=Mock(
-                filter=Mock(
-                    return_value=Mock(first=Mock(return_value=mock_session_model))
-                )
-            )
-        )
-
-        # Mock persistence
+        # Mock persistence to avoid trying to save to database
         step._save_to_db = Mock()
 
         # Execute
         result = await step.execute(
-            session_id=1,
+            session_id=sample_session.id,
             execution_id=1,
             context={"transcription": "Test transcription"},
         )
@@ -212,9 +198,7 @@ async def test_step_with_callable_generate():
 
 
 @pytest.mark.asyncio
-async def test_basic_workflow_creation(
-    mock_db_session, mock_session_model, clean_registries
-):
+async def test_basic_workflow_creation(mock_db_session, mock_session_model, clean_registries):
     """Test basic workflow record creation."""
     step = create_mock_step(identifier="summary", dependencies=[])
     StepRegistry.register(step)
@@ -259,9 +243,7 @@ async def test_execution_status_lifecycle(mock_db_session, clean_registries):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -288,9 +270,7 @@ async def test_execution_failure_marking(mock_db_session, clean_registries):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -306,9 +286,7 @@ async def test_execution_failure_marking(mock_db_session, clean_registries):
 
 
 @pytest.mark.asyncio
-async def test_workflow_with_dependencies(
-    mock_db_session, mock_session_model, clean_registries
-):
+async def test_workflow_with_dependencies(mock_db_session, mock_session_model, clean_registries):
     """Test workflow with step dependencies."""
     # Create workflow with dependencies: step1 -> step2
     step1 = create_mock_step(identifier="step1", dependencies=[])

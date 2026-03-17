@@ -1,14 +1,15 @@
 """Base class for workflow steps."""
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Optional
-from sqlalchemy.orm import Session
-import structlog
+from typing import Any
 
-from app.workflows.chat_models import ChatModelConfig, create_chat_model
+import structlog
+from langchain_core.language_models.chat_models import BaseChatModel
+from sqlalchemy.orm import Session
+
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
-from langchain_core.language_models.chat_models import BaseChatModel
+from app.workflows.chat_models import ChatModelConfig, create_chat_model
 
 logger = structlog.get_logger()
 
@@ -34,7 +35,7 @@ class WorkflowStep(ABC):
 
     @property
     @abstractmethod
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         """List of step identifiers this step depends on (e.g., ['summary'])."""
         pass
 
@@ -80,8 +81,8 @@ class WorkflowStep(ABC):
         self,
         session_id: int,
         execution_id: int,
-        context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Execute the step: generate content AND persist to database.
 
@@ -104,7 +105,7 @@ class WorkflowStep(ABC):
         """
         from app.database.connection import SessionLocal
 
-        db: Optional[Session] = None
+        db: Session | None = None
         try:
             # Create database session for this step execution
             db = SessionLocal()
@@ -118,7 +119,24 @@ class WorkflowStep(ABC):
                 db_has_query=hasattr(db, "query"),
             )
 
-            # 1. Generate content
+            # 1. Validate and prepare context (hook for steps to customize)
+            logger.info(
+                "step_validation_and_context_prep_starting",
+                step_id=self.identifier,
+                session_id=session_id,
+                execution_id=execution_id,
+            )
+
+            await self._validate_and_prepare_context(session_id, db, context)
+
+            logger.info(
+                "step_validation_and_context_prep_completed",
+                step_id=self.identifier,
+                session_id=session_id,
+                execution_id=execution_id,
+            )
+
+            # 2. Generate content
             logger.info(
                 "step_generation_starting",
                 step_id=self.identifier,
@@ -136,7 +154,7 @@ class WorkflowStep(ABC):
                 content_length=len(result.get("content", "")),
             )
 
-            # 2. Persist to database
+            # 3. Persist to database
             logger.info(
                 "step_persistence_starting",
                 step_id=self.identifier,
@@ -159,7 +177,7 @@ class WorkflowStep(ABC):
                 execution_id=execution_id,
             )
 
-            # 3. Return for context chaining
+            # 4. Return for context chaining
             return {self.identifier: result.get("content", "")}
 
         except Exception as e:
@@ -176,10 +194,55 @@ class WorkflowStep(ABC):
             if db:
                 db.close()
 
+    def validate_scheduling_requirements(self, _session_id: int, _db: Session) -> None:
+        """Validate that step's scheduling requirements are met.
+
+        Called BEFORE task scheduling to fail fast if prerequisites aren't available.
+        Use this for simple checks that can be done without needing full context
+        (e.g., verifying transcription exists in DB).
+
+        Override in subclasses that have prerequisites that can be validated early.
+        For runtime-dependent validation (requiring prior step outputs), use
+        _validate_and_prepare_context() instead.
+
+        Args:
+            session_id: Session ID
+            db: Database session
+
+        Raises:
+            ValueError: If scheduling requirements are not met
+        """
+        # Default: no scheduling-time validation required
+        return
+
+    async def _validate_and_prepare_context(
+        self, _session_id: int, _db: Session, _context: dict[str, Any]
+    ) -> None:
+        """
+        Validate dependencies and prepare context before generation.
+
+        Hook method called before _generate() to allow steps to:
+        - Validate required inputs (e.g., transcription availability)
+        - Fetch additional data if needed
+        - Update or normalize context
+
+        Default implementation does nothing. Override in subclasses that have requirements.
+
+        Args:
+            session_id: ID of the session being processed
+            db: SQLAlchemy database session
+            context: Custom context dict that can be modified in place
+
+        Raises:
+            ValueError: If validation fails or required data is missing
+        """
+        # Default: no validation or context preparation needed
+        return
+
     @abstractmethod
     async def _generate(
-        self, session_id: int, db: Session, context: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, session_id: int, db: Session, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Generate content using LLM.
 
@@ -206,7 +269,7 @@ class WorkflowStep(ABC):
         session_id: int,
         execution_id: int,
         identifier: str,
-        content: Dict[str, Any],
+        content: dict[str, Any],
     ) -> None:
         """
         Save generated content to database.

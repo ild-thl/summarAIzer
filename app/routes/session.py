@@ -1,7 +1,7 @@
 """API routes for Session CRUD management (core resource)."""
 
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -9,23 +9,23 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
-import structlog
 
+from app.crud.event import event_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Session as SessionModel
+from app.database.models import User
 from app.schemas.session import (
     SessionCreate,
-    SessionUpdate,
     SessionResponse,
+    SessionUpdate,
     SessionWithEvent,
 )
-from app.crud.session import session_crud
-from app.crud.event import event_crud
-from app.database.models import User, Session as SessionModel
 from app.security.auth import (
-    get_current_user,
-    require_session_owner,
-    get_current_user_optional,
     can_access_session_content,
+    get_current_user,
+    get_current_user_optional,
+    require_session_owner,
 )
 
 logger = structlog.get_logger()
@@ -47,7 +47,7 @@ async def create_session(
     - **start_datetime**: Session start datetime (required)
     - **end_datetime**: Session end datetime (required, must be after start_datetime)
     - **speakers**: List of speakers (optional)
-    - **categories**: List of categories (optional)
+    - **tags**: List of tags (optional)
     - **short_description**: Short description (optional)
     - **location**: Session location (optional)
     - **recording_url**: Recording URL (optional)
@@ -82,7 +82,7 @@ async def create_session(
                 event_id=session_in.event_id,
             )
             raise HTTPException(
-                status_code=HTTP_403_FORBIDDEN,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission denied: you do not own this event",
             )
 
@@ -140,36 +140,137 @@ async def get_session_by_uri(
     return db_session
 
 
-@router.get("", response_model=List[SessionResponse])
+def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> list[str] | None:
+    """Validate and parse comma-separated enum values."""
+    if not value:
+        return None
+
+    values_list = [v.strip() for v in value.split(",") if v.strip()]
+    valid_values = [e.value for e in enum_class]
+
+    for v in values_list:
+        if v not in valid_values:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid {field_name} '{v}'. Allowed values: {', '.join(valid_values)}",
+            )
+
+    return values_list
+
+
+@router.get("", response_model=list[SessionResponse])
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
-    status: str = Query(None, description="Filter by status (draft, published)"),
+    status: str = Query(
+        None, description="Filter by status - comma-separated (draft, published) - OR logic"
+    ),
     event_id: int = Query(None, description="Filter by event ID"),
+    session_format: str = Query(
+        None,
+        description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
+    ),
+    tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    language: str = Query(
+        None,
+        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+    ),
+    duration_min: int = Query(None, ge=0, description="Minimum duration in minutes"),
+    duration_max: int = Query(None, ge=0, description="Maximum duration in minutes"),
+    speaker: str = Query(None, description="Search for speaker name"),
+    start_after: str = Query(None, description="Sessions starting after (ISO 8601)"),
+    start_before: str = Query(None, description="Sessions starting before (ISO 8601)"),
+    search: str = Query(None, description="Full-text search on title, description, and speakers"),
     current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """
-    List all sessions with optional filtering and pagination.
+    List all sessions with advanced filtering and full-text search.
 
     Public users see only published sessions. Authenticated users also see their own drafts.
 
+    **Filters (all optional):**
     - **skip**: Number of records to skip (default: 0)
     - **limit**: Maximum records to return (default: 100, max: 1000)
-    - **status**: Filter by status (optional, e.g., "published" for published sessions only)
-    - **event_id**: Filter by event ID (optional)
+    - **status**: Filter by status - comma-separated (draft, published) - OR logic
+    - **event_id**: Filter by event ID
+    - **session_format**: Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
+    - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
+    - **language**: Filter by language code - comma-separated (e.g., en, de, fr) - OR logic
+    - **duration_min**: Minimum duration in minutes
+    - **duration_max**: Maximum duration in minutes
+    - **speaker**: Search for speaker name (case-insensitive)
+    - **start_after**: Sessions starting after date (ISO 8601, e.g., 2024-01-01T00:00:00)
+    - **start_before**: Sessions starting before date (ISO 8601)
+    - **search**: Full-text search on title, description, and speakers (case-insensitive)
+
+    **Examples:**
+    - `/api/v2/sessions?status=published&language=en`
+    - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
+    - `/api/v2/sessions?tags=ai,machine+learning&language=en,de`
+    - `/api/v2/sessions?search=machine+learning&status=published`
+    - `/api/v2/sessions?session_format=Input,workshop`
     """
-    if event_id:
-        sessions = session_crud.list_by_event(db, event_id, skip=skip, limit=limit)
-    elif status:
-        sessions = session_crud.list_by_status(db, status, skip=skip, limit=limit)
-    else:
-        sessions = session_crud.list_all(db, skip=skip, limit=limit)
+    from datetime import datetime
+
+    from app.database.models import SessionFormat, SessionStatus
+
+    # Validate and parse enum values using helper
+    status_list = _validate_and_parse_enum_list(status, SessionStatus, "status") if status else None
+    session_format_list = (
+        _validate_and_parse_enum_list(session_format, SessionFormat, "session_format")
+        if session_format
+        else None
+    )
+
+    # Parse language (comma-separated, no validation needed as it's free-form ISO codes)
+    language_list = None
+    if language:
+        language_list = [lang.strip() for lang in language.split(",") if lang.strip()]
+
+    # Parse datetime strings if provided
+    start_after_dt = None
+    start_before_dt = None
+    if start_after:
+        try:
+            start_after_dt = datetime.fromisoformat(start_after.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid start_after format (use ISO 8601)"
+            ) from e
+    if start_before:
+        try:
+            start_before_dt = datetime.fromisoformat(start_before.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid start_before format (use ISO 8601)"
+            ) from e
+
+    # Parse tags (comma-separated)
+    tags_list = None
+    if tags:
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+    # Use enhanced filtering
+    sessions = session_crud.list_with_filters(
+        db,
+        skip=skip,
+        limit=limit,
+        status=status_list,
+        event_id=event_id,
+        session_format=session_format_list,
+        tags=tags_list,
+        language=language_list,
+        duration_min=duration_min,
+        duration_max=duration_max,
+        speaker=speaker,
+        start_after=start_after_dt,
+        start_before=start_before_dt,
+        search=search,
+    )
 
     # Filter results: only include published sessions or user's own drafts
-    filtered_sessions = [
-        s for s in sessions if can_access_session_content(s, current_user)
-    ]
+    filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions
 
@@ -204,9 +305,7 @@ async def update_session(
     if session_in.event_id and session_in.event_id != session.event_id:
         event = event_crud.read(db, session_in.event_id)
         if not event:
-            logger.warning(
-                "event_not_found_for_session_update", event_id=session_in.event_id
-            )
+            logger.warning("event_not_found_for_session_update", event_id=session_in.event_id)
             raise HTTPException(
                 status_code=HTTP_404_NOT_FOUND,
                 detail=f"Event with ID {session_in.event_id} not found",
@@ -219,7 +318,7 @@ async def update_session(
 @router.delete("/{session_id}", status_code=HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: int,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Delete a session (owner only)."""
@@ -227,7 +326,7 @@ async def delete_session(
     return None
 
 
-@router.get("/event/{event_id}/sessions", response_model=List[SessionResponse])
+@router.get("/event/{event_id}/sessions", response_model=list[SessionResponse])
 async def list_event_sessions(
     event_id: int,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -249,8 +348,6 @@ async def list_event_sessions(
     sessions = session_crud.list_by_event(db, event_id, skip=skip, limit=limit)
 
     # Filter results: only include published sessions or user's own drafts
-    filtered_sessions = [
-        s for s in sessions if can_access_session_content(s, current_user)
-    ]
+    filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions

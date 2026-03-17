@@ -1,10 +1,11 @@
 """Service for image generation via external AI APIs."""
 
-import requests
 import base64
 import logging
-from typing import Dict, Any, Optional, List
 from pathlib import Path
+from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -12,22 +13,118 @@ logger = logging.getLogger(__name__)
 class ImageGenerationService:
     """
     Service for generating images via external AI APIs.
-    
+
     Supports text-to-image generation using configured API endpoints.
     Handles image creation, encoding, and optional storage.
     """
-    
-    def __init__(self, api_url: Optional[str] = None, api_key: Optional[str] = None):
+
+    def __init__(self, api_url: str | None = None, api_key: str | None = None):
         """
         Initialize the image generation service.
-        
+
         Args:
             api_url: URL of the image generation API endpoint (Academic Cloud)
             api_key: API key for authentication with Academic Cloud API
         """
         self.api_url = api_url or "https://chat-ai.academiccloud.de/v1/images/generations"
         self.api_key = api_key
-    
+
+    def _validate_inputs(
+        self, prompt: str, width: int, height: int, num_images: int
+    ) -> tuple[bool, str | None]:
+        """
+        Validate image generation input parameters.
+
+        Args:
+            prompt: Text description for image generation
+            width: Image width in pixels
+            height: Image height in pixels
+            num_images: Number of images to generate
+
+        Returns:
+            Tuple of (is_valid, error_message) where error_message is None if valid
+        """
+        if not prompt or len(prompt.strip()) == 0:
+            return False, "Prompt cannot be empty"
+
+        if width <= 0 or height <= 0:
+            return False, "Width and height must be positive"
+
+        if num_images < 1 or num_images > 10:
+            return False, "num_images must be between 1 and 10"
+
+        if not self.api_key:
+            error_msg = (
+                "No API key configured for image generation. "
+                "Set IMAGE_GENERATION_API_KEY environment variable."
+            )
+            logger.error(error_msg)
+            return False, error_msg
+
+        return True, None
+
+    def _extract_error_message(self, error_data: dict) -> str:
+        """
+        Extract error message from API response.
+
+        Args:
+            error_data: Parsed JSON response data
+
+        Returns:
+            Error message string
+        """
+        if "error" in error_data:
+            if isinstance(error_data["error"], dict):
+                return error_data["error"].get("message", "Unknown error")
+            return str(error_data["error"])
+
+        if "message" in error_data:
+            return error_data["message"]
+
+        return str(error_data)
+
+    def _parse_images_response(self, response_data: dict) -> tuple[bool, list | None, str | None]:
+        """
+        Parse successful image generation response.
+
+        Args:
+            response_data: Parsed JSON response data
+
+        Returns:
+            Tuple of (success, images, error_message)
+        """
+        images = response_data.get("data", [])
+
+        if images:
+            logger.info(f"Successfully generated {len(images)} image(s)")
+            return True, images, None
+
+        error_msg = "API returned empty data array"
+        logger.error(error_msg)
+        return False, None, error_msg
+
+    def _handle_api_error_response(
+        self, response: requests.Response
+    ) -> tuple[bool, dict[str, Any]]:
+        """
+        Handle non-200 API response.
+
+        Args:
+            response: HTTP response object
+
+        Returns:
+            Tuple of (success, result_dict)
+        """
+        try:
+            error_data = response.json()
+            error_msg = self._extract_error_message(error_data)
+        except Exception:
+            error_msg = response.text[:500] if response.text else f"HTTP {response.status_code}"
+
+        full_error = f"API error {response.status_code}: {error_msg}"
+        logger.error(full_error)
+        return False, {"success": False, "error": full_error}
+
     def generate_image(
         self,
         prompt: str,
@@ -36,10 +133,10 @@ class ImageGenerationService:
         model: str = "flux",
         num_images: int = 1,
         quality: str = "standard",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate images from a text prompt using Academic Cloud API (OpenAI format).
-        
+
         Args:
             prompt: Text description for image generation
             width: Image width in pixels (converted to size format)
@@ -47,7 +144,7 @@ class ImageGenerationService:
             model: Model to use for generation (e.g., "flux")
             num_images: Number of images to generate (1-10)
             quality: Quality level - "standard" or "hd"
-            
+
         Returns:
             Dict with keys:
             - success: bool
@@ -56,23 +153,10 @@ class ImageGenerationService:
         """
         try:
             # Validate inputs
-            if not prompt or len(prompt.strip()) == 0:
-                return {"success": False, "error": "Prompt cannot be empty"}
-            
-            if width <= 0 or height <= 0:
-                return {"success": False, "error": "Width and height must be positive"}
-            
-            if num_images < 1 or num_images > 10:
-                return {"success": False, "error": "num_images must be between 1 and 10"}
-            
-            if not self.api_key:
-                error_msg = (
-                    "No API key configured for image generation. "
-                    "Set IMAGE_GENERATION_API_KEY environment variable."
-                )
-                logger.error(error_msg)
+            is_valid, error_msg = self._validate_inputs(prompt, width, height, num_images)
+            if not is_valid:
                 return {"success": False, "error": error_msg}
-            
+
             # Prepare request payload (OpenAI/Academic Cloud format)
             payload = {
                 "prompt": prompt.strip(),
@@ -82,18 +166,16 @@ class ImageGenerationService:
                 "quality": quality,
                 "response_format": "b64_json",  # Request base64 encoded images
             }
-            
+
             # Prepare headers with Bearer token
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
             }
-            
-            logger.info(
-                f"Generating {num_images} image(s) with model '{model}': {prompt[:100]}..."
-            )
-            
+
+            logger.info(f"Generating {num_images} image(s) with model '{model}': {prompt[:100]}...")
+
             # Make API request
             response = requests.post(
                 self.api_url,
@@ -101,78 +183,52 @@ class ImageGenerationService:
                 headers=headers,
                 timeout=120,  # 2 minutes for image generation
             )
-            
+
             if response.status_code == 200:
+                # Parse successful response
                 data = response.json()
-                
-                # Extract images from Academic Cloud response format
-                # Response: {"created": 1773178092, "data": [{"b64_json": "...", "url": null, ...}]}
-                images = data.get("data", [])
-                
-                if images:
-                    logger.info(f"Successfully generated {len(images)} image(s)")
-                    return {
-                        "success": True,
-                        "images": images,  # Each has "b64_json", "url", "revised_prompt"
-                    }
-                else:
-                    error_msg = "API returned empty data array"
-                    logger.error(error_msg)
-                    return {"success": False, "error": error_msg}
-            else:
-                # Try to extract error message from response
-                try:
-                    error_data = response.json()
-                    # Handle various error response formats
-                    if "error" in error_data:
-                        if isinstance(error_data["error"], dict):
-                            error_msg = error_data["error"].get("message", "Unknown error")
-                        else:
-                            error_msg = str(error_data["error"])
-                    elif "message" in error_data:
-                        error_msg = error_data["message"]
-                    else:
-                        error_msg = str(error_data)
-                except Exception:
-                    error_msg = response.text[:500] if response.text else f"HTTP {response.status_code}"
-                
-                full_error = f"API error {response.status_code}: {error_msg}"
-                logger.error(full_error)
-                return {"success": False, "error": full_error}
-        
+                success, images, error = self._parse_images_response(data)
+                if success:
+                    return {"success": True, "images": images}
+                return {"success": False, "error": error}
+
+            # Handle error response
+            _, error_result = self._handle_api_error_response(response)
+            return error_result
+
         except requests.exceptions.Timeout:
             error_msg = "Image generation timed out (120 seconds)"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
         except requests.exceptions.ConnectionError as e:
-            error_msg = f"Failed to connect to image generation service: {str(e)}"
+            error_msg = f"Failed to connect to image generation service: {e!s}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
         except requests.exceptions.RequestException as e:
-            error_msg = f"Request error: {str(e)}"
+            error_msg = f"Request error: {e!s}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
         except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
+            error_msg = f"Unexpected error: {e!s}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
-    
+
     def save_image(
         self,
-        image_data: Dict[str, Any],
+        image_data: dict[str, Any],
         save_path: Path,
         filename: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Save a base64-encoded image to file.
-        
+
         Academic Cloud API returns images with 'b64_json' key.
-        
+
         Args:
             image_data: Image data dict with 'b64_json' key (from Academic Cloud API)
             save_path: Directory path to save to
             filename: Filename for the image
-            
+
         Returns:
             Dict with keys:
             - success: bool
@@ -183,26 +239,26 @@ class ImageGenerationService:
         try:
             # Try to find base64 data (could be "b64_json" or "base64")
             base64_data = image_data.get("b64_json") or image_data.get("base64")
-            
+
             if not base64_data:
                 available_keys = list(image_data.keys())
                 return {
                     "success": False,
-                    "error": f"Image data missing base64 content. Available keys: {available_keys}"
+                    "error": f"Image data missing base64 content. Available keys: {available_keys}",
                 }
-            
+
             # Create directory if needed
             save_path.mkdir(parents=True, exist_ok=True)
-            
+
             if not save_path.exists():
                 return {"success": False, "error": f"Failed to create directory {save_path}"}
-            
+
             # Decode base64
             try:
                 image_bytes = base64.b64decode(base64_data)
             except Exception as e:
-                return {"success": False, "error": f"Failed to decode base64: {str(e)}"}
-            
+                return {"success": False, "error": f"Failed to decode base64: {e!s}"}
+
             # Save to file
             file_path = save_path / filename
             try:
@@ -217,25 +273,25 @@ class ImageGenerationService:
             except PermissionError:
                 return {"success": False, "error": f"Permission denied writing to {file_path}"}
             except OSError as e:
-                return {"success": False, "error": f"OS error: {str(e)}"}
-        
+                return {"success": False, "error": f"OS error: {e!s}"}
+
         except Exception as e:
-            return {"success": False, "error": f"Error saving image: {str(e)}"}
-    
+            return {"success": False, "error": f"Error saving image: {e!s}"}
+
     def save_images_batch(
         self,
-        images: List[Dict[str, Any]],
+        images: list[dict[str, Any]],
         save_path: Path,
         base_filename: str = "generated_image",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Save multiple images with numbered filenames.
-        
+
         Args:
             images: List of image data dicts
             save_path: Directory to save to
             base_filename: Base name for files (will be numbered)
-            
+
         Returns:
             Dict with keys:
             - success: bool
@@ -246,23 +302,23 @@ class ImageGenerationService:
         try:
             saved_files = []
             errors = []
-            
+
             for i, image_data in enumerate(images, 1):
                 filename = f"{base_filename}_{i}.png"
                 result = self.save_image(image_data, save_path, filename)
-                
+
                 if result["success"]:
                     saved_files.append(result["file_path"])
                 else:
                     errors.append(result["error"])
-            
+
             return {
                 "success": len(errors) == 0,
                 "files": saved_files,
                 "count": len(saved_files),
                 "errors": errors if errors else None,
             }
-        
+
         except Exception as e:
             return {
                 "success": False,

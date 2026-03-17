@@ -1,6 +1,6 @@
 """API routes for Session Content Management (sub-resource)."""
 
-from typing import List
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from starlette.status import (
@@ -9,23 +9,22 @@ from starlette.status import (
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
-import structlog
 
+from app.crud import generated_content as content_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Session as SessionModel
+from app.database.models import User
 from app.schemas.content import (
     GeneratedContentCreate,
-    GeneratedContentUpdate,
     GeneratedContentResponse,
-    GeneratedContentListItem,
+    GeneratedContentUpdate,
     SessionContentListResponse,
 )
-from app.crud.session import session_crud
-from app.crud import generated_content as content_crud
-from app.database.models import User, Session as SessionModel
 from app.security.auth import (
+    can_access_session_content,
     get_current_user_optional,
     require_session_owner,
-    can_access_session_content,
 )
 
 logger = structlog.get_logger()
@@ -54,9 +53,7 @@ async def get_available_content(
         )
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
-    return SessionContentListResponse(
-        available_content=db_session.available_content_identifiers
-    )
+    return SessionContentListResponse(available_content=db_session.available_content_identifiers)
 
 
 @router.get(
@@ -108,7 +105,7 @@ async def create_content(
     session_id: int,
     identifier: str,
     content_in: GeneratedContentCreate,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """
@@ -165,7 +162,7 @@ async def update_content(
     session_id: int,
     identifier: str,
     content_in: GeneratedContentUpdate,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Update generated content (owner only, e.g., manual edits after generation)."""
@@ -200,7 +197,7 @@ async def update_content(
 async def delete_content(
     session_id: int,
     identifier: str,
-    session: SessionModel = Depends(require_session_owner),
+    _: SessionModel = Depends(require_session_owner),
     db: Session = Depends(get_db),
 ):
     """Delete content with specific identifier (owner only)."""

@@ -1,13 +1,15 @@
 """Key takeaways step - extracts actionable insights from session."""
 
 import json
-from typing import Dict, Any, List
+from typing import Any
+
 import structlog
-from langchain_core.messages import SystemMessage, HumanMessage, BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from app.database.models import Session as SessionModel
-from app.workflows.steps.prompt_template import PromptTemplate
 from app.workflows.chat_models import ChatModelConfig
+from app.workflows.execution_context import StepRegistry
+from app.workflows.steps.prompt_template import PromptTemplate
 
 logger = structlog.get_logger()
 
@@ -15,7 +17,7 @@ logger = structlog.get_logger()
 class KeyTakeawaysStep(PromptTemplate):
     """
     Extracts 6-8 actionable key takeaways from the session.
-    
+
     Depends on: SummaryStep (uses summary for context)
     Input: Session metadata + transcription + summary
     Output: JSON array of actionable takeaway strings
@@ -27,7 +29,7 @@ class KeyTakeawaysStep(PromptTemplate):
         return "key_takeaways"
 
     @property
-    def dependencies(self) -> List[str]:
+    def dependencies(self) -> list[str]:
         """Depends on summary for better context."""
         return ["summary"]
 
@@ -40,12 +42,10 @@ class KeyTakeawaysStep(PromptTemplate):
             top_p=0.92,
         )
 
-    def get_messages(
-        self, session: SessionModel, context: Dict[str, Any]
-    ) -> List[BaseMessage]:
+    def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate key takeaways messages with context injection."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
-        
+
         return [
             SystemMessage(
                 content="""Du bist Expert:in für die Extrahierung von Key Takeaways aus technischen Veranstaltungen.
@@ -73,7 +73,7 @@ Extrahiere nun die Key Takeaways:"""
             ),
         ]
 
-    def process_response(self, response: Any) -> Dict[str, Any]:
+    def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response into key takeaways output."""
         takeaways_json = response.content if hasattr(response, "content") else str(response)
 
@@ -97,6 +97,5 @@ Extrahiere nun die Key Takeaways:"""
 
 
 # Auto-register this step when imported
-from app.workflows.execution_context import StepRegistry
 _key_takeaways_step = KeyTakeawaysStep()
 StepRegistry.register(_key_takeaways_step)

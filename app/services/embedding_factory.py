@@ -5,13 +5,14 @@ Centralizes service initialization and configuration validation,
 reducing boilerplate in routes and tasks.
 """
 
-import structlog
 from functools import lru_cache
 
+import structlog
+
 from app.config.settings import get_settings
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_search_service import EmbeddingSearchService
 from app.services.embedding_exceptions import ChromaConnectionError
+from app.services.embedding_search_service import EmbeddingSearchService
+from app.services.embedding_service import EmbeddingService
 
 logger = structlog.get_logger()
 
@@ -65,9 +66,7 @@ def get_embedding_service() -> EmbeddingService:
             error=str(e),
             error_type=type(e).__name__,
         )
-        raise ChromaConnectionError(
-            f"Failed to initialize embedding service: {str(e)}"
-        ) from e
+        raise ChromaConnectionError(f"Failed to initialize embedding service: {e!s}") from e
 
 
 def get_search_service() -> EmbeddingSearchService:

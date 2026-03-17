@@ -1,47 +1,60 @@
 """Pytest configuration and fixtures."""
 
-# CRITICAL: Mock boto3 BEFORE any app imports to prevent S3 client initialization
-# during module import time (ImageStep registers itself at module load)
+from datetime import datetime, timedelta
 from unittest import mock
-import sys
-
-_boto3_patcher = mock.patch("boto3.client")
-_mock_boto3 = _boto3_patcher.start()
-# Configure the mock to return a safe mock client
-_mock_s3_client = mock.MagicMock()
-_mock_s3_client.put_object.return_value = {}
-_mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
-_mock_boto3.return_value = _mock_s3_client
 
 import pytest
-from datetime import datetime, timedelta
-from sqlalchemy import create_engine, event as sqlalchemy_event
-from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy import event as sqlalchemy_event
+from sqlalchemy.orm import sessionmaker
 
+from app.database.connection import get_db
 from app.database.models import (
+    APIKey,
     Base,
     Event,
-    Session as SessionModel,
-    SessionStatus,
     EventStatus,
     SessionFormat,
+    SessionStatus,
     User,
-    APIKey,
 )
-from app.database.connection import get_db
+from app.database.models import (
+    Session as SessionModel,
+)
 from main import app
+
+# Global reference to boto3 patcher for lifecycle management
+_boto3_patcher = None
 
 
 def pytest_configure(config):
-    """Ensure boto3 mock stays active for entire test session."""
-    # The mock started at module level continues throughout all tests
-    pass
+    """
+    Configure pytest session.
+
+    Sets up mocks and ensures boto3 client initialization is mocked
+    before any app imports that depend on S3 services.
+    """
+    global _boto3_patcher
+
+    # Mock boto3.client before any S3 service initialization
+    # This allows S3ImageService to defer client creation via lazy property
+    _boto3_patcher = mock.patch("boto3.client")
+    mock_boto3 = _boto3_patcher.start()
+
+    # Configure the mock to return a safe mock S3 client
+    mock_s3_client = mock.MagicMock()
+    mock_s3_client.put_object.return_value = {}
+    mock_s3_client.get_object.return_value = {"Body": mock.MagicMock()}
+    mock_boto3.return_value = mock_s3_client
 
 
 def pytest_sessionfinish(session, exitstatus):
     """Clean up boto3 mock after tests complete."""
-    _boto3_patcher.stop()
+    global _boto3_patcher
+    if _boto3_patcher is not None:
+        _boto3_patcher.stop()
+        _boto3_patcher = None
 
 
 @pytest.fixture(autouse=True)
@@ -143,7 +156,7 @@ def sample_session(test_db, sample_event, sample_user):
     session = SessionModel(
         title="Test Session",
         speakers=["John Doe", "Jane Smith"],
-        categories=["AI", "Testing"],
+        tags=["AI", "Testing"],
         short_description="A test session",
         location="Room 101",
         start_datetime=now,
@@ -169,7 +182,7 @@ def sample_session_no_event(test_db, sample_user):
     session = SessionModel(
         title="Standalone Session",
         speakers=["Jane Doe", "Bob Johnson"],
-        categories=["Development"],
+        tags=["Development"],
         short_description="A standalone test session",
         location="Room 202",
         start_datetime=now + timedelta(days=1),
@@ -266,7 +279,7 @@ def session_with_owner(test_db, event_with_owner, sample_user):
     session = SessionModel(
         title="Owned Session",
         speakers=["Speaker"],
-        categories=["Category"],
+        tags=["Category"],
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.DRAFT,
@@ -287,7 +300,7 @@ def published_session(test_db, sample_event, sample_user):
     session = SessionModel(
         title="Published Test Session",
         speakers=["John Doe"],
-        categories=["Testing"],
+        tags=["Testing"],
         short_description="A published test session",
         location="Room 101",
         start_datetime=now,
@@ -304,3 +317,66 @@ def published_session(test_db, sample_event, sample_user):
     test_db.commit()
     test_db.refresh(session)
     return session
+
+
+@pytest.fixture
+def mock_db_session():
+    """Create a mock database session with common methods and refresh side effect."""
+    from sqlalchemy.orm import Session as SQLSession
+
+    db = mock.Mock(spec=SQLSession)
+    db.query = mock.Mock()
+    db.add = mock.Mock()
+    db.commit = mock.Mock()
+    db.rollback = mock.Mock()
+
+    # Configure refresh to assign an ID if the object doesn't have one
+    def refresh_side_effect(obj):
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = 1  # Assign mock ID
+
+    db.refresh = mock.Mock(side_effect=refresh_side_effect)
+    return db
+
+
+@pytest.fixture
+def mock_session_model():
+    """Create a mock Session database model with realistic test data."""
+    session_mock = mock.Mock(spec=SessionModel)
+    session_mock.id = 1
+    session_mock.title = "Test Session"
+    session_mock.speakers = ["Speaker 1", "Speaker 2"]
+    session_mock.tags = ["Category 1"]
+    session_mock.duration = 60
+    return session_mock
+
+
+@pytest.fixture
+def clean_registries():
+    """Clean step and workflow registries before and after each test.
+
+    Saves and restores original state to avoid contaminating other tests.
+    """
+    from app.workflows.execution_context import StepRegistry, WorkflowRegistry
+
+    # Save original state
+    original_steps = StepRegistry.get_all_steps().copy()
+    original_workflow_classes = WorkflowRegistry.get_all_workflow_classes().copy()
+
+    # Clear before test
+    StepRegistry.clear()
+    WorkflowRegistry.clear()
+
+    yield
+
+    # Restore original state
+    StepRegistry.clear()
+    WorkflowRegistry.clear()
+
+    # Re-register original steps
+    for _, step in original_steps.items():
+        StepRegistry.register(step)
+
+    # Re-register original workflow classes
+    for workflow_name, workflow_class in original_workflow_classes.items():
+        WorkflowRegistry.register_workflow_class(workflow_name, workflow_class)

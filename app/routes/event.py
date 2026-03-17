@@ -1,33 +1,31 @@
 """API routes for Event management."""
 
-from typing import List, Optional
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
-    HTTP_200_OK,
     HTTP_204_NO_CONTENT,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
+
+from app.crud.event import event_crud
+from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event, User, Session as SessionModel
+from app.database.models import Event, User
+from app.database.models import Session as SessionModel
+from app.schemas.session import (
+    EventCreate,
+    EventResponse,
+    EventUpdate,
+    SessionCreate,
+    SessionResponse,
+)
 from app.security.auth import (
     get_current_user,
     require_event_owner,
-    require_session_owner,
 )
-from app.schemas.session import (
-    EventCreate,
-    EventUpdate,
-    EventResponse,
-    SessionCreate,
-    SessionUpdate,
-    SessionResponse,
-)
-from app.crud.event import event_crud
-from app.crud.session import session_crud
-import structlog
 
 logger = structlog.get_logger()
 
@@ -84,13 +82,11 @@ async def get_event_by_uri(uri: str, db: Session = Depends(get_db)):
     return db_event
 
 
-@router.get("", response_model=List[EventResponse])
+@router.get("", response_model=list[EventResponse])
 async def list_events(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
-    status: str = Query(
-        None, description="Filter by status (draft, published, archived)"
-    ),
+    status: str = Query(None, description="Filter by status (draft, published, archived)"),
     db: Session = Depends(get_db),
 ):
     """
@@ -123,9 +119,7 @@ async def update_event(
     if event_in.uri and event_in.uri != event.uri:
         existing = event_crud.read_by_uri(db, event_in.uri)
         if existing:
-            logger.warning(
-                "event_uri_conflict_on_update", event_id=event_id, uri=event_in.uri
-            )
+            logger.warning("event_uri_conflict_on_update", event_id=event_id, uri=event_in.uri)
             raise HTTPException(
                 status_code=HTTP_409_CONFLICT,
                 detail=f"Event with URI '{event_in.uri}' already exists",
@@ -138,7 +132,7 @@ async def update_event(
 @router.delete("/{event_id}", status_code=HTTP_204_NO_CONTENT)
 async def delete_event(
     event_id: int,
-    event: Event = Depends(require_event_owner),
+    _: Event = Depends(require_event_owner),
     db: Session = Depends(get_db),
 ):
     """Delete an event and all associated sessions (owner only)."""
@@ -147,9 +141,7 @@ async def delete_event(
 
 
 # Nested session management endpoints under events
-@router.post(
-    "/{event_id}/sessions", response_model=SessionResponse, status_code=HTTP_201_CREATED
-)
+@router.post("/{event_id}/sessions", response_model=SessionResponse, status_code=HTTP_201_CREATED)
 async def create_session_in_event(
     event_id: int,
     session_in: SessionCreate,
@@ -176,9 +168,7 @@ async def create_session_in_event(
         .first()
     )
     if existing:
-        logger.warning(
-            "session_uri_conflict_in_event", event_id=event_id, uri=session_in.uri
-        )
+        logger.warning("session_uri_conflict_in_event", event_id=event_id, uri=session_in.uri)
         raise HTTPException(
             status_code=HTTP_409_CONFLICT,
             detail=f"Session with URI '{session_in.uri}' already exists in this event",
@@ -211,9 +201,7 @@ async def sync_session(
     if not event:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
     if event.owner_id != current_user.id:
-        logger.warning(
-            "sync_unauthorized_event_access", user_id=current_user.id, event_id=event_id
-        )
+        logger.warning("sync_unauthorized_event_access", user_id=current_user.id, event_id=event_id)
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # Check if session exists
@@ -237,126 +225,3 @@ async def sync_session(
         created = session_crud.create(db, session_in, owner_id=current_user.id)
         response.status_code = HTTP_201_CREATED
         return created
-
-
-# ============================================================================
-# Embedding & Similarity Search Endpoints
-# ============================================================================
-
-
-@router.post("/{event_id}/embedding/refresh", response_model=dict, status_code=202)
-async def refresh_event_embedding(
-    event_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Manually refresh/regenerate embedding for an event.
-
-    Requires event ownership. Queues async task - returns immediately.
-
-    Args:
-        event_id: Event ID
-        current_user: Current authenticated user
-
-    Returns:
-        Task status with task_id for polling
-    """
-    from app.async_jobs.tasks import generate_event_embedding
-
-    # Verify event exists and user owns it
-    event = event_crud.read(db, event_id)
-    if not event:
-        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
-
-    if event.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Forbidden - event ownership required"
-        )
-
-    logger.info(
-        "event_embedding_refresh_requested",
-        event_id=event_id,
-        user_id=current_user.id,
-    )
-
-    # Queue embedding generation task
-    task = generate_event_embedding.apply_async(
-        args=[event_id],
-        queue="embeds",
-    )
-
-    return {
-        "status": "queued",
-        "task_id": task.id,
-        "event_id": event_id,
-        "message": "Embedding refresh queued",
-    }
-
-
-@router.get("/search/similar", response_model=List[EventResponse])
-async def search_similar_events(
-    query: str = Query(
-        ..., min_length=1, max_length=8000, description="Query text to search"
-    ),
-    limit: int = Query(10, ge=1, le=100, description="Max results"),
-    db: Session = Depends(get_db),
-):
-    """
-    Search for events similar to query text using semantic search.
-
-    Returns published events ordered by semantic similarity.
-
-    Args:
-        query: Text to search (will be embedded)
-        limit: Maximum number of results
-
-    Returns:
-        List of similar published events
-    """
-    from app.services.embedding_factory import get_search_service
-    from app.services.embedding_exceptions import (
-        InvalidEmbeddingTextError,
-        EmbeddingError,
-    )
-
-    try:
-        # Get search service via dependency injection
-        search_service = get_search_service()
-
-        # Delegate to search service
-        events = await search_service.search_events(
-            query=query,
-            db=db,
-            limit=limit,
-        )
-
-        logger.info(
-            "event_search_completed",
-            query_length=len(query),
-            results_count=len(events),
-            limit=limit,
-        )
-
-        # Convert ORM objects to Pydantic models
-        return [EventResponse.model_validate(e) for e in events]
-
-    except InvalidEmbeddingTextError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except EmbeddingError as e:
-        logger.error("event_search_embedding_error", error=str(e))
-        raise HTTPException(status_code=503, detail="Search service unavailable")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "event_search_failed",
-            resource_type="event",
-            error=str(e),
-            error_type=type(e).__name__,
-            query_length=len(query),
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="Similarity search failed",
-        )

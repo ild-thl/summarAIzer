@@ -1,15 +1,15 @@
 """Embedding service for semantic search using configurable embeddings and Chroma storage."""
 
-import structlog
-from typing import Optional, List, Tuple
 import chromadb
+import structlog
 from chromadb.config import Settings as ChromaSettings
-from app.services.embeddings_manager import create_embeddings_backend
+
 from app.constants.embedding import (
-    SESSIONS_COLLECTION,
     COLLECTION_METADATA_COSINE,
     MAX_EMBEDDING_TEXT_LENGTH,
+    SESSIONS_COLLECTION,
 )
+from app.services.embeddings_manager import create_embeddings_backend
 
 logger = structlog.get_logger()
 
@@ -20,14 +20,14 @@ class EmbeddingService:
     def __init__(
         self,
         embedding_provider: str = "huggingface",
-        embedding_api_key: Optional[str] = None,
-        embedding_api_base_url: Optional[str] = None,
-        embedding_model_name: Optional[str] = None,
+        embedding_api_key: str | None = None,
+        embedding_api_base_url: str | None = None,
+        embedding_model_name: str | None = None,
         chroma_host: str = "localhost",
         chroma_port: int = 8000,
         chroma_tenant: str = "default_tenant",
-        chroma_credentials: Optional[str] = None,
-        chroma_provider: Optional[str] = None,
+        chroma_credentials: str | None = None,
+        chroma_provider: str | None = None,
         embedding_dimension: int = 768,
     ):
         """
@@ -51,9 +51,7 @@ class EmbeddingService:
         try:
             # Initialize embeddings backend based on provider
             if embedding_provider == "openai":
-                if not all(
-                    [embedding_api_key, embedding_api_base_url, embedding_model_name]
-                ):
+                if not all([embedding_api_key, embedding_api_base_url, embedding_model_name]):
                     raise ValueError(
                         "OpenAI embeddings requires: embedding_api_key, embedding_api_base_url, embedding_model_name"
                     )
@@ -89,7 +87,6 @@ class EmbeddingService:
                 )
 
             # Initialize Chroma client
-            chroma_url = f"http://{chroma_host}:{chroma_port}"
             if chroma_credentials and chroma_provider:
                 logger.info(
                     "chroma_client_auth_enabled",
@@ -141,6 +138,8 @@ class EmbeddingService:
                 "embedding_service_initialization_failed",
                 error=str(e),
                 provider=embedding_provider,
+                chroma_host=chroma_host,
+                chroma_port=chroma_port,
             )
             raise
 
@@ -185,7 +184,7 @@ class EmbeddingService:
                 )
                 raise
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         """
         Generate embedding for a query/document text.
 
@@ -237,9 +236,7 @@ class EmbeddingService:
             )
             raise
 
-    def _prepare_text(
-        self, title: str, fields: Optional[List[Optional[str]]] = None
-    ) -> str:
+    def _prepare_text(self, title: str, fields: list[str | None] | None = None) -> str:
         """
         Generic text preparation for embedding.
 
@@ -261,8 +258,8 @@ class EmbeddingService:
     def _prepare_session_text(
         self,
         title: str,
-        short_description: Optional[str] = None,
-        summary: Optional[str] = None,
+        short_description: str | None = None,
+        summary: str | None = None,
     ) -> str:
         """
         Prepare text for session embedding.
@@ -286,9 +283,7 @@ class EmbeddingService:
         )
 
     @staticmethod
-    def validate_embedding_text(
-        text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH
-    ) -> bool:
+    def validate_embedding_text(text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH) -> bool:
         """
         Validate that text is suitable for embedding.
 
@@ -313,30 +308,49 @@ class EmbeddingService:
         return True
 
     async def store_session_embedding(
-        self, session_id: int, embedding: List[float], text: str
+        self,
+        session_id: int,
+        embedding: list[float],
+        text: str,
+        metadata: dict | None = None,
     ) -> None:
         """
-        Store session embedding in Chroma.
+        Store session embedding in Chroma with optional metadata for filtering.
 
         Args:
             session_id: Session ID
             embedding: Embedding vector
             text: Original text that was embedded
+            metadata: Optional dict with session details for filtering:
+                - status: "draft" or "published"
+                - event_id: Event ID
+                - session_format: Session format
+                - tags: List of tags
+                - language: Language code
+                - duration: Duration in minutes
+                - speakers: Speaker names (comma-separated or list)
+                - title: Session title
 
         Raises:
             Exception: If storing fails
         """
         try:
+            # Build metadata with session_id and type always included
+            chroma_metadata = {"session_id": session_id, "type": "session"}
+            if metadata:
+                chroma_metadata.update(metadata)
+
             self.sessions_collection.upsert(
                 ids=[f"session_{session_id}"],
                 embeddings=[embedding],
                 documents=[text],
-                metadatas=[{"session_id": session_id, "type": "session"}],
+                metadatas=[chroma_metadata],
             )
             logger.info(
                 "session_embedding_stored",
                 session_id=session_id,
                 embedding_dimension=len(embedding),
+                metadata_keys=list((metadata or {}).keys()),
             )
         except Exception as e:
             logger.error(
@@ -347,14 +361,21 @@ class EmbeddingService:
             raise
 
     async def search_similar_sessions(
-        self, embedding: List[float], limit: int = 10
-    ) -> List[Tuple[int, float, str]]:
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        where: dict | None = None,
+    ) -> list[tuple[int, float, str]]:
         """
-        Search for similar sessions in Chroma.
+        Search for similar sessions in Chroma with optional filtering.
 
         Args:
             embedding: Query embedding
             limit: Maximum number of results
+            where: Optional Chroma where filter dict for metadata filtering
+                Example: {"language": "en"}
+                Complex: {"$and": [{"language": "en"}, {"status": "published"}]}
+                See: https://docs.trychroma.com/usage-guide#filtering-where-documents
 
         Returns:
             List of tuples: (session_id, similarity_score, text)
@@ -363,10 +384,14 @@ class EmbeddingService:
             Exception: If search fails
         """
         try:
-            results = self.sessions_collection.query(
-                query_embeddings=[embedding],
-                n_results=limit,
-            )
+            query_kwargs = {
+                "query_embeddings": [embedding],
+                "n_results": limit,
+            }
+            if where:
+                query_kwargs["where"] = where
+
+            results = self.sessions_collection.query(**query_kwargs)
 
             # Extract session_ids and similarity scores
             output = []
@@ -382,6 +407,7 @@ class EmbeddingService:
                 "session_search_complete",
                 query_dimension=len(embedding),
                 results_found=len(output),
+                filters_applied=bool(where),
             )
             return output
 

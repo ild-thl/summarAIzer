@@ -1,10 +1,12 @@
 """Tests for Session CRUD operations."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
+
 from app.crud.session import session_crud
+from app.database.models import SessionFormat, SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
-from app.database.models import SessionStatus, SessionFormat
 
 
 class TestSessionCRUD:
@@ -25,7 +27,7 @@ class TestSessionCRUD:
             uri="test-session",
             event_id=sample_event.id,
             speakers=["John Doe", "Jane Smith"],
-            categories=["AI", "Testing"],
+            tags=["AI", "Testing"],
             duration=60,
         )
 
@@ -116,9 +118,7 @@ class TestSessionCRUD:
 
         # List by status
         draft_sessions = session_crud.list_by_status(test_db, SessionStatus.DRAFT)
-        published_sessions = session_crud.list_by_status(
-            test_db, SessionStatus.PUBLISHED
-        )
+        published_sessions = session_crud.list_by_status(test_db, SessionStatus.PUBLISHED)
 
         assert len(draft_sessions) >= 1
         assert len(published_sessions) >= 1
@@ -177,13 +177,15 @@ class TestSessionCRUD:
         assert result is True
         assert session_crud.read(test_db, session_id) is None
 
-    def test_count_sessions(self, test_db, sample_session):
+    @pytest.mark.usefixtures("sample_session")
+    def test_count_sessions(self, test_db):
         """Test counting sessions."""
         count = session_crud.count(test_db)
 
         assert count >= 1
 
-    def test_count_sessions_by_event(self, test_db, sample_event, sample_session):
+    @pytest.mark.usefixtures("sample_session")
+    def test_count_sessions_by_event(self, test_db, sample_event):
         """Test counting sessions in an event."""
         count = session_crud.count_by_event(test_db, sample_event.id)
 
@@ -196,6 +198,7 @@ class TestSessionEventEmissions:
     def test_event_emitted_on_create_published_session(self, test_db, sample_event):
         """Test that session_published event is emitted when creating a published session."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -227,6 +230,7 @@ class TestSessionEventEmissions:
     def test_event_not_emitted_on_create_draft_session(self, test_db, sample_event):
         """Test that session_published event is NOT emitted when creating a draft session."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -241,7 +245,7 @@ class TestSessionEventEmissions:
         )
 
         with patch.object(SessionEventBus, "emit") as mock_emit:
-            session = session_crud.create(test_db, session_create)
+            session_crud.create(test_db, session_create)
 
             # Verify event was NOT emitted
             mock_emit.assert_not_called()
@@ -249,6 +253,7 @@ class TestSessionEventEmissions:
     def test_event_emitted_on_update_draft_to_published(self, test_db, sample_event):
         """Test that event is emitted when updating draft session to published."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -265,7 +270,7 @@ class TestSessionEventEmissions:
 
         with patch.object(SessionEventBus, "emit") as mock_emit:
             update_data = SessionUpdate(status=SessionStatus.PUBLISHED)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify event WAS emitted
             mock_emit.assert_called_once()
@@ -273,11 +278,10 @@ class TestSessionEventEmissions:
             assert call_args[0][0] == "session_published"
             assert call_args[1]["previous_status"] == SessionStatus.DRAFT
 
-    def test_event_not_emitted_on_update_published_to_published(
-        self, test_db, sample_event
-    ):
+    def test_event_not_emitted_on_update_published_to_published(self, test_db, sample_event):
         """Test that event is NOT emitted when updating published session (no status change)."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -299,7 +303,7 @@ class TestSessionEventEmissions:
 
             # Update other field, keep status as PUBLISHED
             update_data = SessionUpdate(title="Updated Title")
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify event was NOT emitted (no status change)
             mock_emit.assert_not_called()
@@ -307,6 +311,7 @@ class TestSessionEventEmissions:
     def test_event_emitted_with_correct_metadata(self, test_db, sample_event):
         """Test that emitted events contain correct metadata."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -320,7 +325,7 @@ class TestSessionEventEmissions:
             uri="metadata-test",
             event_id=sample_event.id,
             speakers=["Alice", "Bob"],
-            categories=["Testing"],
+            tags=["Testing"],
         )
 
         with patch.object(SessionEventBus, "emit") as mock_emit:
@@ -335,8 +340,8 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_when_event_emitted(self, test_db, sample_event):
         """Test that the embedding handler is actually called when event is emitted."""
-        from unittest.mock import patch, MagicMock
-        from app.events import SessionEventBus
+        from unittest.mock import patch
+
         from app.async_jobs.tasks import generate_session_embedding
 
         now = datetime.utcnow()
@@ -359,6 +364,7 @@ class TestSessionEventEmissions:
     def test_event_emitted_on_update_published_to_draft(self, test_db, sample_event):
         """Test that session_unpublished event is emitted when updating published to draft."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -380,7 +386,7 @@ class TestSessionEventEmissions:
 
             # Update status from PUBLISHED to DRAFT
             update_data = SessionUpdate(status=SessionStatus.DRAFT)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify unpublish event WAS emitted
             mock_emit.assert_called_once()
@@ -391,8 +397,8 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_on_unpublish(self, test_db, sample_event):
         """Test that deletion handler is called when session is unpublished."""
-        from unittest.mock import patch, MagicMock
-        from app.events import SessionEventBus
+        from unittest.mock import patch
+
         from app.async_jobs.tasks import delete_session_embedding
 
         now = datetime.utcnow()
@@ -411,7 +417,7 @@ class TestSessionEventEmissions:
         with patch.object(delete_session_embedding, "delay") as mock_delay:
             # Update to draft to trigger unpublish event
             update_data = SessionUpdate(status=SessionStatus.DRAFT)
-            updated_session = session_crud.update(test_db, session.id, update_data)
+            session_crud.update(test_db, session.id, update_data)
 
             # Verify the deletion task was queued
             mock_delay.assert_called_once_with(session.id)
@@ -419,6 +425,7 @@ class TestSessionEventEmissions:
     def test_event_emitted_on_session_delete_published(self, test_db, sample_event):
         """Test that session_deleted event is emitted when deleting a published session."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -456,6 +463,7 @@ class TestSessionEventEmissions:
     def test_event_not_emitted_on_delete_draft_session(self, test_db, sample_event):
         """Test that session_deleted event is NOT emitted when deleting a draft session."""
         from unittest.mock import patch
+
         from app.events import SessionEventBus
 
         now = datetime.utcnow()
@@ -486,8 +494,8 @@ class TestSessionEventEmissions:
 
     def test_event_handler_called_on_delete(self, test_db, sample_event):
         """Test that deletion handler is called when a published session is deleted."""
-        from unittest.mock import patch, MagicMock
-        from app.events import SessionEventBus
+        from unittest.mock import patch
+
         from app.async_jobs.tasks import delete_session_embedding
 
         now = datetime.utcnow()

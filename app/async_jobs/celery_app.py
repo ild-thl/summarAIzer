@@ -1,10 +1,11 @@
 """Celery configuration for backend generative workflows."""
 
 import os
+
+import structlog
 from celery import Celery
 from celery.signals import worker_ready
 from kombu import Exchange, Queue
-import structlog
 
 logger = structlog.get_logger()
 
@@ -87,7 +88,7 @@ logger.info(
 
 # Signal handler to ensure tasks are imported when worker starts
 @worker_ready.connect
-def worker_ready_handler(sender, **kwargs):
+def worker_ready_handler(sender, **_kwargs):
     """Log registered tasks when worker is ready."""
     try:
         # Get registered tasks

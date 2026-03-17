@@ -1,7 +1,8 @@
 """Tests for Event API endpoints."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,

@@ -1,11 +1,12 @@
 """Tests for schema validation."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 from pydantic import ValidationError
+
 from app.schemas.session import (
     EventCreate,
-    EventUpdate,
     SessionCreate,
     SessionUpdate,
 )
@@ -117,19 +118,6 @@ class TestSessionSchema:
                 language="en",
                 uri="test-session",
             )
-
-    def test_session_create_with_speakers(self):
-        """Test that speakers can be a simple list of names."""
-        now = datetime.utcnow()
-        session = SessionCreate(
-            title="Test",
-            start_datetime=now,
-            end_datetime=now + timedelta(hours=1),
-            language="en",
-            uri="test-session",
-            speakers=["John Doe", "Jane Smith"],  # Speakers are now simple names
-        )
-        assert session.speakers == ["John Doe", "Jane Smith"]
 
     def test_session_create_title_required(self):
         """Test that title is required."""

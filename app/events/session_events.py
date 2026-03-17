@@ -1,7 +1,11 @@
 """Event system for session domain events."""
 
-from typing import Callable, Dict, List
+from collections.abc import Callable
+from typing import ClassVar
+
 import structlog
+
+from app.config.settings import get_settings
 
 logger = structlog.get_logger()
 
@@ -21,7 +25,7 @@ class SessionEventBus:
         SessionEventBus.emit("session_published", session_id=123, uri="talk-1")
     """
 
-    _handlers: Dict[str, List[Callable]] = {
+    _handlers: ClassVar[dict[str, list[Callable]]] = {
         "session_published": [],
         "session_unpublished": [],
         "session_deleted": [],
@@ -181,8 +185,6 @@ def _handle_session_deleted(session_id: int, **kwargs) -> None:
 
 
 # Register event handlers at module load time (only if embeddings enabled)
-from app.config.settings import get_settings
-
 if get_settings().enable_embeddings:
     SessionEventBus.subscribe("session_published", _handle_session_published)
     SessionEventBus.subscribe("session_unpublished", _handle_session_unpublished)

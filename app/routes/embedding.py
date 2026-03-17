@@ -1,15 +1,14 @@
 """API routes for Embedding and Semantic Search (optional feature)."""
 
-from typing import List, Optional
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND
-import structlog
 
-from app.database.connection import get_db
-from app.schemas.session import SessionResponse
 from app.crud.session import session_crud
+from app.database.connection import get_db
 from app.database.models import User
+from app.schemas.session import SessionResponse
 from app.security.auth import get_current_user
 
 logger = structlog.get_logger()
@@ -47,9 +46,7 @@ async def refresh_session_embedding(
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
     if session.owner_id != current_user.id:
-        raise HTTPException(
-            status_code=403, detail="Forbidden - session ownership required"
-        )
+        raise HTTPException(status_code=403, detail="Forbidden - session ownership required")
 
     logger.info(
         "session_embedding_refresh_requested",
@@ -71,44 +68,58 @@ async def refresh_session_embedding(
     }
 
 
-@router.get("/search/similar", response_model=List[SessionResponse])
+@router.get("/search/similar", response_model=list[SessionResponse])
 async def search_similar_sessions(
-    query: str = Query(
-        ..., min_length=1, max_length=8000, description="Query text to search"
-    ),
+    query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
-    event_id: Optional[int] = Query(None, description="Filter by event ID"),
+    event_id: int | None = Query(None, description="Filter by event ID"),
+    session_format: str | None = Query(None, description="Filter by session format"),
+    tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    language: str | None = Query(None, description="Filter by language (ISO 639-1 code)"),
     db: Session = Depends(get_db),
 ):
     """
-    Search for sessions similar to query text using semantic search.
+    Search for sessions similar to query text using semantic search with optional filtering.
 
     Returns published sessions ordered by semantic similarity.
 
-    Args:
-        query: Text to search (will be embedded)
-        limit: Maximum number of results
-        event_id: Optional filter by event
+    **Parameters:**
+    - **query**: Text to search (will be embedded and matched semantically)
+    - **limit**: Maximum number of results (1-100)
+    - **event_id**: Optional filter by event ID (applied at DB level)
+    - **session_format**: Optional filter by format (applied via Chroma metadata)
+    - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
+    - **language**: Optional filter by language code (applied via Chroma metadata)
 
-    Returns:
-        List of similar published sessions
+    **Examples:**
+    - `/api/v2/sessions/search/similar?query=machine+learning`
+    - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
+    - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=talk`
     """
-    from app.services.embedding_factory import get_search_service
     from app.services.embedding_exceptions import (
-        InvalidEmbeddingTextError,
         EmbeddingError,
+        InvalidEmbeddingTextError,
     )
+    from app.services.embedding_factory import get_search_service
 
     try:
+        # Parse tags (comma-separated)
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
         # Get search service via dependency injection
         search_service = get_search_service()
 
-        # Delegate to search service
+        # Delegate to search service with optional filters
         sessions = await search_service.search_sessions(
             query=query,
             db=db,
             limit=limit,
             event_id=event_id,
+            session_format=session_format,
+            tags=tags_list,
+            language=language,
         )
 
         logger.info(
@@ -117,16 +128,17 @@ async def search_similar_sessions(
             results_count=len(sessions),
             limit=limit,
             event_id=event_id,
+            filters_applied=bool(session_format or tags_list or language),
         )
 
         # Convert ORM objects to Pydantic models
         return [SessionResponse.model_validate(s) for s in sessions]
 
     except InvalidEmbeddingTextError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except EmbeddingError as e:
         logger.error("session_search_embedding_error", error=str(e))
-        raise HTTPException(status_code=503, detail="Search service unavailable")
+        raise HTTPException(status_code=503, detail="Search service unavailable") from e
     except HTTPException:
         raise
     except Exception as e:
@@ -139,4 +151,4 @@ async def search_similar_sessions(
         raise HTTPException(
             status_code=500,
             detail="Similarity search failed",
-        )
+        ) from e

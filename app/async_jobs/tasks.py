@@ -1,24 +1,24 @@
 """Celery tasks for workflow execution."""
 
-from datetime import datetime
-from typing import Optional
 import asyncio
+from datetime import datetime
+
 import structlog
 from sqlalchemy.orm import Session
 
 from app.async_jobs.celery_app import app
-from app.database.connection import SessionLocal
-from app.workflows.execution_context import (
-    GenerationState,
-    resolve_target_to_workflow_class,
-    WorkflowRegistry,
-)
-from app.workflows.services.execution_service import WorkflowExecutionService
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
-from app.services.embedding_service import EmbeddingService
-from app.services.embedding_factory import get_embedding_service
+from app.database.connection import SessionLocal
 from app.services.embedding_exceptions import ChromaConnectionError
+from app.services.embedding_factory import get_embedding_service
+from app.services.embedding_service import EmbeddingService
+from app.workflows.execution_context import (
+    GenerationState,
+    WorkflowRegistry,
+    resolve_target_to_workflow_class,
+)
+from app.workflows.services.execution_service import WorkflowExecutionService
 
 logger = structlog.get_logger()
 
@@ -143,9 +143,7 @@ def _prepare_session_embedding_text(service, session) -> str:
     summary_content = None
     db = SessionLocal()
     try:
-        summary_content = content_crud.get_content_by_identifier(
-            db, session.id, "summary"
-        )
+        summary_content = content_crud.get_content_by_identifier(db, session.id, "summary")
     except Exception as e:
         logger.debug(
             "embedding_summary_fetch_failed",
@@ -165,7 +163,7 @@ def _prepare_session_embedding_text(service, session) -> str:
 
 async def _generate_session_embedding_base(
     session_id: int,
-    embedding_text: Optional[str] = None,
+    embedding_text: str | None = None,
 ) -> None:
     """
     Generate embedding for a session.
@@ -185,7 +183,7 @@ async def _generate_session_embedding_base(
     """
     from app.config.settings import get_settings
 
-    db: Optional[Session] = None
+    db: Session | None = None
     try:
         # Check if embeddings are enabled
         if not get_settings().enable_embeddings:
@@ -238,8 +236,20 @@ async def _generate_session_embedding_base(
         # Generate embedding
         embedding = await service.embed_query(embedding_text)
 
-        # Store embedding in Chroma (async)
-        await service.store_session_embedding(session_id, embedding, embedding_text)
+        # Build metadata dict for Chroma filtering
+        metadata = {
+            "title": session.title,
+            "status": session.status,
+            "event_id": session.event_id if session.event_id else -1,
+            "session_format": str(session.session_format) if session.session_format else None,
+            "tags": session.tags or [],
+            "language": session.language or "en",
+            "duration": session.duration if session.duration else -1,
+            "speakers": session.speakers or [],
+        }
+
+        # Store embedding in Chroma with metadata for filtering
+        await service.store_session_embedding(session_id, embedding, embedding_text, metadata)
 
         # Update embedding metadata in database
         session.embedding_model = get_settings().embedding_model_name
@@ -277,7 +287,7 @@ async def _generate_session_embedding_base(
 def generate_session_embedding(
     self,
     session_id: int,
-    embedding_text: Optional[str] = None,
+    embedding_text: str | None = None,
 ):
     """
     Generate and store embedding for a session asynchronously.
@@ -286,7 +296,7 @@ def generate_session_embedding(
         session_id: Session ID to embed
         embedding_text: Pre-computed text to embed (if None, will fetch from session)
     """
-    db: Optional[Session] = None
+    db: Session | None = None
     try:
         # Run the async helper
         loop = asyncio.new_event_loop()
@@ -317,11 +327,267 @@ def generate_session_embedding(
                 session_id=session_id,
                 retry_count=self.request.retries,
             )
-            raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+            raise self.retry(exc=e, countdown=60 * (self.request.retries + 1)) from e
 
     finally:
         if db:
             db.close()
+
+
+def _resolve_and_build_workflow(target: str, execution_id: int):
+    """
+    Resolve workflow target and build execution graph.
+
+    Separated to reduce main task complexity.
+
+    Args:
+        target: Workflow name or step identifier
+        execution_id: For logging context
+
+    Returns:
+        Compiled LangGraph workflow graph
+
+    Raises:
+        Exception: If target resolution or graph building fails
+    """
+    try:
+        logger.info(
+            "resolving_workflow_target",
+            target=target,
+            execution_id=execution_id,
+        )
+        workflow_class = resolve_target_to_workflow_class(target)
+        logger.info(
+            "workflow_target_resolved",
+            target=target,
+            workflow_class=workflow_class.__name__,
+            execution_id=execution_id,
+        )
+    except Exception as resolve_error:
+        logger.error(
+            "workflow_target_resolution_failed",
+            target=target,
+            execution_id=execution_id,
+            error=str(resolve_error),
+            error_type=type(resolve_error).__name__,
+            exc_info=True,
+        )
+        raise
+
+    try:
+        graph = WorkflowRegistry.get_or_build_graph(workflow_class)
+        logger.info(
+            "content_generation_workflow_graph_loaded",
+            execution_id=execution_id,
+            target=target,
+            graph_nodes=list(graph.nodes) if hasattr(graph, "nodes") else "N/A",
+        )
+        return graph
+    except Exception as graph_error:
+        logger.error(
+            "workflow_graph_build_failed",
+            target=target,
+            execution_id=execution_id,
+            workflow_class=workflow_class.__name__ if "workflow_class" in locals() else "unknown",
+            error=str(graph_error),
+            error_type=type(graph_error).__name__,
+            exc_info=True,
+        )
+        raise
+
+
+def _execute_workflow_graph(
+    graph, initial_state: GenerationState, execution_id: int, session_id: int, task_id: str
+):
+    """
+    Execute LangGraph workflow asynchronously.
+
+    Separated to reduce main task complexity.
+
+    Args:
+        graph: Compiled LangGraph workflow
+        initial_state: Initial GenerationState
+        execution_id: For logging
+        session_id: For logging
+        task_id: Celery task ID for logging
+
+    Returns:
+        Final state dict after graph execution
+
+    Raises:
+        Exception: If graph execution fails
+    """
+    logger.info(
+        "content_generation_starting_execution",
+        task_id=task_id,
+        execution_id=execution_id,
+        session_id=session_id,
+        initial_state_keys=list(initial_state.keys()),
+    )
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        logger.info(
+            "about_to_invoke_graph",
+            execution_id=execution_id,
+        )
+
+        final_state = loop.run_until_complete(graph.ainvoke(initial_state))
+
+        logger.info(
+            "content_generation_execution_completed",
+            task_id=task_id,
+            execution_id=execution_id,
+            session_id=session_id,
+            generated_content_keys=list(final_state.keys()),
+        )
+        return final_state
+    except Exception as exec_error:
+        logger.error(
+            "graph_execution_failed",
+            execution_id=execution_id,
+            error=str(exec_error),
+            error_type=type(exec_error).__name__,
+            exc_info=True,
+        )
+        raise
+    finally:
+        loop.close()
+
+
+def _track_generated_content(
+    final_state: dict, execution_id: int, session_id: int, db: Session
+) -> list[int]:
+    """
+    Update session with generated content identifiers and retrieve created content IDs.
+
+    Separated to reduce main task complexity.
+
+    Args:
+        final_state: Final state dict from graph execution
+        execution_id: WorkflowExecution ID
+        session_id: Session ID
+        db: Database session
+
+    Returns:
+        List of created content IDs
+    """
+    # Extract step identifiers from final state (other keys are execution context)
+    # Fixed SIM118: use 'in dict' instead of 'in dict.keys()'
+    step_identifiers = [
+        k for k in final_state if k not in ["session_id", "execution_id", "transcription"]
+    ]
+
+    for step_id in step_identifiers:
+        if final_state.get(step_id):
+            session_crud.add_available_content_identifier(db, session_id, step_id)
+            logger.debug(
+                "content_identifier_ensured_in_session",
+                session_id=session_id,
+                step_id=step_id,
+            )
+
+    # Get created content IDs for logging
+    created_content = content_crud.get_content_list(db, session_id)
+    created_ids = [c.id for c in created_content if c.workflow_execution_id == execution_id]
+
+    logger.info(
+        "created_content_retrieved_for_logging",
+        execution_id=execution_id,
+        session_id=session_id,
+        created_ids=created_ids,
+    )
+
+    return created_ids
+
+
+def _handle_workflow_error(
+    e: Exception,
+    execution_id: int,
+    session_id: int,
+    target: str,
+    task_id: str,
+    task_self,
+    db: Session | None = None,
+):
+    """
+    Handle workflow execution errors with proper logging and retry logic.
+
+    Separated to reduce main task complexity.
+
+    Args:
+        e: Exception that occurred
+        execution_id: WorkflowExecution ID
+        session_id: Session ID
+        target: Workflow target
+        task_id: Celery task ID
+        task_self: Celery task self object (for retry)
+        db: Optional database session
+    """
+    import traceback
+
+    tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
+    tb_str = "".join(tb_lines)
+
+    should_retry = _is_transient_error(e)
+
+    logger.error(
+        "content_generation_task_failed",
+        task_id=task_id,
+        execution_id=execution_id,
+        session_id=session_id,
+        target=target,
+        error=str(e),
+        error_type=type(e).__name__,
+        should_retry=should_retry,
+        exc_info=True,
+        full_traceback=tb_str,
+    )
+
+    # Mark as failed
+    if db:
+        try:
+            WorkflowExecutionService.mark_failed(execution_id, db, str(e))
+            logger.info(
+                "content_generation_execution_marked_failed",
+                execution_id=execution_id,
+                error=str(e),
+            )
+        except Exception as db_error:
+            logger.error(
+                "failed_to_mark_workflow_failed",
+                error=str(db_error),
+                original_error=str(e),
+            )
+
+    # Only retry on transient errors
+    if should_retry:
+        try:
+            logger.info(
+                "content_generation_task_retrying",
+                task_id=task_id,
+                retry_count=task_self.request.retries,
+                max_retries=task_self.max_retries,
+                countdown_seconds=60 * (task_self.request.retries + 1),
+                error_type=type(e).__name__,
+            )
+            raise task_self.retry(exc=e, countdown=60 * (task_self.request.retries + 1)) from e
+        except Exception as retry_exception:
+            logger.error(
+                "content_generation_task_max_retries_exceeded",
+                task_id=task_id,
+                execution_id=execution_id,
+                final_error=str(retry_exception),
+            )
+    else:
+        logger.error(
+            "content_generation_task_not_retried_programming_error",
+            task_id=task_id,
+            execution_id=execution_id,
+            error_type=type(e).__name__,
+            reason="Error is not transient (programming error). Permanent failure recorded.",
+        )
 
 
 @app.task(
@@ -336,7 +602,7 @@ def execute_generated_content(
     execution_id: int,
     target: str,
     triggered_by: str = "user_triggered",
-    created_by_user_id: Optional[int] = None,
+    created_by_user_id: int | None = None,
 ):
     """
     Execute a content generation workflow using LangGraph.
@@ -350,9 +616,9 @@ def execute_generated_content(
         execution_id: WorkflowExecution record ID for tracking
         target: Workflow name or step identifier (e.g., "talk_workflow", "summary")
         triggered_by: "user_triggered" or "auto_scheduled"
-        created_by_user_id: User who triggered the workflow
+        created_by_user_id: User who triggered the workflow (stored in WorkflowExecution)
     """
-    db: Optional[Session] = None
+    db: Session | None = None
     try:
         db = SessionLocal()
 
@@ -363,37 +629,45 @@ def execute_generated_content(
             execution_id=execution_id,
             target=target,
             triggered_by=triggered_by,
+            created_by_user_id=created_by_user_id,
         )
 
-        # Mark as running
+        # Mark as running and store user context
         WorkflowExecutionService.mark_running(execution_id, db, self.request.id)
+        if created_by_user_id is not None:
+            workflow_exec = content_crud.get_workflow_execution(db, execution_id)
+            if workflow_exec:
+                workflow_exec.created_by_user_id = created_by_user_id
+                db.commit()
+                logger.info(
+                    "workflow_execution_user_context_stored",
+                    execution_id=execution_id,
+                    created_by_user_id=created_by_user_id,
+                )
 
-        logger.info(
-            "content_generation_marked_running",
-            task_id=self.request.id,
-            execution_id=execution_id,
-            session_id=session_id,
-        )
-
-        # Fetch transcription and session data
-        tx_content = content_crud.get_content_by_identifier(
-            db, session_id, "transcription"
-        )
+        # Fetch transcription if available (optional - steps define their own dependencies)
+        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
         if not tx_content:
-            raise ValueError(f"Transcription not found for session {session_id}")
+            logger.warning(
+                "content_generation_transcription_not_found",
+                task_id=self.request.id,
+                execution_id=execution_id,
+                session_id=session_id,
+            )
 
         logger.info(
             "content_generation_transcription_loaded",
             task_id=self.request.id,
             execution_id=execution_id,
             session_id=session_id,
+            transcription_available=tx_content is not None,
         )
 
         # Build initial state for LangGraph
         initial_state: GenerationState = GenerationState(
             session_id=session_id,
             execution_id=execution_id,
-            transcription=tx_content.content,
+            transcription=tx_content.content if tx_content else None,
         )
 
         # Validate that db is NOT in state (common cause of serialization errors)
@@ -417,126 +691,28 @@ def execute_generated_content(
             state_keys=list(initial_state.keys()),
         )
 
-        # Resolve target to workflow class and build graph
-        logger.info(
-            "resolving_workflow_target",
-            target=target,
-            session_id=session_id,
+        # Resolve workflow and build graph
+        graph = _resolve_and_build_workflow(target, execution_id)
+
+        # Execute graph
+        final_state = _execute_workflow_graph(
+            graph,
+            initial_state,
+            execution_id,
+            session_id,
+            self.request.id,
         )
 
-        try:
-            workflow_class = resolve_target_to_workflow_class(target)
-            logger.info(
-                "workflow_target_resolved",
-                target=target,
-                workflow_class=workflow_class.__name__,
-                session_id=session_id,
-            )
-        except Exception as resolve_error:
-            logger.error(
-                "workflow_target_resolution_failed",
-                target=target,
-                error=str(resolve_error),
-                error_type=type(resolve_error).__name__,
-                exc_info=True,
-            )
-            raise
-
-        # Get or build workflow graph
-        try:
-            graph = WorkflowRegistry.get_or_build_graph(workflow_class)
-            logger.info(
-                "content_generation_workflow_graph_loaded",
-                task_id=self.request.id,
-                execution_id=execution_id,
-                session_id=session_id,
-                target=target,
-                graph_nodes=list(graph.nodes) if hasattr(graph, "nodes") else "N/A",
-            )
-        except Exception as graph_error:
-            logger.error(
-                "workflow_graph_build_failed",
-                target=target,
-                workflow_class=workflow_class.__name__,
-                error=str(graph_error),
-                error_type=type(graph_error).__name__,
-                exc_info=True,
-            )
-            raise
-
-        # Execute graph (async, so we need asyncio)
-        logger.info(
-            "content_generation_starting_execution",
-            task_id=self.request.id,
-            execution_id=execution_id,
-            session_id=session_id,
-            initial_state_keys=list(initial_state.keys()),
-        )
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            logger.info(
-                "about_to_invoke_graph",
-                execution_id=execution_id,
-                target=target,
-            )
-
-            final_state = loop.run_until_complete(graph.ainvoke(initial_state))
-
-            logger.info(
-                "content_generation_execution_completed",
-                task_id=self.request.id,
-                execution_id=execution_id,
-                session_id=session_id,
-                generated_content_keys=list(final_state.keys()),
-            )
-        except Exception as exec_error:
-            logger.error(
-                "graph_execution_failed",
-                execution_id=execution_id,
-                target=target,
-                error=str(exec_error),
-                error_type=type(exec_error).__name__,
-                exc_info=True,
-            )
-            raise
-        finally:
-            loop.close()
-
-        # Update session's available content identifiers
-        # Extract step identifiers from final state (other keys are execution context)
-        step_identifiers = [
-            k
-            for k in final_state.keys()
-            if k not in ["session_id", "execution_id", "transcription"]
-        ]
-
-        for step_id in step_identifiers:
-            if step_id in final_state and final_state[step_id]:
-                session_crud.add_available_content_identifier(db, session_id, step_id)
-                logger.debug(
-                    "content_identifier_ensured_in_session",
-                    session_id=session_id,
-                    step_id=step_id,
-                )
-
-        # Get created content IDs for logging
-        created_content = content_crud.get_content_list(db, session_id)
-        created_ids = [
-            c.id for c in created_content if c.workflow_execution_id == execution_id
-        ]
-
-        logger.info(
-            "created_content_retrieved_for_logging",
-            task_id=self.request.id,
-            execution_id=execution_id,
-            session_id=session_id,
-            created_ids=created_ids,
-        )
+        # Track generated content and update session
+        created_ids = _track_generated_content(final_state, execution_id, session_id, db)
 
         # Mark as completed
         WorkflowExecutionService.mark_completed(execution_id, db, created_ids)
+
+        # Extract step identifiers for summary logging
+        step_identifiers = [
+            k for k in final_state if k not in ["session_id", "execution_id", "transcription"]
+        ]
 
         logger.info(
             "content_generation_task_completed",
@@ -563,73 +739,7 @@ def execute_generated_content(
         }
 
     except Exception as e:
-        # Enhanced error logging with full context
-        import traceback
-
-        tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
-        tb_str = "".join(tb_lines)
-
-        # Determine if this is a transient error worth retrying (whitelist approach)
-        should_retry = _is_transient_error(e)
-
-        logger.error(
-            "content_generation_task_failed",
-            task_id=self.request.id,
-            execution_id=execution_id,
-            session_id=session_id,
-            target=target,
-            error=str(e),
-            error_type=type(e).__name__,
-            should_retry=should_retry,
-            exc_info=True,
-            full_traceback=tb_str,
-        )
-
-        # Mark as failed
-        if db:
-            try:
-                WorkflowExecutionService.mark_failed(execution_id, db, str(e))
-                logger.info(
-                    "content_generation_execution_marked_failed",
-                    execution_id=execution_id,
-                    error=str(e),
-                )
-            except Exception as db_error:
-                logger.error(
-                    "failed_to_mark_workflow_failed",
-                    error=str(db_error),
-                    original_error=str(e),
-                )
-
-        # Only retry on transient errors (whitelist pattern)
-        if should_retry:
-            try:
-                logger.info(
-                    "content_generation_task_retrying",
-                    task_id=self.request.id,
-                    retry_count=self.request.retries,
-                    max_retries=self.max_retries,
-                    countdown_seconds=60 * (self.request.retries + 1),
-                    error_type=type(e).__name__,
-                )
-                raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
-            except Exception as retry_exception:
-                # Max retries exceeded
-                logger.error(
-                    "content_generation_task_max_retries_exceeded",
-                    task_id=self.request.id,
-                    execution_id=execution_id,
-                    final_error=str(retry_exception),
-                )
-                pass
-        else:
-            logger.error(
-                "content_generation_task_not_retried_programming_error",
-                task_id=self.request.id,
-                execution_id=execution_id,
-                error_type=type(e).__name__,
-                reason="Error is not transient (programming error). Permanent failure recorded.",
-            )
+        _handle_workflow_error(e, execution_id, session_id, target, self.request.id, self, db)
 
     finally:
         if db:
@@ -670,7 +780,7 @@ def delete_session_embedding(self, session_id: int):
             error_type=type(exc).__name__,
             exc_info=True,
         )
-        raise self.retry(exc=exc, countdown=60)
+        raise self.retry(exc=exc, countdown=60) from exc
 
 
 # Health check task
@@ -681,9 +791,7 @@ def health_check():
         "celery_health_check_executed",
         status="ok",
         worker_name=(
-            health_check.request.hostname
-            if hasattr(health_check, "request")
-            else "unknown"
+            health_check.request.hostname if hasattr(health_check, "request") else "unknown"
         ),
     )
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}

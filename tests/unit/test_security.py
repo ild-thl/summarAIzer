@@ -1,6 +1,5 @@
 """Tests for security and input validation."""
 
-import pytest
 from app.security.validator import SecurityValidator
 
 
@@ -54,12 +53,8 @@ class TestSecurityValidator:
     def test_validate_language_code_invalid(self):
         """Test validating invalid language codes."""
         assert SecurityValidator.validate_language_code("eng") is False
-        assert (
-            SecurityValidator.validate_language_code("en-us") is False
-        )  # Should be uppercase
-        assert (
-            SecurityValidator.validate_language_code("EN") is False
-        )  # Should be lowercase
+        assert SecurityValidator.validate_language_code("en-us") is False  # Should be uppercase
+        assert SecurityValidator.validate_language_code("EN") is False  # Should be lowercase
         assert SecurityValidator.validate_language_code("") is False
 
     def test_sanitize_string(self):
@@ -84,9 +79,7 @@ class TestSecurityValidator:
     def test_validate_url_invalid(self):
         """Test validating invalid URLs."""
         assert SecurityValidator.validate_url("not a url") is False
-        assert (
-            SecurityValidator.validate_url("example.com") is False
-        )  # Missing protocol
+        assert SecurityValidator.validate_url("example.com") is False  # Missing protocol
         assert SecurityValidator.validate_url("") is False
 
     def test_validate_url_max_length(self):

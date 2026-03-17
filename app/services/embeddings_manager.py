@@ -1,9 +1,9 @@
 """Embeddings manager supporting multiple embedding backends."""
 
-import structlog
-from typing import List, Optional
 from abc import ABC, abstractmethod
+
 import requests
+import structlog
 
 logger = structlog.get_logger()
 
@@ -12,7 +12,7 @@ class EmbeddingsBackend(ABC):
     """Abstract base class for embedding backends."""
 
     @abstractmethod
-    async def aembed_query(self, text: str) -> List[float]:
+    async def aembed_query(self, text: str) -> list[float]:
         """Asynchronously embed a query text."""
         pass
 
@@ -36,7 +36,7 @@ class OpenAIEmbeddingsBackend(EmbeddingsBackend):
             api_base_url=api_base_url,
         )
 
-    async def aembed_query(self, text: str) -> List[float]:
+    async def aembed_query(self, text: str) -> list[float]:
         """Embed query using OpenAI."""
         return await self.embeddings.aembed_query(text)
 
@@ -53,11 +53,11 @@ class HuggingFaceInferenceEmbeddingsBackend(EmbeddingsBackend):
             api_base_url=api_base_url,
         )
 
-    async def aembed_query(self, text: str) -> List[float]:
+    async def aembed_query(self, text: str) -> list[float]:
         """Embed query using HuggingFace Inference API."""
         return self.embed_query(text)
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str) -> list[float]:
         """Embed query text synchronously."""
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -97,9 +97,7 @@ def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackend:
     if provider == "openai":
         required_keys = {"api_key", "api_base_url", "model"}
         if not required_keys.issubset(kwargs.keys()):
-            raise ValueError(
-                f"OpenAI embeddings requires: {required_keys}. Got: {kwargs.keys()}"
-            )
+            raise ValueError(f"OpenAI embeddings requires: {required_keys}. Got: {kwargs.keys()}")
         return OpenAIEmbeddingsBackend(
             api_key=kwargs["api_key"],
             api_base_url=kwargs["api_base_url"],
@@ -116,6 +114,4 @@ def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackend:
             api_base_url=kwargs["api_base_url"],
         )
     else:
-        raise ValueError(
-            f"Unknown embeddings provider: {provider}. Use 'openai' or 'huggingface'"
-        )
+        raise ValueError(f"Unknown embeddings provider: {provider}. Use 'openai' or 'huggingface'")

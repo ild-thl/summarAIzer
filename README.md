@@ -209,6 +209,33 @@ The app uses a layered architecture with comprehensive authorization:
 - **Services** - LLM and storage integration
 - **Async Jobs** - Background task queue (Celery)
 
+### System Overview
+
+```mermaid
+graph TB
+    Client["🖥️ Client / User"]
+    API["📡 REST API<br/>FastAPI"]
+    Redis["🔴 Redis<br/>Message Queue"]
+    Worker["⚙️ Celery Worker<br/>Task Processing"]
+    Postgres["🐘 PostgreSQL<br/>Sessions, Events,<br/>Content"]
+    Chroma["🔍 Chroma DB<br/>Vector Embeddings<br/>Semantic Search"]
+    
+    Client -->|HTTP Requests| API
+    API -->|Queue Tasks| Redis
+    API -->|Read/Write| Postgres
+    Redis -->|Consume Tasks| Worker
+    Worker -->|Store Results| Postgres
+    Worker -->|Store Embeddings| Chroma
+    API -->|Query Embeddings| Chroma
+    
+    style API fill:#ADD8E6,stroke:#333,color:#000
+    style Redis fill:#FFB6C1,stroke:#333,color:#000
+    style Worker fill:#ADD8E6,stroke:#333,color:#000
+    style Postgres fill:#E8E8E8,stroke:#333,color:#000
+    style Chroma fill:#E8E8E8,stroke:#333,color:#000
+    style Client fill:#90EE90,stroke:#333,color:#000
+```
+
 ### Workflow Execution
 When a workflow is triggered:
 1. Ownership verified (user must own session)

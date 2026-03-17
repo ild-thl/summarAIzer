@@ -1,15 +1,16 @@
 """Tests for Session API endpoints."""
 
-import pytest
 import hashlib
 from datetime import datetime, timedelta
+
+import pytest
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
-    HTTP_403_FORBIDDEN,
 )
 
 
@@ -40,7 +41,7 @@ class TestSessionAPI:
                 "event_id": sample_event.id,
                 "status": "draft",
                 "speakers": ["Test Speaker", "Another Speaker"],
-                "categories": ["Testing", "API"],
+                "tags": ["Testing", "API"],
             },
         )
 
@@ -163,7 +164,8 @@ class TestSessionAPI:
         # Should include the published session
         assert any(s["id"] == sample_session_no_event.id for s in data)
 
-    def test_list_sessions_by_status(self, client, sample_api_key, session_with_owner):
+    @pytest.mark.usefixtures("sample_session")
+    def test_list_sessions_by_status(self, client, sample_api_key):
         """Test listing sessions filtered by status (authenticated)."""
         api_key, plain_key = sample_api_key
         response = client.get(
@@ -192,9 +194,7 @@ class TestSessionAPI:
         assert data["title"] == "Updated Session Title"
         assert data["status"] == "published"
 
-    def test_update_session_change_event(
-        self, client, sample_api_key, session_with_owner
-    ):
+    def test_update_session_change_event(self, client, sample_api_key, session_with_owner):
         """Test changing a session's event."""
         api_key, plain_key = sample_api_key
         # Create another event
@@ -250,7 +250,7 @@ class TestSessionAPI:
 class TestSessionURIUniquenessPerEvent:
     """Test suite for per-event URI uniqueness."""
 
-    def test_session_uri_unique_globally_fails(self, client, sample_api_key, test_db):
+    def test_session_uri_unique_globally_fails(self, client, sample_api_key):
         """Test that global URI uniqueness is removed (should allow per-event reuse)."""
         api_key, plain_key = sample_api_key
 
@@ -466,7 +466,7 @@ class TestSessionUpsertEndpoint:
         event_id = event_resp.json()["id"]
 
         # Create another user
-        from app.database.models import User, APIKey
+        from app.database.models import APIKey, User
 
         other_user = User(username="other-upsert-user", type="api")
         test_db.add(other_user)

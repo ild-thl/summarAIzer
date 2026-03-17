@@ -2,14 +2,14 @@
 
 import hashlib
 from datetime import datetime
-from typing import Optional
 
-from fastapi import HTTPException, Header, Depends, status
-from sqlalchemy.orm import Session
 import structlog
+from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
-from app.database.models import User, APIKey, Event, Session as SessionModel
+from app.database.models import APIKey, Event, User
+from app.database.models import Session as SessionModel
 
 logger = structlog.get_logger()
 
@@ -48,7 +48,7 @@ async def get_current_user(
         db.query(APIKey)
         .filter(
             APIKey.key_hash == key_hash,
-            APIKey.deleted_at == None,  # Not soft-deleted
+            APIKey.deleted_at.is_(None),  # Not soft-deleted
         )
         .first()
     )
@@ -131,7 +131,7 @@ async def require_session_owner(
 async def get_current_user_optional(
     authorization: str = Header(None),
     db: Session = Depends(get_db),
-) -> Optional[User]:
+) -> User | None:
     """Optional authentication. Returns User if valid auth provided, None otherwise."""
     if not authorization:
         return None
@@ -149,7 +149,7 @@ async def get_current_user_optional(
             db.query(APIKey)
             .filter(
                 APIKey.key_hash == key_hash,
-                APIKey.deleted_at == None,
+                APIKey.deleted_at.is_(None),
             )
             .first()
         )
@@ -172,7 +172,7 @@ async def get_current_user_optional(
 
 def can_access_session_content(
     session: SessionModel,
-    current_user: Optional[User],
+    current_user: User | None,
 ) -> bool:
     """
     Check if a user can access a session/content based on publication status.

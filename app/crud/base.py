@@ -1,7 +1,8 @@
 """Base CRUD operations interface."""
 
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar, List, Optional
+from typing import Generic, TypeVar
+
 from sqlalchemy.orm import Session
 
 T = TypeVar("T")
@@ -21,22 +22,22 @@ class CRUDBase(ABC, Generic[T, CreateSchemaType, UpdateSchemaType]):
         pass
 
     @abstractmethod
-    def read(self, db: Session, id: int) -> Optional[T]:
+    def read(self, db: Session, id: int) -> T | None:
         """Read a record by ID."""
         pass
 
     @abstractmethod
-    def read_by_uri(self, db: Session, uri: str) -> Optional[T]:
+    def read_by_uri(self, db: Session, uri: str) -> T | None:
         """Read a record by URI."""
         pass
 
     @abstractmethod
-    def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> List[T]:
+    def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> list[T]:
         """List all records with pagination."""
         pass
 
     @abstractmethod
-    def update(self, db: Session, id: int, obj_in: UpdateSchemaType) -> Optional[T]:
+    def update(self, db: Session, id: int, obj_in: UpdateSchemaType) -> T | None:
         """Update a record."""
         pass
 

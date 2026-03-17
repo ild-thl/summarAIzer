@@ -1,10 +1,10 @@
 """Pydantic schemas for request/response validation."""
 
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field, HttpUrl, field_validator, ConfigDict
-from app.database.models import SessionFormat, SessionStatus, EventStatus
 
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+
+from app.database.models import EventStatus, SessionFormat, SessionStatus
 
 # ============================================================================
 # Event Schemas
@@ -15,25 +15,19 @@ class EventBase(BaseModel):
     """Base schema for Event with common fields."""
 
     title: str = Field(..., min_length=1, max_length=255, description="Event title")
-    description: Optional[str] = Field(
-        None, max_length=5000, description="Event description"
-    )
+    description: str | None = Field(None, max_length=5000, description="Event description")
     start_date: datetime = Field(..., description="Event start datetime")
     end_date: datetime = Field(..., description="Event end datetime")
-    location: Optional[str] = Field(None, max_length=255, description="Event location")
+    location: str | None = Field(None, max_length=255, description="Event location")
     status: EventStatus = Field(default=EventStatus.DRAFT, description="Event status")
-    uri: str = Field(
-        ..., min_length=1, max_length=255, description="URL-safe identifier"
-    )
+    uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
 
     @field_validator("uri")
     @classmethod
     def validate_uri(cls, v: str) -> str:
         """Validate URI is URL-safe."""
         if not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower()
 
     @field_validator("end_date")
@@ -54,22 +48,20 @@ class EventCreate(EventBase):
 class EventUpdate(BaseModel):
     """Schema for updating an Event."""
 
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = Field(None, max_length=5000)
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
-    location: Optional[str] = Field(None, max_length=255)
-    status: Optional[EventStatus] = None
-    uri: Optional[str] = Field(None, min_length=1, max_length=255)
+    title: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = Field(None, max_length=5000)
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    location: str | None = Field(None, max_length=255)
+    status: EventStatus | None = None
+    uri: str | None = Field(None, min_length=1, max_length=255)
 
     @field_validator("uri")
     @classmethod
-    def validate_uri(cls, v: Optional[str]) -> Optional[str]:
+    def validate_uri(cls, v: str | None) -> str | None:
         """Validate URI is URL-safe."""
         if v is not None and not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower() if v else v
 
 
@@ -77,7 +69,7 @@ class EventResponse(EventBase):
     """Schema for Event response."""
 
     id: int = Field(..., description="Event ID")
-    owner_id: Optional[int] = Field(None, description="Event owner ID")
+    owner_id: int | None = Field(None, description="Event owner ID")
     created_at: datetime
     updated_at: datetime
 
@@ -93,46 +85,28 @@ class SessionBase(BaseModel):
     """Base schema for Session with common fields."""
 
     title: str = Field(..., min_length=1, max_length=255, description="Session title")
-    speakers: Optional[List[str]] = Field(
-        default=None, description="List of speaker names"
-    )
-    categories: Optional[List[str]] = Field(
-        default=None, description="Session categories"
-    )
-    short_description: Optional[str] = Field(
-        None, max_length=1000, description="Short description"
-    )
-    location: Optional[str] = Field(
-        None, max_length=255, description="Session location"
-    )
+    speakers: list[str] | None = Field(default=None, description="List of speaker names")
+    tags: list[str] | None = Field(default=None, description="Session tags")
+    short_description: str | None = Field(None, max_length=1000, description="Short description")
+    location: str | None = Field(None, max_length=255, description="Session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
     end_datetime: datetime = Field(..., description="Session end datetime")
-    recording_url: Optional[HttpUrl] = Field(None, description="Recording URL")
-    status: SessionStatus = Field(
-        default=SessionStatus.DRAFT, description="Session status"
-    )
-    session_format: Optional[SessionFormat] = Field(
-        None, description="Session format type"
-    )
-    duration: Optional[int] = Field(
-        None, ge=0, le=1440, description="Duration in minutes"
-    )
+    recording_url: HttpUrl | None = Field(None, description="Recording URL")
+    status: SessionStatus = Field(default=SessionStatus.DRAFT, description="Session status")
+    session_format: SessionFormat | None = Field(None, description="Session format type")
+    duration: int | None = Field(None, ge=0, le=1440, description="Duration in minutes")
     language: str = Field(
         default="en", min_length=2, max_length=10, description="ISO 639-1 language code"
     )
-    uri: str = Field(
-        ..., min_length=1, max_length=255, description="URL-safe identifier"
-    )
-    event_id: Optional[int] = Field(None, description="Associated event ID")
+    uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
+    event_id: int | None = Field(None, description="Associated event ID")
 
     @field_validator("uri")
     @classmethod
     def validate_uri(cls, v: str) -> str:
         """Validate URI is URL-safe."""
         if not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower()
 
     @field_validator("end_datetime")
@@ -145,25 +119,16 @@ class SessionBase(BaseModel):
 
     @field_validator("duration", mode="after")
     @classmethod
-    def validate_duration(cls, v: Optional[int], info) -> Optional[int]:
+    def validate_duration(cls, v: int | None, info) -> int | None:
         """Validate duration matches time difference if both provided."""
-        if (
-            v is not None
-            and "start_datetime" in info.data
-            and "end_datetime" in info.data
-        ):
+        if v is not None and "start_datetime" in info.data and "end_datetime" in info.data:
             calculated_duration = int(
-                (
-                    info.data["end_datetime"] - info.data["start_datetime"]
-                ).total_seconds()
-                / 60
+                (info.data["end_datetime"] - info.data["start_datetime"]).total_seconds() / 60
             )
-            if v != calculated_duration:
-                # Allow some tolerance for rounding
-                if abs(v - calculated_duration) > 5:
-                    raise ValueError(
-                        f"Duration should be approximately {calculated_duration} minutes"
-                    )
+
+            # Allow some tolerance for rounding
+            if v != calculated_duration and abs(v - calculated_duration) > 5:
+                raise ValueError(f"Duration should be approximately {calculated_duration} minutes")
         return v
 
 
@@ -176,29 +141,27 @@ class SessionCreate(SessionBase):
 class SessionUpdate(BaseModel):
     """Schema for updating a Session."""
 
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    speakers: Optional[List[str]] = None
-    categories: Optional[List[str]] = None
-    short_description: Optional[str] = Field(None, max_length=1000)
-    location: Optional[str] = Field(None, max_length=255)
-    start_datetime: Optional[datetime] = None
-    end_datetime: Optional[datetime] = None
-    recording_url: Optional[HttpUrl] = None
-    status: Optional[SessionStatus] = None
-    session_format: Optional[SessionFormat] = None
-    duration: Optional[int] = Field(None, ge=0, le=1440)
-    language: Optional[str] = Field(None, min_length=2, max_length=10)
-    uri: Optional[str] = Field(None, min_length=1, max_length=255)
-    event_id: Optional[int] = None
+    title: str | None = Field(None, min_length=1, max_length=255)
+    speakers: list[str] | None = None
+    tags: list[str] | None = None
+    short_description: str | None = Field(None, max_length=1000)
+    location: str | None = Field(None, max_length=255)
+    start_datetime: datetime | None = None
+    end_datetime: datetime | None = None
+    recording_url: HttpUrl | None = None
+    status: SessionStatus | None = None
+    session_format: SessionFormat | None = None
+    duration: int | None = Field(None, ge=0, le=1440)
+    language: str | None = Field(None, min_length=2, max_length=10)
+    uri: str | None = Field(None, min_length=1, max_length=255)
+    event_id: int | None = None
 
     @field_validator("uri")
     @classmethod
-    def validate_uri(cls, v: Optional[str]) -> Optional[str]:
+    def validate_uri(cls, v: str | None) -> str | None:
         """Validate URI is URL-safe."""
         if v is not None and not v.replace("-", "").replace("_", "").isalnum():
-            raise ValueError(
-                "URI must be alphanumeric with hyphens or underscores only"
-            )
+            raise ValueError("URI must be alphanumeric with hyphens or underscores only")
         return v.lower() if v else v
 
 
@@ -206,8 +169,8 @@ class SessionResponse(SessionBase):
     """Schema for Session response."""
 
     id: int = Field(..., description="Session ID")
-    owner_id: Optional[int] = Field(None, description="Session owner ID")
-    available_content: List[str] = Field(
+    owner_id: int | None = Field(None, description="Session owner ID")
+    available_content: list[str] = Field(
         default_factory=list,
         alias="available_content_identifiers",
         description="List of available content identifiers",
@@ -221,4 +184,4 @@ class SessionResponse(SessionBase):
 class SessionWithEvent(SessionResponse):
     """Schema for Session response with associated event."""
 
-    event: Optional[EventResponse] = None
+    event: EventResponse | None = None

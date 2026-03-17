@@ -1,10 +1,12 @@
 """Tests for Event CRUD operations."""
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
+
 from app.crud.event import event_crud
-from app.schemas.session import EventCreate, EventUpdate
 from app.database.models import EventStatus
+from app.schemas.session import EventCreate, EventUpdate
 
 
 class TestEventCRUD:
@@ -169,7 +171,8 @@ class TestEventCRUD:
 
         assert result is False
 
-    def test_count_events(self, test_db, sample_event):
+    @pytest.mark.usefixtures("sample_event")
+    def test_count_events(self, test_db):
         """Test counting events."""
         count = event_crud.count(test_db)
 

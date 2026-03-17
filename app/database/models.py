@@ -2,17 +2,20 @@
 
 from datetime import datetime
 from enum import Enum
+
 from sqlalchemy import (
+    JSON,
+    Boolean,
     Column,
+    DateTime,
+    ForeignKey,
     Integer,
     String,
     Text,
-    DateTime,
-    ForeignKey,
-    Enum as SQLEnum,
-    JSON,
     UniqueConstraint,
-    Boolean,
+)
+from sqlalchemy import (
+    Enum as SQLEnum,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -68,14 +71,10 @@ class Event(Base):
     uri = Column(String(255), nullable=False, unique=True, index=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    sessions = relationship(
-        "Session", back_populates="event", cascade="all, delete-orphan"
-    )
+    sessions = relationship("Session", back_populates="event", cascade="all, delete-orphan")
     owner = relationship("User", back_populates="events", foreign_keys=[owner_id])
 
 
@@ -87,7 +86,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False, index=True)
     speakers = Column(JSON, default=list, nullable=True)  # Array of speaker objects
-    categories = Column(JSON, default=list, nullable=True)  # Array of category strings
+    tags = Column(JSON, default=list, nullable=True)  # Array of tag strings
     short_description = Column(Text, nullable=True)
     location = Column(String(255), nullable=True)
     start_datetime = Column(DateTime, nullable=False, index=True)
@@ -106,13 +105,9 @@ class Session(Base):
         JSON, default=list, nullable=False
     )  # ["transcription", "summary", "tags"]
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
-    __table_args__ = (
-        UniqueConstraint("event_id", "uri", name="uq_session_uri_per_event"),
-    )
+    __table_args__ = (UniqueConstraint("event_id", "uri", name="uq_session_uri_per_event"),)
 
     # Relationships
     event = relationship("Event", back_populates="sessions")
@@ -133,14 +128,10 @@ class User(Base):
     type = Column(String(20), default="api", nullable=False)  # 'api' or 'human'
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     # Relationships
-    api_keys = relationship(
-        "APIKey", back_populates="user", cascade="all, delete-orphan"
-    )
+    api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     events = relationship("Event", back_populates="owner")
     sessions = relationship("Session", back_populates="owner")
 
@@ -155,9 +146,7 @@ class APIKey(Base):
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     key_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed
-    name = Column(
-        String(255), nullable=True
-    )  # e.g., 'scheduler-service', 'mobile-app-v2'
+    name = Column(String(255), nullable=True)  # e.g., 'scheduler-service', 'mobile-app-v2'
     last_used_at = Column(DateTime, nullable=True)  # For audit trail
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     deleted_at = Column(DateTime, nullable=True)  # Soft delete for audit trail
@@ -178,25 +167,19 @@ class WorkflowExecution(Base):
         nullable=False,
         index=True,
     )
-    target = Column(
-        String(255), nullable=False, index=True
-    )  # "talk_workflow", "summary", etc.
+    target = Column(String(255), nullable=False, index=True)  # "talk_workflow", "summary", etc.
     status = Column(
         SQLEnum(WorkflowExecutionStatus),
         default=WorkflowExecutionStatus.QUEUED,
         nullable=False,
         index=True,
     )
-    celery_task_id = Column(
-        String(255), nullable=True, index=True
-    )  # For tracking Celery tasks
+    celery_task_id = Column(String(255), nullable=True, index=True)  # For tracking Celery tasks
     error = Column(Text, nullable=True)
     triggered_by = Column(
         String(20), nullable=False, default="manual"
     )  # "user_triggered", "auto_scheduled"
-    created_by_user_id = Column(
-        Integer, ForeignKey("users.id"), nullable=True, index=True
-    )
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
@@ -204,9 +187,7 @@ class WorkflowExecution(Base):
     # Relationships
     session = relationship("Session")
     created_by = relationship("User")
-    generated_contents = relationship(
-        "GeneratedContent", back_populates="workflow_execution"
-    )
+    generated_contents = relationship("GeneratedContent", back_populates="workflow_execution")
 
 
 class GeneratedContent(Base):
@@ -234,13 +215,9 @@ class GeneratedContent(Base):
         nullable=True,
     )  # NULL = manually provided content (e.g., transcription on creation)
     meta_info = Column(JSON, nullable=True)  # Optional: {model, tokens, source, etc.}
-    created_by_user_id = Column(
-        Integer, ForeignKey("users.id"), nullable=True, index=True
-    )
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         UniqueConstraint(
@@ -253,7 +230,5 @@ class GeneratedContent(Base):
 
     # Relationships
     session = relationship("Session", back_populates="content_items")
-    workflow_execution = relationship(
-        "WorkflowExecution", back_populates="generated_contents"
-    )
+    workflow_execution = relationship("WorkflowExecution", back_populates="generated_contents")
     created_by = relationship("User")

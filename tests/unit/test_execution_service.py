@@ -1,23 +1,20 @@
 """Tests for WorkflowExecutionService layer."""
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime
-import uuid
+from unittest.mock import Mock, patch
 
-from app.workflows.services.execution_service import WorkflowExecutionService
+import pytest
+
+from app.database.models import WorkflowExecutionStatus
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
     is_workflow_target,
 )
-from app.database.models import WorkflowExecution, WorkflowExecutionStatus
+from app.workflows.services.execution_service import WorkflowExecutionService
+
 from .test_workflows_utils import (
     create_mock_step,
-    mock_db_session,
-    mock_session_model,
-    clean_registries,
-    create_generation_state,
 )
 
 
@@ -49,10 +46,15 @@ async def test_create_and_queue_with_full_workflow(
         )
     )
 
+    # Mock refresh to assign ID when a WorkflowExecution is refreshed
+    def refresh_side_effect(obj):
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = 1
+
+    mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
+
     # Mock Celery task
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Execute
@@ -94,10 +96,15 @@ async def test_create_and_queue_with_individual_step(
         )
     )
 
+    # Mock refresh to assign ID when a WorkflowExecution is refreshed
+    def refresh_side_effect(obj):
+        if hasattr(obj, "id") and obj.id is None:
+            obj.id = 1
+
+    mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
+
     # Mock Celery task
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Execute individual step
@@ -164,9 +171,7 @@ def test_mark_running(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -182,7 +187,6 @@ def test_mark_running(mock_db_session):
 
 def test_mark_completed(mock_db_session):
     """Test marking execution as completed."""
-    from datetime import datetime
 
     mock_execution = Mock(
         id=1,
@@ -192,9 +196,7 @@ def test_mark_completed(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -218,9 +220,7 @@ def test_mark_failed(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
     mock_db_session.commit = Mock()
 
@@ -239,7 +239,6 @@ def test_mark_failed(mock_db_session):
 
 def test_get_execution_status(mock_db_session):
     """Test getting execution status."""
-    from datetime import datetime
 
     mock_execution = Mock(
         id=1,
@@ -252,9 +251,7 @@ def test_get_execution_status(mock_db_session):
     )
 
     mock_db_session.query = Mock(
-        return_value=Mock(
-            filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution)))
-        )
+        return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=mock_execution))))
     )
 
     # Execute
@@ -385,9 +382,7 @@ async def test_create_and_queue_returns_correct_structure(
 
     mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
 
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         result = WorkflowExecutionService.create_and_queue(
@@ -432,9 +427,7 @@ async def test_multiple_executions_independent(
 
     mock_db_session.refresh = Mock(side_effect=refresh_side_effect)
 
-    with patch(
-        "app.async_jobs.tasks.execute_generated_content.apply_async"
-    ) as mock_task:
+    with patch("app.async_jobs.tasks.execute_generated_content.apply_async") as mock_task:
         mock_task.return_value = Mock(state="PENDING")
 
         # Create two executions
