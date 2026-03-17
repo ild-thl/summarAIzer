@@ -5,10 +5,6 @@ on:
         branches:
             - main
             - dev
-    push:
-        branches:
-            - main
-            - dev
 
 jobs:
     unit-tests:
@@ -32,4 +28,4 @@ jobs:
 
             - name: Run isolated unit tests
               run: |
-                  pytest tests/unit/ -v --tb=short --cov=app --cov-report=term-missing
+                  pytest tests/unit/ -v --tb=short
