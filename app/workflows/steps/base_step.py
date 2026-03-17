@@ -194,10 +194,8 @@ class WorkflowStep(ABC):
             if db:
                 db.close()
 
-    @abstractmethod
-    def validate_scheduling_requirements(self, session_id: int, db: Session) -> None:
-        """
-        Validate that step's scheduling requirements are met.
+    def validate_scheduling_requirements(self, _session_id: int, _db: Session) -> None:
+        """Validate that step's scheduling requirements are met.
 
         Called BEFORE task scheduling to fail fast if prerequisites aren't available.
         Use this for simple checks that can be done without needing full context
@@ -214,11 +212,11 @@ class WorkflowStep(ABC):
         Raises:
             ValueError: If scheduling requirements are not met
         """
-        pass  # Default: no scheduling-time validation
+        # Default: no scheduling-time validation required
+        return
 
-    @abstractmethod
     async def _validate_and_prepare_context(
-        self, session_id: int, db: Session, context: dict[str, Any]
+        self, _session_id: int, _db: Session, _context: dict[str, Any]
     ) -> None:
         """
         Validate dependencies and prepare context before generation.
@@ -238,7 +236,8 @@ class WorkflowStep(ABC):
         Raises:
             ValueError: If validation fails or required data is missing
         """
-        pass  # Default: no validation needed
+        # Default: no validation or context preparation needed
+        return
 
     @abstractmethod
     async def _generate(
