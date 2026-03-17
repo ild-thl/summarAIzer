@@ -308,30 +308,49 @@ class EmbeddingService:
         return True
 
     async def store_session_embedding(
-        self, session_id: int, embedding: list[float], text: str
+        self,
+        session_id: int,
+        embedding: list[float],
+        text: str,
+        metadata: dict | None = None,
     ) -> None:
         """
-        Store session embedding in Chroma.
+        Store session embedding in Chroma with optional metadata for filtering.
 
         Args:
             session_id: Session ID
             embedding: Embedding vector
             text: Original text that was embedded
+            metadata: Optional dict with session details for filtering:
+                - status: "draft" or "published"
+                - event_id: Event ID
+                - session_format: Session format
+                - tags: List of tags
+                - language: Language code
+                - duration: Duration in minutes
+                - speakers: Speaker names (comma-separated or list)
+                - title: Session title
 
         Raises:
             Exception: If storing fails
         """
         try:
+            # Build metadata with session_id and type always included
+            chroma_metadata = {"session_id": session_id, "type": "session"}
+            if metadata:
+                chroma_metadata.update(metadata)
+
             self.sessions_collection.upsert(
                 ids=[f"session_{session_id}"],
                 embeddings=[embedding],
                 documents=[text],
-                metadatas=[{"session_id": session_id, "type": "session"}],
+                metadatas=[chroma_metadata],
             )
             logger.info(
                 "session_embedding_stored",
                 session_id=session_id,
                 embedding_dimension=len(embedding),
+                metadata_keys=list((metadata or {}).keys()),
             )
         except Exception as e:
             logger.error(
@@ -342,14 +361,21 @@ class EmbeddingService:
             raise
 
     async def search_similar_sessions(
-        self, embedding: list[float], limit: int = 10
+        self,
+        embedding: list[float],
+        limit: int = 10,
+        where: dict | None = None,
     ) -> list[tuple[int, float, str]]:
         """
-        Search for similar sessions in Chroma.
+        Search for similar sessions in Chroma with optional filtering.
 
         Args:
             embedding: Query embedding
             limit: Maximum number of results
+            where: Optional Chroma where filter dict for metadata filtering
+                Example: {"language": "en"}
+                Complex: {"$and": [{"language": "en"}, {"status": "published"}]}
+                See: https://docs.trychroma.com/usage-guide#filtering-where-documents
 
         Returns:
             List of tuples: (session_id, similarity_score, text)
@@ -358,10 +384,14 @@ class EmbeddingService:
             Exception: If search fails
         """
         try:
-            results = self.sessions_collection.query(
-                query_embeddings=[embedding],
-                n_results=limit,
-            )
+            query_kwargs = {
+                "query_embeddings": [embedding],
+                "n_results": limit,
+            }
+            if where:
+                query_kwargs["where"] = where
+
+            results = self.sessions_collection.query(**query_kwargs)
 
             # Extract session_ids and similarity scores
             output = []
@@ -377,6 +407,7 @@ class EmbeddingService:
                 "session_search_complete",
                 query_dimension=len(embedding),
                 results_found=len(output),
+                filters_applied=bool(where),
             )
             return output
 

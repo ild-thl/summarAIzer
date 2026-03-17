@@ -236,8 +236,20 @@ async def _generate_session_embedding_base(
         # Generate embedding
         embedding = await service.embed_query(embedding_text)
 
-        # Store embedding in Chroma (async)
-        await service.store_session_embedding(session_id, embedding, embedding_text)
+        # Build metadata dict for Chroma filtering
+        metadata = {
+            "title": session.title,
+            "status": session.status,
+            "event_id": session.event_id if session.event_id else -1,
+            "session_format": str(session.session_format) if session.session_format else None,
+            "tags": session.tags or [],
+            "language": session.language or "en",
+            "duration": session.duration if session.duration else -1,
+            "speakers": session.speakers or [],
+        }
+
+        # Store embedding in Chroma with metadata for filtering
+        await service.store_session_embedding(session_id, embedding, embedding_text, metadata)
 
         # Update embedding metadata in database
         session.embedding_model = get_settings().embedding_model_name

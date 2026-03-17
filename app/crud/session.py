@@ -1,6 +1,10 @@
 """CRUD operations for Session model."""
 
+from datetime import datetime
+from typing import Any
+
 import structlog
+from sqlalchemy import String, cast, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -115,6 +119,156 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             .limit(limit)
             .all()
         )
+
+    def _build_enum_condition(self, model_attr, values: str | list[str]) -> Any | None:
+        """Build OR condition for single or multiple enum values."""
+        if not values:
+            return None
+        if isinstance(values, list):
+            return or_(*[model_attr == v for v in values]) if values else None
+        return model_attr == values
+
+    def _add_range_filters(self, filters: list, duration_min: int | None, duration_max: int | None):
+        """Add duration range filters to the filters list."""
+        if duration_min is not None:
+            filters.append(self.model.duration >= duration_min)
+        if duration_max is not None:
+            filters.append(self.model.duration <= duration_max)
+
+    def _add_date_range_filters(
+        self, filters: list, start_after: datetime | None, start_before: datetime | None
+    ):
+        """Add date range filters to the filters list."""
+        if start_after:
+            filters.append(self.model.start_datetime >= start_after)
+        if start_before:
+            filters.append(self.model.start_datetime <= start_before)
+
+    def _build_session_filters(
+        self,
+        status: str | list[str] | None = None,
+        event_id: int | None = None,
+        session_format: str | list[str] | None = None,
+        tags: list[str] | None = None,
+        language: str | list[str] | None = None,
+        duration_min: int | None = None,
+        duration_max: int | None = None,
+        speaker: str | None = None,
+        start_after: datetime | None = None,
+        start_before: datetime | None = None,
+        search: str | None = None,
+    ) -> list:
+        """Build filter conditions for session query."""
+        filters = []
+
+        # Status filter: support single or multiple values (OR logic)
+        status_condition = self._build_enum_condition(self.model.status, status)
+        if status_condition is not None:
+            filters.append(status_condition)
+
+        # Event ID filter
+        if event_id is not None:
+            filters.append(self.model.event_id == event_id)
+
+        # Session format filter: support single or multiple values (OR logic)
+        format_condition = self._build_enum_condition(self.model.session_format, session_format)
+        if format_condition is not None:
+            filters.append(format_condition)
+
+        # Language filter: support single or multiple values (OR logic)
+        language_condition = self._build_enum_condition(self.model.language, language)
+        if language_condition is not None:
+            filters.append(language_condition)
+
+        # Tag filter: OR logic over tag array (cast JSON to string for searching)
+        if tags:
+            tag_conditions = [cast(self.model.tags, String).ilike(f"%{tag}%") for tag in tags]
+            filters.append(or_(*tag_conditions))
+
+        # Duration range filter
+        self._add_range_filters(filters, duration_min, duration_max)
+
+        # Speaker search (cast JSON to string for searching)
+        if speaker:
+            filters.append(cast(self.model.speakers, String).ilike(f"%{speaker}%"))
+
+        # Date range filter
+        self._add_date_range_filters(filters, start_after, start_before)
+
+        # Full-text search on title, description, and speakers
+        if search:
+            search_term = f"%{search}%"
+            filters.append(
+                or_(
+                    self.model.title.ilike(search_term),
+                    self.model.short_description.ilike(search_term),
+                    cast(self.model.speakers, String).ilike(search_term),
+                )
+            )
+
+        return filters
+
+    def list_with_filters(
+        self,
+        db: Session,
+        skip: int = 0,
+        limit: int = 100,
+        status: str | list[str] | None = None,
+        event_id: int | None = None,
+        session_format: str | list[str] | None = None,
+        tags: list[str] | None = None,
+        language: str | list[str] | None = None,
+        duration_min: int | None = None,
+        duration_max: int | None = None,
+        speaker: str | None = None,
+        start_after: datetime | None = None,
+        start_before: datetime | None = None,
+        search: str | None = None,
+    ) -> list[SessionModel]:
+        """
+        List sessions with advanced filtering and full-text search.
+
+        Args:
+            db: Database session
+            skip: Offset for pagination
+            limit: Max results (capped at 1000)
+            status: Filter by status - single value or list (published, draft) - OR logic
+            event_id: Filter by event ID
+            session_format: Filter by session format - single value or list (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
+            tags: Any of these tags (OR logic)
+            language: Filter by language code - single value or list (e.g. en, de) - OR logic
+            duration_min: Minimum duration in minutes
+            duration_max: Maximum duration in minutes
+            speaker: Search for speaker name
+            start_after: Sessions starting after this date
+            start_before: Sessions starting before this date
+            search: Full-text search on title, description, and speakers
+
+        Returns:
+            List of matching sessions
+        """
+        limit = min(limit, 1000)
+        query = db.query(self.model)
+
+        # Build and apply filters
+        filters = self._build_session_filters(
+            status=status,
+            event_id=event_id,
+            session_format=session_format,
+            tags=tags,
+            language=language,
+            duration_min=duration_min,
+            duration_max=duration_max,
+            speaker=speaker,
+            start_after=start_after,
+            start_before=start_before,
+            search=search,
+        )
+
+        for filter_condition in filters:
+            query = query.filter(filter_condition)
+
+        return query.offset(skip).limit(limit).all()
 
     def update(self, db: Session, id: int, obj_in: SessionUpdate) -> SessionModel | None:
         """Update a session."""

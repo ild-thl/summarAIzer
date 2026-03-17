@@ -381,6 +381,254 @@ class TestEmbeddingIntegration:
 
 
 # ============================================================================
+# Tag Filtering Edge Cases Tests
+# ============================================================================
+
+
+class TestTagFilteringWhereClause:
+    """Test Chroma where clause construction for tag filtering.
+
+    Specifically tests the fix for single tag filtering which was throwing:
+    "Expected where value for $and or $or to be a list with at least two..."
+    """
+
+    @pytest.fixture
+    def mock_embedding_service(self):
+        """Create mock EmbeddingService."""
+        service = AsyncMock(spec=EmbeddingService)
+        service.embed_query = AsyncMock(return_value=[0.1] * 768)
+        service.search_similar_sessions = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_db_session(self):
+        """Create mock database session."""
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def search_service(self, mock_embedding_service):
+        """Create EmbeddingSearchService with mocked EmbeddingService."""
+        return EmbeddingSearchService(mock_embedding_service)
+
+    @pytest.mark.asyncio
+    async def test_search_with_single_tag_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with single tag doesn't use $or (was causing error).
+
+        Regression test for: "Expected where value for $and or $or to be a list
+        with at least two where expressions, got [{'tags': {'$contains': 'design-patterns'}}]"
+        """
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            # Call with single tag - should work without throwing
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns"],  # Single tag
+            )
+
+        assert len(results) == 1
+        # Verify the where clause was passed to Chroma
+        assert mock_embedding_service.search_similar_sessions.called
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+
+        # Single tag should NOT wrap in $or, should be direct condition
+        assert where_clause == {"tags": {"$contains": "design-patterns"}}
+
+    @pytest.mark.asyncio
+    async def test_search_with_multiple_tags_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with multiple tags uses $or correctly."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [
+            (1, 0.95, "text 1"),
+            (2, 0.87, "text 2"),
+        ]
+
+        mock_session_1 = Mock()
+        mock_session_1.id = 1
+        mock_session_1.status = SessionStatus.PUBLISHED
+
+        mock_session_2 = Mock()
+        mock_session_2.id = 2
+        mock_session_2.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.side_effect = [mock_session_1, mock_session_2]
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns", "machine-learning"],  # Multiple tags
+            )
+
+        assert len(results) == 2
+
+        # Verify the where clause uses $or for multiple tags
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$or": [
+                {"tags": {"$contains": "design-patterns"}},
+                {"tags": {"$contains": "machine-learning"}},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_single_tag_and_format_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test single tag combined with session_format uses $and correctly."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design-patterns"],  # Single tag
+                session_format="workshop",  # Format filter
+            )
+
+        assert len(results) == 1
+
+        # Should combine with $and, and single tag should NOT use $or
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$and": [
+                {"session_format": "workshop"},
+                {"tags": {"$contains": "design-patterns"}},
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_multiple_tags_and_format_and_language_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test multiple tags combined with format and language filters."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                tags=["design", "patterns"],  # Multiple tags
+                session_format="workshop",
+                language="en",
+            )
+
+        assert len(results) == 1
+
+        # Should combine all with $and, multiple tags use $or
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {
+            "$and": [
+                {"session_format": "workshop"},
+                {"language": "en"},
+                {
+                    "$or": [
+                        {"tags": {"$contains": "design"}},
+                        {"tags": {"$contains": "patterns"}},
+                    ]
+                },
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_search_with_only_format_filter(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with only format filter (no tags)."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+                session_format="Lighting Talk",
+            )
+
+        assert len(results) == 1
+
+        # Single condition should not be wrapped
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause == {"session_format": "Lighting Talk"}
+
+    @pytest.mark.asyncio
+    async def test_search_with_no_filters(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Test search with no metadata filters."""
+        test_embedding = [0.1] * 768
+        mock_embedding_service.embed_query.return_value = test_embedding
+        mock_embedding_service.search_similar_sessions.return_value = [(1, 0.95, "text 1")]
+
+        mock_session = Mock()
+        mock_session.id = 1
+        mock_session.status = SessionStatus.PUBLISHED
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            results = await search_service.search_sessions(
+                query="test",
+                db=mock_db_session,
+                limit=10,
+            )
+
+        assert len(results) == 1
+
+        # No where clause should be passed
+        call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+        where_clause = call_kwargs.get("where")
+        assert where_clause is None
+
+
+# ============================================================================
 # Generic/Refactored Components Tests
 # ============================================================================
 

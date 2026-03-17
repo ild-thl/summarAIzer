@@ -45,9 +45,10 @@ class EmbeddingSearchService:
         limit: int = 10,
         extra_filter: Callable[[Any], bool] | None = None,
         entity_name: str = "entity",
+        chroma_where: dict | None = None,
     ) -> list:
         """
-        Generic search across any collection.
+        Generic search across any collection with optional Chroma filtering.
 
         Args:
             query: Search query text
@@ -58,6 +59,7 @@ class EmbeddingSearchService:
             limit: Maximum results (1-100)
             extra_filter: Optional callback for additional filtering (e.g., event_id filter)
             entity_name: Name for logging
+            chroma_where: Optional Chroma where filter dict for metadata filtering at search time
 
         Returns:
             List of similar entities
@@ -73,8 +75,11 @@ class EmbeddingSearchService:
             # Generate embedding for query
             query_embedding = await self.embedding_service.embed_query(query)
 
-            # Search Chroma for similar IDs
-            chroma_results = await search_fn(query_embedding, limit=limit)
+            # Search Chroma for similar IDs with optional metadata filters
+            if chroma_where:
+                chroma_results = await search_fn(query_embedding, limit=limit, where=chroma_where)
+            else:
+                chroma_results = await search_fn(query_embedding, limit=limit)
 
             # Extract IDs from Chroma results
             entity_ids = [entity_id for entity_id, _, _ in chroma_results]
@@ -95,6 +100,7 @@ class EmbeddingSearchService:
                 chroma_results=len(chroma_results),
                 database_results=len(entities),
                 limit=limit,
+                chroma_filters_applied=bool(chroma_where),
             )
 
             return entities
@@ -117,15 +123,21 @@ class EmbeddingSearchService:
         db: Session,
         limit: int = 10,
         event_id: int | None = None,
+        session_format: str | None = None,
+        tags: list[str] | None = None,
+        language: str | None = None,
     ) -> list:
         """
-        Search for similar sessions by query text.
+        Search for similar sessions by query text with optional filtering.
 
         Args:
             query: Search query text
             db: Database session
             limit: Maximum results (1-100)
-            event_id: Optional event filter
+            event_id: Optional filter by event ID (applied at DB level)
+            session_format: Optional filter by format (applied via Chroma metadata)
+            tags: Optional filter by tags (applied via Chroma metadata)
+            language: Optional filter by language (applied via Chroma metadata)
 
         Returns:
             List of similar SessionResponse objects
@@ -134,7 +146,31 @@ class EmbeddingSearchService:
             InvalidEmbeddingTextError: If query is invalid
             EmbeddingSearchError: If search fails
         """
-        # Optional filter for event_id
+        # Build Chroma where filter for metadata filtering
+        chroma_where = None
+        if session_format or tags or language:
+            conditions = []
+
+            if session_format:
+                conditions.append({"session_format": session_format})
+            if language:
+                conditions.append({"language": language})
+            if tags:
+                # Build OR condition for tags (match any tag)
+                # Only use $or if multiple tags, otherwise use direct condition
+                tag_conditions = [{"tags": {"$contains": tag}} for tag in tags]
+                if len(tag_conditions) == 1:
+                    conditions.append(tag_conditions[0])
+                else:
+                    conditions.append({"$or": tag_conditions})
+
+            # Combine all conditions with AND
+            if len(conditions) == 1:
+                chroma_where = conditions[0]
+            elif len(conditions) > 1:
+                chroma_where = {"$and": conditions}
+
+        # Optional filter for event_id (applied at DB level since it's not in Chroma)
         event_filter = None
         if event_id:
             event_filter = lambda s: s.event_id == event_id
@@ -148,6 +184,7 @@ class EmbeddingSearchService:
             limit=limit,
             extra_filter=event_filter,
             entity_name="session",
+            chroma_where=chroma_where,
         )
 
     async def search_events(

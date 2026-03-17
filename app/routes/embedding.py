@@ -73,20 +73,28 @@ async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     event_id: int | None = Query(None, description="Filter by event ID"),
+    session_format: str | None = Query(None, description="Filter by session format"),
+    tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    language: str | None = Query(None, description="Filter by language (ISO 639-1 code)"),
     db: Session = Depends(get_db),
 ):
     """
-    Search for sessions similar to query text using semantic search.
+    Search for sessions similar to query text using semantic search with optional filtering.
 
     Returns published sessions ordered by semantic similarity.
 
-    Args:
-        query: Text to search (will be embedded)
-        limit: Maximum number of results
-        event_id: Optional filter by event
+    **Parameters:**
+    - **query**: Text to search (will be embedded and matched semantically)
+    - **limit**: Maximum number of results (1-100)
+    - **event_id**: Optional filter by event ID (applied at DB level)
+    - **session_format**: Optional filter by format (applied via Chroma metadata)
+    - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
+    - **language**: Optional filter by language code (applied via Chroma metadata)
 
-    Returns:
-        List of similar published sessions
+    **Examples:**
+    - `/api/v2/sessions/search/similar?query=machine+learning`
+    - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
+    - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=talk`
     """
     from app.services.embedding_exceptions import (
         EmbeddingError,
@@ -95,15 +103,23 @@ async def search_similar_sessions(
     from app.services.embedding_factory import get_search_service
 
     try:
+        # Parse tags (comma-separated)
+        tags_list = None
+        if tags:
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
         # Get search service via dependency injection
         search_service = get_search_service()
 
-        # Delegate to search service
+        # Delegate to search service with optional filters
         sessions = await search_service.search_sessions(
             query=query,
             db=db,
             limit=limit,
             event_id=event_id,
+            session_format=session_format,
+            tags=tags_list,
+            language=language,
         )
 
         logger.info(
@@ -112,6 +128,7 @@ async def search_similar_sessions(
             results_count=len(sessions),
             limit=limit,
             event_id=event_id,
+            filters_applied=bool(session_format or tags_list or language),
         )
 
         # Convert ORM objects to Pydantic models
