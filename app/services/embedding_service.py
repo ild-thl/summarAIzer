@@ -138,6 +138,8 @@ class EmbeddingService:
                 "embedding_service_initialization_failed",
                 error=str(e),
                 provider=embedding_provider,
+                chroma_host=chroma_host,
+                chroma_port=chroma_port,
             )
             raise
 

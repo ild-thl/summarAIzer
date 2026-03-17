@@ -41,7 +41,7 @@ class TestSessionAPI:
                 "event_id": sample_event.id,
                 "status": "draft",
                 "speakers": ["Test Speaker", "Another Speaker"],
-                "categories": ["Testing", "API"],
+                "tags": ["Testing", "API"],
             },
         )
 

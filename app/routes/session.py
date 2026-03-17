@@ -47,7 +47,7 @@ async def create_session(
     - **start_datetime**: Session start datetime (required)
     - **end_datetime**: Session end datetime (required, must be after start_datetime)
     - **speakers**: List of speakers (optional)
-    - **categories**: List of categories (optional)
+    - **tags**: List of tags (optional)
     - **short_description**: Short description (optional)
     - **location**: Session location (optional)
     - **recording_url**: Recording URL (optional)

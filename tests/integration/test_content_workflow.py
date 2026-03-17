@@ -22,7 +22,7 @@ def session_with_event(client: TestClient, test_db: Session, sample_event, sampl
             "end_datetime": "2026-03-10T11:30:00",
             "event_id": sample_event.id,
             "speakers": ["Dr. Jane Doe"],
-            "categories": ["AI", "Machine Learning"],
+            "tags": ["AI", "Machine Learning"],
         },
     )
     assert response.status_code == 201

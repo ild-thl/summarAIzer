@@ -86,7 +86,7 @@ class Session(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False, index=True)
     speakers = Column(JSON, default=list, nullable=True)  # Array of speaker objects
-    categories = Column(JSON, default=list, nullable=True)  # Array of category strings
+    tags = Column(JSON, default=list, nullable=True)  # Array of tag strings
     short_description = Column(Text, nullable=True)
     location = Column(String(255), nullable=True)
     start_datetime = Column(DateTime, nullable=False, index=True)

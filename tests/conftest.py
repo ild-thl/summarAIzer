@@ -145,7 +145,7 @@ def sample_session(test_db, sample_event, sample_user):
     session = SessionModel(
         title="Test Session",
         speakers=["John Doe", "Jane Smith"],
-        categories=["AI", "Testing"],
+        tags=["AI", "Testing"],
         short_description="A test session",
         location="Room 101",
         start_datetime=now,
@@ -171,7 +171,7 @@ def sample_session_no_event(test_db, sample_user):
     session = SessionModel(
         title="Standalone Session",
         speakers=["Jane Doe", "Bob Johnson"],
-        categories=["Development"],
+        tags=["Development"],
         short_description="A standalone test session",
         location="Room 202",
         start_datetime=now + timedelta(days=1),
@@ -268,7 +268,7 @@ def session_with_owner(test_db, event_with_owner, sample_user):
     session = SessionModel(
         title="Owned Session",
         speakers=["Speaker"],
-        categories=["Category"],
+        tags=["Category"],
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.DRAFT,
@@ -289,7 +289,7 @@ def published_session(test_db, sample_event, sample_user):
     session = SessionModel(
         title="Published Test Session",
         speakers=["John Doe"],
-        categories=["Testing"],
+        tags=["Testing"],
         short_description="A published test session",
         location="Room 101",
         start_datetime=now,
@@ -335,7 +335,7 @@ def mock_session_model():
     session_mock.id = 1
     session_mock.title = "Test Session"
     session_mock.speakers = ["Speaker 1", "Speaker 2"]
-    session_mock.categories = ["Category 1"]
+    session_mock.tags = ["Category 1"]
     session_mock.duration = 60
     return session_mock
 

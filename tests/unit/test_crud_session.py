@@ -27,7 +27,7 @@ class TestSessionCRUD:
             uri="test-session",
             event_id=sample_event.id,
             speakers=["John Doe", "Jane Smith"],
-            categories=["AI", "Testing"],
+            tags=["AI", "Testing"],
             duration=60,
         )
 
@@ -325,7 +325,7 @@ class TestSessionEventEmissions:
             uri="metadata-test",
             event_id=sample_event.id,
             speakers=["Alice", "Bob"],
-            categories=["Testing"],
+            tags=["Testing"],
         )
 
         with patch.object(SessionEventBus, "emit") as mock_emit:

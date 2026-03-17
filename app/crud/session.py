@@ -25,7 +25,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db_obj = self.model(
                 title=obj_in.title,
                 speakers=obj_in.speakers,
-                categories=obj_in.categories,
+                tags=obj_in.tags,
                 short_description=obj_in.short_description,
                 location=obj_in.location,
                 start_datetime=obj_in.start_datetime,

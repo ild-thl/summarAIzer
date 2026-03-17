@@ -14,6 +14,10 @@ class GenerationState(TypedDict, total=False):
     Contains both inputs (session_id, transcription) and outputs (generated content).
     Steps update this state as they execute, allowing downstream steps to access results.
 
+    Transcription is optional - steps define their own dependencies:
+    - SummaryStep requires transcription and will fail if not available
+    - TagsStep uses transcription if available, falls back to session.short_description
+
     Note: Database session is not included in state as it's not serializable.
     Steps create their own Session instances when needed using SessionLocal().
     """
@@ -22,8 +26,8 @@ class GenerationState(TypedDict, total=False):
     session_id: int
     execution_id: int
 
-    # Input data (fetched at start)
-    transcription: str
+    # Input data (optional - steps define their own dependencies)
+    transcription: str | None
 
     # Generated content (populated by steps)
     summary: str

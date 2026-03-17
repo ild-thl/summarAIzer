@@ -29,6 +29,36 @@ class WorkflowExecutionService:
     """
 
     @staticmethod
+    def _get_first_stage_steps(target: str) -> list[str]:
+        """
+        Get step identifiers that execute first in a target.
+
+        For a single step target, returns that step.
+        For a workflow, finds all steps with no dependencies.
+
+        Args:
+            target: Workflow name or step identifier
+
+        Returns:
+            List of step identifiers that are first-stage
+        """
+        from app.workflows.execution_context import is_workflow_target
+
+        # If it's a single step, that's the first-stage step
+        if not is_workflow_target(target):
+            return [target]
+
+        # For workflows, find all steps with no dependencies
+        from app.workflows.execution_context import StepRegistry as SR
+
+        first_stage = []
+        for step_id, dependencies in SR._step_dependencies.items():
+            if not dependencies:  # No dependencies = first-stage step
+                first_stage.append(step_id)
+
+        return first_stage
+
+    @staticmethod
     def validate_and_prepare(
         session_id: int,
         target: str,
@@ -57,20 +87,6 @@ class WorkflowExecutionService:
 
         logger.info(
             "workflow_validation_session_found",
-            session_id=session_id,
-            target=target,
-        )
-
-        # Validate transcription exists
-        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
-        if not tx_content:
-            raise ValueError(
-                "Transcription is required before running workflows. "
-                "Add transcription via POST /content/transcription first."
-            )
-
-        logger.info(
-            "workflow_validation_transcription_found",
             session_id=session_id,
             target=target,
         )
@@ -138,6 +154,35 @@ class WorkflowExecutionService:
             execution_type=execution_type,
             is_workflow=is_workflow,
         )
+
+        # Validate scheduling requirements for first-stage steps
+        first_stage_steps = WorkflowExecutionService._get_first_stage_steps(target)
+        logger.info(
+            "validating_first_stage_step_requirements",
+            session_id=session_id,
+            target=target,
+            first_stage_steps=first_stage_steps,
+        )
+
+        from app.workflows.execution_context import StepRegistry
+
+        for step_id in first_stage_steps:
+            try:
+                step = StepRegistry.get_step(step_id)
+                step.validate_scheduling_requirements(session_id, db)
+                logger.info(
+                    "first_stage_step_scheduling_validated",
+                    session_id=session_id,
+                    step_id=step_id,
+                )
+            except ValueError as e:
+                logger.warning(
+                    "first_stage_step_scheduling_validation_failed",
+                    session_id=session_id,
+                    step_id=step_id,
+                    error=str(e),
+                )
+                raise
 
         # Create execution record
         workflow_exec = content_crud.create_workflow_execution(

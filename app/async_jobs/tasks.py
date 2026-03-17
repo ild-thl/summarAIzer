@@ -633,23 +633,29 @@ def execute_generated_content(
                     created_by_user_id=created_by_user_id,
                 )
 
-        # Fetch transcription and session data
+        # Fetch transcription if available (optional - steps define their own dependencies)
         tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
         if not tx_content:
-            raise ValueError(f"Transcription not found for session {session_id}")
+            logger.warning(
+                "content_generation_transcription_not_found",
+                task_id=self.request.id,
+                execution_id=execution_id,
+                session_id=session_id,
+            )
 
         logger.info(
             "content_generation_transcription_loaded",
             task_id=self.request.id,
             execution_id=execution_id,
             session_id=session_id,
+            transcription_available=tx_content is not None,
         )
 
         # Build initial state for LangGraph
         initial_state: GenerationState = GenerationState(
             session_id=session_id,
             execution_id=execution_id,
-            transcription=tx_content.content,
+            transcription=tx_content.content if tx_content else None,
         )
 
         # Validate that db is NOT in state (common cause of serialization errors)

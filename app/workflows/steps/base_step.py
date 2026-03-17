@@ -119,7 +119,24 @@ class WorkflowStep(ABC):
                 db_has_query=hasattr(db, "query"),
             )
 
-            # 1. Generate content
+            # 1. Validate and prepare context (hook for steps to customize)
+            logger.info(
+                "step_validation_and_context_prep_starting",
+                step_id=self.identifier,
+                session_id=session_id,
+                execution_id=execution_id,
+            )
+
+            await self._validate_and_prepare_context(session_id, db, context)
+
+            logger.info(
+                "step_validation_and_context_prep_completed",
+                step_id=self.identifier,
+                session_id=session_id,
+                execution_id=execution_id,
+            )
+
+            # 2. Generate content
             logger.info(
                 "step_generation_starting",
                 step_id=self.identifier,
@@ -137,7 +154,7 @@ class WorkflowStep(ABC):
                 content_length=len(result.get("content", "")),
             )
 
-            # 2. Persist to database
+            # 3. Persist to database
             logger.info(
                 "step_persistence_starting",
                 step_id=self.identifier,
@@ -160,7 +177,7 @@ class WorkflowStep(ABC):
                 execution_id=execution_id,
             )
 
-            # 3. Return for context chaining
+            # 4. Return for context chaining
             return {self.identifier: result.get("content", "")}
 
         except Exception as e:
@@ -176,6 +193,52 @@ class WorkflowStep(ABC):
         finally:
             if db:
                 db.close()
+
+    @abstractmethod
+    def validate_scheduling_requirements(self, session_id: int, db: Session) -> None:
+        """
+        Validate that step's scheduling requirements are met.
+
+        Called BEFORE task scheduling to fail fast if prerequisites aren't available.
+        Use this for simple checks that can be done without needing full context
+        (e.g., verifying transcription exists in DB).
+
+        Override in subclasses that have prerequisites that can be validated early.
+        For runtime-dependent validation (requiring prior step outputs), use
+        _validate_and_prepare_context() instead.
+
+        Args:
+            session_id: Session ID
+            db: Database session
+
+        Raises:
+            ValueError: If scheduling requirements are not met
+        """
+        pass  # Default: no scheduling-time validation
+
+    @abstractmethod
+    async def _validate_and_prepare_context(
+        self, session_id: int, db: Session, context: dict[str, Any]
+    ) -> None:
+        """
+        Validate dependencies and prepare context before generation.
+
+        Hook method called before _generate() to allow steps to:
+        - Validate required inputs (e.g., transcription availability)
+        - Fetch additional data if needed
+        - Update or normalize context
+
+        Default implementation does nothing. Override in subclasses that have requirements.
+
+        Args:
+            session_id: ID of the session being processed
+            db: SQLAlchemy database session
+            context: Custom context dict that can be modified in place
+
+        Raises:
+            ValueError: If validation fails or required data is missing
+        """
+        pass  # Default: no validation needed
 
     @abstractmethod
     async def _generate(

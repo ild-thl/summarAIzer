@@ -97,7 +97,7 @@ class ImageStep(PromptTemplate):
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate image description prompt messages."""
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
-        categories = ", ".join(session.categories) if session.categories else "General"
+        tags = ", ".join(session.tags) if session.tags else "General"
 
         return [
             SystemMessage(
@@ -118,7 +118,7 @@ Example format:
             HumanMessage(
                 content=f"""Event: {session.title}
 Speakers: {speakers}
-Categories: {categories}
+Tags: {tags}
 
 Summary:
 {context.get('summary', '')}
