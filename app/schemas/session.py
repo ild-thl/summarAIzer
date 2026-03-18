@@ -101,6 +101,25 @@ class SessionBase(BaseModel):
     uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
     event_id: int | None = Field(None, description="Associated event ID")
 
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
+        """Normalize session_format to lowercase for case-insensitive matching."""
+        if v is None:
+            return v
+        # If it's already an enum, get its value
+        if isinstance(v, SessionFormat):
+            return v.value
+        # Convert to string and lowercase
+        v_str = str(v).lower()
+        # Validate it matches one of the enum values
+        valid_formats = {fmt.value for fmt in SessionFormat}
+        if v_str not in valid_formats:
+            raise ValueError(
+                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
+            )
+        return v_str
+
     @field_validator("uri")
     @classmethod
     def validate_uri(cls, v: str) -> str:
@@ -155,6 +174,25 @@ class SessionUpdate(BaseModel):
     language: str | None = Field(None, min_length=2, max_length=10)
     uri: str | None = Field(None, min_length=1, max_length=255)
     event_id: int | None = None
+
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
+        """Normalize session_format to lowercase for case-insensitive matching."""
+        if v is None:
+            return v
+        # If it's already an enum, get its value
+        if isinstance(v, SessionFormat):
+            return v.value
+        # Convert to string and lowercase
+        v_str = str(v).lower()
+        # Validate it matches one of the enum values
+        valid_formats = {fmt.value for fmt in SessionFormat}
+        if v_str not in valid_formats:
+            raise ValueError(
+                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
+            )
+        return v_str
 
     @field_validator("uri")
     @classmethod
