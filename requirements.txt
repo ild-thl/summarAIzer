@@ -41,6 +41,8 @@ boto3>=1.26.0  # AWS S3 and S3-compatible storage (IONOS S3)
 pytest>=7.0
 pytest-asyncio
 pytest-cov
+pytest-xdist  # Parallel test execution
+pytest-timeout  # Timeout protection
 httpx
 
 # Logging & Monitoring

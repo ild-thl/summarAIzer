@@ -129,6 +129,98 @@ def client(test_db):
     return TestClient(app)
 
 
+@pytest.fixture(scope="class")
+def test_db_class(tmp_path_factory):
+    """
+    Create a shared test database for an entire test class.
+
+    Use this for test classes that don't modify data, allowing fixtures
+    and test data to be created once and reused across all test methods.
+    This dramatically improves performance for read-heavy test suites.
+    """
+    # Create a temporary directory for the database (class-scoped, so it persists)
+    tmp_path = tmp_path_factory.mktemp("test_db_class")
+    db_path = tmp_path / "test_class.db"
+    database_url = f"sqlite:///{db_path}"
+
+    # Create test engine
+    engine = create_engine(
+        database_url,
+        connect_args={"check_same_thread": False},
+    )
+
+    # Enable foreign keys for SQLite
+    @sqlalchemy_event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    # Create all tables
+    Base.metadata.create_all(bind=engine)
+
+    # Create session factory
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    # Override get_db dependency for the entire test class
+    def override_get_db():
+        db = TestingSessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    # Create session for direct use
+    session = TestingSessionLocal()
+    yield session
+
+    # Cleanup after all tests in class complete
+    session.close()
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="class")
+def session_event(test_db_class):
+    """
+    Create a single event for an entire test class (class-scoped).
+
+    This fixture is optimized for test classes where multiple test methods
+    need to work with the same event but don't modify it. Use this in
+    conjunction with test_db_class for maximum performance.
+
+    For individual test methods that need isolated events, use sample_event instead.
+    """
+    # Create a user first (required for event ownership)
+    user = User(
+        username="class-test-user",
+        type="api",
+        is_active=True,
+    )
+    test_db_class.add(user)
+    test_db_class.commit()
+    test_db_class.refresh(user)
+
+    # Create the event
+    now = datetime.utcnow()
+    event = Event(
+        title="Class-Scoped Test Event",
+        description="Shared event for an entire test class",
+        start_date=now,
+        end_date=now + timedelta(days=2),
+        location="Test Location",
+        status=EventStatus.PUBLISHED,
+        uri="class-test-event",
+        owner_id=user.id,
+    )
+    test_db_class.add(event)
+    test_db_class.commit()
+    test_db_class.refresh(event)
+
+    return event
+
+
 @pytest.fixture
 def sample_event(test_db, sample_user):
     """Create a sample event for testing."""

@@ -9,10 +9,6 @@ mypy==1.8.0          # Static type checker
 # Code Analysis
 pre-commit==3.6.0    # Git hooks framework
 
-# Testing enhancements
-pytest-xdist         # Parallel test execution
-pytest-timeout       # Timeout for hanging tests
-
 # Documentation
 mkdocs==1.5.3        # Documentation generator
 mkdocs-material      # Material theme for docs

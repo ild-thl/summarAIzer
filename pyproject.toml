@@ -120,6 +120,12 @@ markers = [
     "asyncio: async tests",
 ]
 asyncio_mode = "auto"
+timeout = 300  # 5 min timeout per test to catch hanging tests
+# For parallel execution with pytest-xdist:
+# Use 'loadscope' to distribute tests by test class/module scope
+# This keeps related tests together and improves fixture efficiency
+# Usage in CI: pytest -n auto --dist loadscope
+
 
 [tool.coverage.run]
 source = ["app"]
