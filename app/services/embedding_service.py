@@ -363,12 +363,17 @@ class EmbeddingService:
         return {
             "title": session.title,
             "status": session.status.value if session.status else None,
-            "event_id": session.event_id if session.event_id else -1,
+            "event_id": session.event_id if session.event_id else None,
             "session_format": session.session_format.value if session.session_format else None,
             "tags": session.tags or None,
-            "language": session.language or "en",
-            "duration": session.duration if session.duration else -1,
-            "speakers": session.speakers or [],
+            "language": session.language or None,
+            "location": session.location or None,
+            "duration": session.duration if session.duration else None,
+            "speakers": session.speakers or None,
+            "start_datetime": (
+                session.start_datetime.timestamp() if session.start_datetime else None
+            ),
+            "end_datetime": session.end_datetime.timestamp() if session.end_datetime else None,
         }
 
     async def store_session_embedding(

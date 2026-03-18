@@ -294,53 +294,6 @@ class TestEmbeddingSearchService:
                 limit=10,
             )
 
-    @pytest.mark.asyncio
-    async def test_search_events_success(
-        self, search_service, mock_embedding_service, mock_db_session
-    ):
-        """Test successful event search."""
-        test_embedding = [0.1] * 768
-        mock_embedding_service.embed_query.return_value = test_embedding
-        mock_embedding_service.search_similar_events.return_value = [
-            (1, 0.92, "event 1 text"),
-        ]
-
-        mock_event = Mock()
-        mock_event.id = 1
-        mock_event.title = "Conference 2024"
-        mock_event.status = EventStatus.PUBLISHED
-
-        with patch("app.services.embedding_search_service.event_crud") as mock_crud:
-            mock_crud.read.return_value = mock_event
-
-            results = await search_service.search_events(
-                query="conference",
-                db=mock_db_session,
-                limit=10,
-            )
-
-        assert len(results) == 1
-        assert results[0].id == 1
-
-    @pytest.mark.asyncio
-    async def test_search_events_handles_chroma_errors(
-        self, search_service, mock_embedding_service, mock_db_session
-    ):
-        """Test that Chroma errors are properly logged and propagated."""
-        test_embedding = [0.1] * 768
-        mock_embedding_service.embed_query.return_value = test_embedding
-        mock_embedding_service.search_similar_events.side_effect = Exception(
-            "Chroma connection failed"
-        )
-
-        with pytest.raises(Exception, match="Chroma connection failed"):
-            await search_service.search_events(
-                query="test",
-                db=mock_db_session,
-                limit=10,
-            )
-
-
 # ============================================================================
 # Integration Tests
 # ============================================================================

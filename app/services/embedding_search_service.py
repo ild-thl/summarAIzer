@@ -125,7 +125,14 @@ class EmbeddingSearchService:
         event_id: int | None = None,
         session_format: str | None = None,
         tags: list[str] | None = None,
+        location: list[str] | None = None,
         language: str | None = None,
+        duration_min: int | None = None,
+        duration_max: int | None = None,
+        start_after: Any | None = None,
+        start_before: Any | None = None,
+        end_after: Any | None = None,
+        end_before: Any | None = None,
     ) -> list:
         """
         Search for similar sessions by query text with optional filtering.
@@ -137,7 +144,14 @@ class EmbeddingSearchService:
             event_id: Optional filter by event ID (applied at DB level)
             session_format: Optional filter by format (applied via Chroma metadata)
             tags: Optional filter by tags (applied via Chroma metadata)
+            location: Optional filter by location (applied via Chroma metadata)
             language: Optional filter by language (applied via Chroma metadata)
+            duration_min: Optional minimum duration in minutes (applied via Chroma metadata)
+            duration_max: Optional maximum duration in minutes (applied via Chroma metadata)
+            start_after: Optional datetime filter for sessions starting after (applied via Chroma metadata)
+            start_before: Optional datetime filter for sessions starting before (applied via Chroma metadata)
+            end_after: Optional datetime filter for sessions ending after (applied via Chroma metadata)
+            end_before: Optional datetime filter for sessions ending before (applied via Chroma metadata)
 
         Returns:
             List of similar SessionResponse objects
@@ -148,13 +162,32 @@ class EmbeddingSearchService:
         """
         # Build Chroma where filter for metadata filtering
         chroma_where = None
-        if session_format or tags or language:
+        if (
+            session_format
+            or tags
+            or location
+            or language
+            or duration_min
+            or duration_max
+            or start_after
+            or start_before
+            or end_after
+            or end_before
+        ):
             conditions = []
 
             if session_format:
                 conditions.append({"session_format": session_format})
             if language:
                 conditions.append({"language": language})
+            if location:
+                # Build OR condition for locations (match any location)
+                # Only use $or if multiple locations, otherwise use direct condition
+                location_conditions = [{"location": loc} for loc in location]
+                if len(location_conditions) == 1:
+                    conditions.append(location_conditions[0])
+                else:
+                    conditions.append({"$or": location_conditions})
             if tags:
                 # Build OR condition for tags (match any tag)
                 # Only use $or if multiple tags, otherwise use direct condition
@@ -163,6 +196,18 @@ class EmbeddingSearchService:
                     conditions.append(tag_conditions[0])
                 else:
                     conditions.append({"$or": tag_conditions})
+            if duration_min is not None:
+                conditions.append({"duration": {"$gte": duration_min}})
+            if duration_max is not None:
+                conditions.append({"duration": {"$lte": duration_max}})
+            if start_after is not None:
+                conditions.append({"start_datetime": {"$gte": start_after.timestamp()}})
+            if start_before is not None:
+                conditions.append({"start_datetime": {"$lte": start_before.timestamp()}})
+            if end_after is not None:
+                conditions.append({"end_datetime": {"$gte": end_after.timestamp()}})
+            if end_before is not None:
+                conditions.append({"end_datetime": {"$lte": end_before.timestamp()}})
 
             # Combine all conditions with AND
             if len(conditions) == 1:
@@ -185,35 +230,4 @@ class EmbeddingSearchService:
             extra_filter=event_filter,
             entity_name="session",
             chroma_where=chroma_where,
-        )
-
-    async def search_events(
-        self,
-        query: str,
-        db: Session,
-        limit: int = 10,
-    ) -> list:
-        """
-        Search for similar events by query text.
-
-        Args:
-            query: Search query text
-            db: Database session
-            limit: Maximum results (1-100)
-
-        Returns:
-            List of similar EventResponse objects
-
-        Raises:
-            InvalidEmbeddingTextError: If query is invalid
-            EmbeddingSearchError: If search fails
-        """
-        return await self.search_by_collection(
-            query=query,
-            db=db,
-            search_fn=self.embedding_service.search_similar_events,
-            crud_read=event_crud.read,
-            status_filter=EventStatus.PUBLISHED,
-            limit=limit,
-            entity_name="event",
         )
