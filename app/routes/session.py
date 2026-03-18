@@ -223,10 +223,10 @@ async def list_sessions(
         else None
     )
 
-    # Parse language (comma-separated, no validation needed as it's free-form ISO codes)
+    # Parse language (comma-separated, normalize to lowercase for consistency)
     language_list = None
     if language:
-        language_list = [lang.strip() for lang in language.split(",") if lang.strip()]
+        language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
 
     # Parse datetime strings if provided
     start_after_dt = None

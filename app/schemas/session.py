@@ -120,6 +120,14 @@ class SessionBase(BaseModel):
             )
         return v_str
 
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: str | None) -> str | None:
+        """Normalize language code to lowercase for consistency."""
+        if v is None:
+            return v
+        return str(v).lower()
+
     @field_validator("uri")
     @classmethod
     def validate_uri(cls, v: str) -> str:
@@ -193,6 +201,14 @@ class SessionUpdate(BaseModel):
                 f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
             )
         return v_str
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: str | None) -> str | None:
+        """Normalize language code to lowercase for consistency."""
+        if v is None:
+            return v
+        return str(v).lower()
 
     @field_validator("uri")
     @classmethod

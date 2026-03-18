@@ -108,6 +108,9 @@ async def search_similar_sessions(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        # Normalize language to lowercase for consistency
+        normalized_language = language.lower() if language else None
+
         # Get search service via dependency injection
         search_service = get_search_service()
 
@@ -119,7 +122,7 @@ async def search_similar_sessions(
             event_id=event_id,
             session_format=session_format,
             tags=tags_list,
-            language=language,
+            language=normalized_language,
         )
 
         logger.info(
