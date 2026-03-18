@@ -87,7 +87,7 @@ class SessionBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=255, description="Session title")
     speakers: list[str] | None = Field(default=None, description="List of speaker names")
     tags: list[str] | None = Field(default=None, description="Session tags")
-    short_description: str | None = Field(None, max_length=1000, description="Short description")
+    short_description: str | None = Field(None, description="Short description")
     location: str | None = Field(None, max_length=255, description="Session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
     end_datetime: datetime = Field(..., description="Session end datetime")
@@ -171,7 +171,7 @@ class SessionUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     speakers: list[str] | None = None
     tags: list[str] | None = None
-    short_description: str | None = Field(None, max_length=1000)
+    short_description: str | None = Field(None)
     location: str | None = Field(None, max_length=255)
     start_datetime: datetime | None = None
     end_datetime: datetime | None = None
