@@ -362,9 +362,9 @@ class EmbeddingService:
         """
         return {
             "title": session.title,
-            "status": session.status,
+            "status": session.status.value if session.status else None,
             "event_id": session.event_id if session.event_id else -1,
-            "session_format": str(session.session_format) if session.session_format else None,
+            "session_format": session.session_format.value if session.session_format else None,
             "tags": session.tags or None,
             "language": session.language or "en",
             "duration": session.duration if session.duration else -1,

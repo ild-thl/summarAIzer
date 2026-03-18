@@ -180,9 +180,12 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if language_condition is not None:
             filters.append(language_condition)
 
-        # Tag filter: OR logic over tag array (cast JSON to string for searching)
+        # Tag filter: Check if session tags array contains any of the provided tags (OR logic)
         if tags:
-            tag_conditions = [cast(self.model.tags, String).ilike(f"%{tag}%") for tag in tags]
+            tag_conditions = []
+            for tag in tags:
+                quoted_tag = f'"{tag}"'
+                tag_conditions.append(cast(self.model.tags, String).ilike(f"%{quoted_tag}%"))
             filters.append(or_(*tag_conditions))
 
         # Duration range filter

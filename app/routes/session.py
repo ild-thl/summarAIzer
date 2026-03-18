@@ -208,8 +208,9 @@ async def list_sessions(
     - `/api/v2/sessions?status=published&language=en`
     - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
     - `/api/v2/sessions?tags=ai,machine+learning&language=en,de`
+    - `/api/v2/sessions?tags=AI+%26+Technology,FutureSkills` (tags with ampersand - URL-encoded)
     - `/api/v2/sessions?search=machine+learning&status=published`
-    - `/api/v2/sessions?session_format=Input,workshop`
+    - `/api/v2/sessions?session_format=input,workshop`
     """
     from datetime import datetime
 
