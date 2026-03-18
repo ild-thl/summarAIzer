@@ -126,41 +126,6 @@ def _is_transient_error(exception: Exception) -> bool:
     return False
 
 
-def _prepare_session_embedding_text(service, session) -> str:
-    """
-    Prepare text for session embedding.
-
-    Fetches summary if available and combines with title and description.
-
-    Args:
-        service: EmbeddingService instance
-        session: Session entity
-
-    Returns:
-        Text prepared for embedding
-    """
-    # Try to fetch summary as fallback
-    summary_content = None
-    db = SessionLocal()
-    try:
-        summary_content = content_crud.get_content_by_identifier(db, session.id, "summary")
-    except Exception as e:
-        logger.debug(
-            "embedding_summary_fetch_failed",
-            session_id=session.id,
-            error=str(e),
-        )
-    finally:
-        db.close()
-
-    summary_text = summary_content.content if summary_content else None
-    return service._prepare_session_text(
-        title=session.title,
-        short_description=session.short_description,
-        summary=summary_text,
-    )
-
-
 async def _generate_session_embedding_base(
     session_id: int,
     embedding_text: str | None = None,
@@ -222,7 +187,7 @@ async def _generate_session_embedding_base(
 
         # Prepare text if not provided
         if embedding_text is None:
-            embedding_text = _prepare_session_embedding_text(service, session)
+            embedding_text = service.prepare_session_text_with_summary(session)
 
         # Validate text
         if not EmbeddingService.validate_embedding_text(embedding_text):
@@ -236,20 +201,10 @@ async def _generate_session_embedding_base(
         # Generate embedding
         embedding = await service.embed_query(embedding_text)
 
-        # Build metadata dict for Chroma filtering
-        metadata = {
-            "title": session.title,
-            "status": session.status,
-            "event_id": session.event_id if session.event_id else -1,
-            "session_format": str(session.session_format) if session.session_format else None,
-            "tags": session.tags or [],
-            "language": session.language or "en",
-            "duration": session.duration if session.duration else -1,
-            "speakers": session.speakers or [],
-        }
-
-        # Store embedding in Chroma with metadata for filtering
-        await service.store_session_embedding(session_id, embedding, embedding_text, metadata)
+        # Store embedding in Chroma with metadata built from session
+        await service.store_session_embedding(
+            session_id, embedding, embedding_text, session=session
+        )
 
         # Update embedding metadata in database
         session.embedding_model = get_settings().embedding_model_name
