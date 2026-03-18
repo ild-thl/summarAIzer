@@ -28,4 +28,4 @@ jobs:
 
             - name: Run isolated unit tests
               run: |
-                  pytest tests/unit/ -v --tb=short
+                  pytest tests/unit/ -n auto --dist loadscope --tb=short -q

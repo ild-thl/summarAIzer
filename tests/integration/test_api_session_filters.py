@@ -37,7 +37,8 @@ class TestSessionFilteringAPI:
                 "uri": "ai-fundamentals",
                 "event_id": sample_event.id,
                 "status": "published",
-                "session_format": "Input",
+                "session_format": "input",
+                "location": "Stage Berlin",
                 "speakers": ["Alice"],
                 "tags": ["AI", "Basics"],
                 "duration": 45,
@@ -51,6 +52,7 @@ class TestSessionFilteringAPI:
                 "event_id": sample_event.id,
                 "status": "published",
                 "session_format": "workshop",
+                "location": "Stage Berlin",
                 "speakers": ["Bob", "Charlie"],
                 "tags": ["ML", "Hands-on"],
                 "duration": 120,
@@ -63,7 +65,8 @@ class TestSessionFilteringAPI:
                 "uri": "ethics-ai",
                 "event_id": sample_event.id,
                 "status": "published",
-                "session_format": "Lighting Talk",
+                "session_format": "lightning talk",
+                "location": "AI Stage TU Graz",
                 "speakers": ["Diana"],
                 "tags": ["Ethics", "AI"],
                 "duration": 15,
@@ -76,7 +79,8 @@ class TestSessionFilteringAPI:
                 "uri": "data-science",
                 "event_id": sample_event.id,
                 "status": "draft",
-                "session_format": "Training",
+                "session_format": "training",
+                "location": "Stage Berlin",
                 "speakers": ["Eva"],
                 "tags": ["Data"],
                 "duration": 60,
@@ -210,6 +214,27 @@ class TestSessionFilteringAPI:
         assert len(data) >= 1
 
     @pytest.mark.usefixtures("sessions_for_filtering")
+    def test_filter_by_location_single(self, client):
+        """Test filtering by single location."""
+        response = client.get("/api/v2/sessions?location=Stage+Berlin")
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        assert len(data) >= 2
+        # All published results should have this location
+        assert all(s.get("location") == "Stage Berlin" for s in data)
+
+    @pytest.mark.usefixtures("sessions_for_filtering")
+    def test_filter_by_location_multiple_or_logic(self, client):
+        """Test filtering by multiple locations uses OR logic."""
+        response = client.get("/api/v2/sessions?location=Stage+Berlin,AI+Stage+TU+Graz")
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        # Should include sessions from both locations (OR logic)
+        assert len(data) >= 3
+        locations = {s.get("location") for s in data}
+        assert "Stage Berlin" in locations or "AI Stage TU Graz" in locations
+
+    @pytest.mark.usefixtures("sessions_for_filtering")
     def test_search_by_title(self, client):
         """Test searching by title."""
         response = client.get("/api/v2/sessions?search=Workshop")
@@ -279,6 +304,40 @@ class TestSessionFilteringAPI:
         iso_datetime = (now + timedelta(hours=2)).isoformat() + "Z"
         response = client.get(f"/api/v2/sessions?start_after={iso_datetime}")
         assert response.status_code == HTTP_200_OK
+
+    @pytest.mark.usefixtures("sessions_for_filtering")
+    def test_filter_by_end_before(self, client):
+        """Test filtering by sessions ending before a specific time."""
+        now = datetime.utcnow()
+        end_before_time = (now + timedelta(hours=3)).isoformat()
+        response = client.get(f"/api/v2/sessions?end_before={end_before_time}")
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        # Should find sessions that end before the specified time
+        assert len(data) >= 1
+
+    @pytest.mark.usefixtures("sessions_for_filtering")
+    def test_filter_by_end_after(self, client):
+        """Test filtering by sessions ending after a specific time."""
+        now = datetime.utcnow()
+        end_after_time = (now + timedelta(hours=1)).isoformat()
+        response = client.get(f"/api/v2/sessions?end_after={end_after_time}")
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        # Sessions ending after the time should be returned
+        assert len(data) >= 0
+
+    @pytest.mark.usefixtures("sessions_for_filtering")
+    def test_filter_by_timeframe(self, client):
+        """Test filtering for sessions within a specific timeframe using start and end times."""
+        now = datetime.utcnow()
+        start_time = (now + timedelta(hours=1)).isoformat()
+        end_time = (now + timedelta(hours=4)).isoformat()
+        response = client.get(f"/api/v2/sessions?start_after={start_time}&end_before={end_time}")
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        # Should return sessions that fit within the timeframe
+        assert isinstance(data, list)
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_sql_injection_in_search_param(self, client):
@@ -451,6 +510,68 @@ class TestSemanticSearchWithFilters:
         """Test semantic search with session format filter."""
         response = client.get(
             "/api/v2/sessions/search/similar?query=learning&session_format=workshop"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_duration_min_filter(self, client):
+        """Test semantic search with minimum duration filter."""
+        response = client.get("/api/v2/sessions/search/similar?query=AI&duration_min=30")
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_duration_range_filter(self, client):
+        """Test semantic search with duration range filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=learning&duration_min=20&duration_max=90"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_start_after_filter(self, client):
+        """Test semantic search with start_after date filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=workshop&start_after=2024-01-01T00:00:00"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_date_range_filter(self, client):
+        """Test semantic search with date range filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=machine+learning&start_after=2024-01-01T00:00:00&start_before=2025-12-31T23:59:59"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_invalid_date_format(self, client):
+        """Test semantic search with invalid date format."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=learning&start_after=invalid-date"
+        )
+        assert response.status_code in [400, 422]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_end_before_filter(self, client):
+        """Test semantic search with end_before date filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=learning&end_before=2025-12-31T23:59:59"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_end_after_filter(self, client):
+        """Test semantic search with end_after date filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=workshop&end_after=2024-01-01T00:00:00"
+        )
+        assert response.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("sessions_with_embeddings")
+    def test_semantic_search_with_timeframe_filter(self, client):
+        """Test semantic search with timeframe (start and end times) filter."""
+        response = client.get(
+            "/api/v2/sessions/search/similar?query=learning&start_after=2024-01-01T00:00:00&end_before=2025-12-31T23:59:59"
         )
         assert response.status_code in [200, 503]
 

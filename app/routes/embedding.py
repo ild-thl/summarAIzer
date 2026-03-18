@@ -75,7 +75,16 @@ async def search_similar_sessions(
     event_id: int | None = Query(None, description="Filter by event ID"),
     session_format: str | None = Query(None, description="Filter by session format"),
     tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    location: str | None = Query(
+        None, description="Filter by location (comma-separated, OR logic)"
+    ),
     language: str | None = Query(None, description="Filter by language (ISO 639-1 code)"),
+    duration_min: int | None = Query(None, ge=0, description="Minimum duration in minutes"),
+    duration_max: int | None = Query(None, ge=0, description="Maximum duration in minutes"),
+    start_after: str | None = Query(None, description="Sessions starting after (ISO 8601)"),
+    start_before: str | None = Query(None, description="Sessions starting before (ISO 8601)"),
+    end_after: str | None = Query(None, description="Sessions ending after (ISO 8601)"),
+    end_before: str | None = Query(None, description="Sessions ending before (ISO 8601)"),
     db: Session = Depends(get_db),
 ):
     """
@@ -89,24 +98,78 @@ async def search_similar_sessions(
     - **event_id**: Optional filter by event ID (applied at DB level)
     - **session_format**: Optional filter by format (applied via Chroma metadata)
     - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
+    - **location**: Optional filter by location (comma-separated, OR logic - matches any location)
     - **language**: Optional filter by language code (applied via Chroma metadata)
+    - **duration_min**: Optional minimum duration in minutes
+    - **duration_max**: Optional maximum duration in minutes
+    - **start_after**: Optional sessions starting after date (ISO 8601, e.g., 2024-01-01T00:00:00)
+    - **start_before**: Optional sessions starting before date (ISO 8601)
+    - **end_after**: Optional sessions ending after date (ISO 8601)
+    - **end_before**: Optional sessions ending before date (ISO 8601)
 
     **Examples:**
     - `/api/v2/sessions/search/similar?query=machine+learning`
     - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
     - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=talk`
+    - `/api/v2/sessions/search/similar?query=keynote&location=Landing:Stage+Berlin,AI:Stage+TU+Graz`
+    - `/api/v2/sessions/search/similar?query=workshop&start_after=2024-06-01T10:00:00&end_before=2024-06-01T11:30:00` (timeframe)
+    - `/api/v2/sessions/search/similar?query=learning&duration_min=30&duration_max=90`
+    - `/api/v2/sessions/search/similar?query=workshop&start_after=2024-01-01&start_before=2024-12-31`
     """
     from app.services.embedding_exceptions import (
         EmbeddingError,
         InvalidEmbeddingTextError,
     )
     from app.services.embedding_factory import get_search_service
+    from datetime import datetime
 
     try:
         # Parse tags (comma-separated)
         tags_list = None
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+
+        # Parse location (comma-separated)
+        location_list = None
+        if location:
+            location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
+
+        # Normalize language to lowercase for consistency
+        normalized_language = language.lower() if language else None
+
+        # Parse datetime strings if provided
+        start_after_dt = None
+        start_before_dt = None
+        end_after_dt = None
+        end_before_dt = None
+        if start_after:
+            try:
+                start_after_dt = datetime.fromisoformat(start_after.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid start_after format (use ISO 8601)"
+                ) from e
+        if start_before:
+            try:
+                start_before_dt = datetime.fromisoformat(start_before.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid start_before format (use ISO 8601)"
+                ) from e
+        if end_after:
+            try:
+                end_after_dt = datetime.fromisoformat(end_after.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid end_after format (use ISO 8601)"
+                ) from e
+        if end_before:
+            try:
+                end_before_dt = datetime.fromisoformat(end_before.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="Invalid end_before format (use ISO 8601)"
+                ) from e
 
         # Get search service via dependency injection
         search_service = get_search_service()
@@ -119,7 +182,14 @@ async def search_similar_sessions(
             event_id=event_id,
             session_format=session_format,
             tags=tags_list,
-            language=language,
+            location=location_list,
+            language=normalized_language,
+            duration_min=duration_min,
+            duration_max=duration_max,
+            start_after=start_after_dt,
+            start_before=start_before_dt,
+            end_after=end_after_dt,
+            end_before=end_before_dt,
         )
 
         logger.info(
@@ -128,7 +198,18 @@ async def search_similar_sessions(
             results_count=len(sessions),
             limit=limit,
             event_id=event_id,
-            filters_applied=bool(session_format or tags_list or language),
+            filters_applied=bool(
+                session_format
+                or tags_list
+                or location_list
+                or language
+                or duration_min
+                or duration_max
+                or start_after_dt
+                or start_before_dt
+                or end_after_dt
+                or end_before_dt
+            ),
         )
 
         # Convert ORM objects to Pydantic models

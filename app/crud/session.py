@@ -136,13 +136,22 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             filters.append(self.model.duration <= duration_max)
 
     def _add_date_range_filters(
-        self, filters: list, start_after: datetime | None, start_before: datetime | None
+        self,
+        filters: list,
+        start_after: datetime | None,
+        start_before: datetime | None,
+        end_after: datetime | None,
+        end_before: datetime | None,
     ):
-        """Add date range filters to the filters list."""
+        """Add date range filters to the filters list (start and end times)."""
         if start_after:
             filters.append(self.model.start_datetime >= start_after)
         if start_before:
             filters.append(self.model.start_datetime <= start_before)
+        if end_after:
+            filters.append(self.model.end_datetime >= end_after)
+        if end_before:
+            filters.append(self.model.end_datetime <= end_before)
 
     def _build_session_filters(
         self,
@@ -150,12 +159,15 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
+        location: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         speaker: str | None = None,
         start_after: datetime | None = None,
         start_before: datetime | None = None,
+        end_after: datetime | None = None,
+        end_before: datetime | None = None,
         search: str | None = None,
     ) -> list:
         """Build filter conditions for session query."""
@@ -180,9 +192,17 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if language_condition is not None:
             filters.append(language_condition)
 
-        # Tag filter: OR logic over tag array (cast JSON to string for searching)
+        # Location filter: match any location (OR logic)
+        if location:
+            location_conditions = [self.model.location == loc for loc in location]
+            filters.append(or_(*location_conditions))
+
+        # Tag filter: Check if session tags array contains any of the provided tags (OR logic)
         if tags:
-            tag_conditions = [cast(self.model.tags, String).ilike(f"%{tag}%") for tag in tags]
+            tag_conditions = []
+            for tag in tags:
+                quoted_tag = f'"{tag}"'
+                tag_conditions.append(cast(self.model.tags, String).ilike(f"%{quoted_tag}%"))
             filters.append(or_(*tag_conditions))
 
         # Duration range filter
@@ -193,7 +213,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             filters.append(cast(self.model.speakers, String).ilike(f"%{speaker}%"))
 
         # Date range filter
-        self._add_date_range_filters(filters, start_after, start_before)
+        self._add_date_range_filters(filters, start_after, start_before, end_after, end_before)
 
         # Full-text search on title, description, and speakers
         if search:
@@ -217,12 +237,15 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
+        location: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         speaker: str | None = None,
         start_after: datetime | None = None,
         start_before: datetime | None = None,
+        end_after: datetime | None = None,
+        end_before: datetime | None = None,
         search: str | None = None,
     ) -> list[SessionModel]:
         """
@@ -236,12 +259,15 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             event_id: Filter by event ID
             session_format: Filter by session format - single value or list (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
             tags: Any of these tags (OR logic)
+            location: Any of these locations (OR logic)
             language: Filter by language code - single value or list (e.g. en, de) - OR logic
             duration_min: Minimum duration in minutes
             duration_max: Maximum duration in minutes
             speaker: Search for speaker name
             start_after: Sessions starting after this date
             start_before: Sessions starting before this date
+            end_after: Sessions ending after this date
+            end_before: Sessions ending before this date
             search: Full-text search on title, description, and speakers
 
         Returns:
@@ -256,12 +282,15 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             event_id=event_id,
             session_format=session_format,
             tags=tags,
+            location=location,
             language=language,
             duration_min=duration_min,
             duration_max=duration_max,
             speaker=speaker,
             start_after=start_after,
             start_before=start_before,
+            end_after=end_after,
+            end_before=end_before,
             search=search,
         )
 

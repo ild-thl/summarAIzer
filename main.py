@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
+import logging
 import structlog
 
 # Load environment variables
@@ -23,7 +24,13 @@ from app.routes import (
     embedding,
 )
 
-# Configure logging
+# Configure Python's standard logging (required for structlog.stdlib.LoggerFactory)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s - %(levelname)s - %(message)s",
+)
+
+# Configure structlog
 structlog.configure(
     processors=[
         structlog.stdlib.filter_by_level,

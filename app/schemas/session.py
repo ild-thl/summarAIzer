@@ -87,7 +87,7 @@ class SessionBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=255, description="Session title")
     speakers: list[str] | None = Field(default=None, description="List of speaker names")
     tags: list[str] | None = Field(default=None, description="Session tags")
-    short_description: str | None = Field(None, max_length=1000, description="Short description")
+    short_description: str | None = Field(None, description="Short description")
     location: str | None = Field(None, max_length=255, description="Session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
     end_datetime: datetime = Field(..., description="Session end datetime")
@@ -100,6 +100,33 @@ class SessionBase(BaseModel):
     )
     uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
     event_id: int | None = Field(None, description="Associated event ID")
+
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
+        """Normalize session_format to lowercase for case-insensitive matching."""
+        if v is None:
+            return v
+        # If it's already an enum, get its value
+        if isinstance(v, SessionFormat):
+            return v.value
+        # Convert to string and lowercase
+        v_str = str(v).lower()
+        # Validate it matches one of the enum values
+        valid_formats = {fmt.value for fmt in SessionFormat}
+        if v_str not in valid_formats:
+            raise ValueError(
+                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
+            )
+        return v_str
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: str | None) -> str | None:
+        """Normalize language code to lowercase for consistency."""
+        if v is None:
+            return v
+        return str(v).lower()
 
     @field_validator("uri")
     @classmethod
@@ -144,7 +171,7 @@ class SessionUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     speakers: list[str] | None = None
     tags: list[str] | None = None
-    short_description: str | None = Field(None, max_length=1000)
+    short_description: str | None = Field(None)
     location: str | None = Field(None, max_length=255)
     start_datetime: datetime | None = None
     end_datetime: datetime | None = None
@@ -155,6 +182,33 @@ class SessionUpdate(BaseModel):
     language: str | None = Field(None, min_length=2, max_length=10)
     uri: str | None = Field(None, min_length=1, max_length=255)
     event_id: int | None = None
+
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
+        """Normalize session_format to lowercase for case-insensitive matching."""
+        if v is None:
+            return v
+        # If it's already an enum, get its value
+        if isinstance(v, SessionFormat):
+            return v.value
+        # Convert to string and lowercase
+        v_str = str(v).lower()
+        # Validate it matches one of the enum values
+        valid_formats = {fmt.value for fmt in SessionFormat}
+        if v_str not in valid_formats:
+            raise ValueError(
+                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
+            )
+        return v_str
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: str | None) -> str | None:
+        """Normalize language code to lowercase for consistency."""
+        if v is None:
+            return v
+        return str(v).lower()
 
     @field_validator("uri")
     @classmethod

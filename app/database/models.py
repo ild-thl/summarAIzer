@@ -32,11 +32,11 @@ class SessionStatus(str, Enum):
 class SessionFormat(str, Enum):
     """Session format enumeration."""
 
-    INPUT = "Input"
-    LIGHTNING_TALK = "Lighting Talk"
-    DISCUSSION = "Diskussion"
+    INPUT = "input"
+    LIGHTNING_TALK = "lightning talk"
+    DISCUSSION = "diskussion"
     WORKSHOP = "workshop"
-    TRAINING = "Training"
+    TRAINING = "training"
 
 
 class EventStatus(str, Enum):

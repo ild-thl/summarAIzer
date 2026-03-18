@@ -1,6 +1,6 @@
 # SummarAIzer v2
 
-AI-powered content processing system that transforms session transcriptions into comprehensive summaries, tags, key takeaways, visual diagrams, and AI-generated images from conference and event recordings.
+AI-powered content processing system that transforms session transcriptions into summaries, tags, key takeaways, visual diagrams, and AI-generated images from conference and event recordings.
 
 ## ⚡ Features
 
@@ -191,15 +191,11 @@ pytest tests/unit/test_crud_session.py -v
 ptw tests/unit/
 ```
 
-**Test Structure:**
-- `tests/unit/` - 153 isolated unit tests (CI runs these)
-- `tests/integration/` - 43 API integration tests (manual runs)
-
 ---
 
 ## 📐 Architecture
 
-The app uses a layered architecture with comprehensive authorization:
+The app uses a layered architecture:
 
 - **Routes** - REST API endpoints with authentication (FastAPI)
 - **Security** - JWT/API key validation and ownership verification
@@ -269,8 +265,8 @@ When a workflow is triggered:
 │   ├── utils/               Helper functions
 │   └── workflows/           LangGraph pipeline definitions
 ├── tests/
-│   ├── unit/                153 isolated unit tests (CI)
-│   ├── integration/         43 API integration tests
+│   ├── unit/                isolated unit tests (CI)
+│   ├── integration/         API integration tests
 │   ├── conftest.py          Shared pytest fixtures
 │   └── __init__.py
 ├── .github/workflows/
@@ -292,7 +288,7 @@ When a workflow is triggered:
 - **OpenAI** - Language models
 - **Chroma** - Vector database for semantic search (optional)
 - **boto3** - S3 storage
-- **pytest** - Testing framework (196+ unit & integration tests)
+- **pytest** - Testing framework (unit & integration tests)
 
 ---
 

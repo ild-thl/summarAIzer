@@ -171,6 +171,7 @@ async def list_sessions(
         description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
     ),
     tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    location: str = Query(None, description="Filter by location (comma-separated, OR logic)"),
     language: str = Query(
         None,
         description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
@@ -180,6 +181,8 @@ async def list_sessions(
     speaker: str = Query(None, description="Search for speaker name"),
     start_after: str = Query(None, description="Sessions starting after (ISO 8601)"),
     start_before: str = Query(None, description="Sessions starting before (ISO 8601)"),
+    end_after: str = Query(None, description="Sessions ending after (ISO 8601)"),
+    end_before: str = Query(None, description="Sessions ending before (ISO 8601)"),
     search: str = Query(None, description="Full-text search on title, description, and speakers"),
     current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -196,20 +199,26 @@ async def list_sessions(
     - **event_id**: Filter by event ID
     - **session_format**: Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
     - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
+    - **location**: Filter by location - comma-separated list (OR logic: returns sessions with any location)
     - **language**: Filter by language code - comma-separated (e.g., en, de, fr) - OR logic
     - **duration_min**: Minimum duration in minutes
     - **duration_max**: Maximum duration in minutes
     - **speaker**: Search for speaker name (case-insensitive)
     - **start_after**: Sessions starting after date (ISO 8601, e.g., 2024-01-01T00:00:00)
     - **start_before**: Sessions starting before date (ISO 8601)
+    - **end_after**: Sessions ending after date (ISO 8601)
+    - **end_before**: Sessions ending before date (ISO 8601)
     - **search**: Full-text search on title, description, and speakers (case-insensitive)
 
     **Examples:**
     - `/api/v2/sessions?status=published&language=en`
     - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
     - `/api/v2/sessions?tags=ai,machine+learning&language=en,de`
+    - `/api/v2/sessions?location=Landing:Stage+Berlin,AI:Stage+TU+Graz` (locations with URL encoding)
+    - `/api/v2/sessions?tags=AI%26Technology,FutureSkills` (tags with ampersand - URL-encoded)
     - `/api/v2/sessions?search=machine+learning&status=published`
-    - `/api/v2/sessions?session_format=Input,workshop`
+    - `/api/v2/sessions?session_format=input,workshop`
+    - `/api/v2/sessions?start_after=2024-06-01T10:00:00&end_before=2024-06-01T11:30:00` (sessions in timeframe)
     """
     from datetime import datetime
 
@@ -223,14 +232,21 @@ async def list_sessions(
         else None
     )
 
-    # Parse language (comma-separated, no validation needed as it's free-form ISO codes)
+    # Parse language (comma-separated, normalize to lowercase for consistency)
     language_list = None
     if language:
-        language_list = [lang.strip() for lang in language.split(",") if lang.strip()]
+        language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
+
+    # Parse location (comma-separated)
+    location_list = None
+    if location:
+        location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
 
     # Parse datetime strings if provided
     start_after_dt = None
     start_before_dt = None
+    end_after_dt = None
+    end_before_dt = None
     if start_after:
         try:
             start_after_dt = datetime.fromisoformat(start_after.replace("Z", "+00:00"))
@@ -244,6 +260,20 @@ async def list_sessions(
         except ValueError as e:
             raise HTTPException(
                 status_code=400, detail="Invalid start_before format (use ISO 8601)"
+            ) from e
+    if end_after:
+        try:
+            end_after_dt = datetime.fromisoformat(end_after.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid end_after format (use ISO 8601)"
+            ) from e
+    if end_before:
+        try:
+            end_before_dt = datetime.fromisoformat(end_before.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid end_before format (use ISO 8601)"
             ) from e
 
     # Parse tags (comma-separated)
@@ -260,12 +290,15 @@ async def list_sessions(
         event_id=event_id,
         session_format=session_format_list,
         tags=tags_list,
+        location=location_list,
         language=language_list,
         duration_min=duration_min,
         duration_max=duration_max,
         speaker=speaker,
         start_after=start_after_dt,
         start_before=start_before_dt,
+        end_after=end_after_dt,
+        end_before=end_before_dt,
         search=search,
     )
 

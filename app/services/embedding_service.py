@@ -9,6 +9,8 @@ from app.constants.embedding import (
     MAX_EMBEDDING_TEXT_LENGTH,
     SESSIONS_COLLECTION,
 )
+from app.crud import generated_content as content_crud
+from app.database.connection import SessionLocal
 from app.services.embeddings_manager import create_embeddings_backend
 
 logger = structlog.get_logger()
@@ -282,6 +284,44 @@ class EmbeddingService:
             fields=[short_description, summary_truncated],
         )
 
+    def prepare_session_text_with_summary(self, session) -> str:
+        """
+        Prepare text for session embedding with summary fetching.
+
+        Fetches the session's summary from the content table and combines it
+        with title and short_description for embedding.
+
+        Args:
+            session: Session entity (must have id, title, short_description attributes)
+
+        Returns:
+            Combined text for embedding
+
+        Raises:
+            Exception: If text validation fails
+        """
+        # Try to fetch summary from content table
+        summary_text = None
+        db = SessionLocal()
+        try:
+            summary_content = content_crud.get_content_by_identifier(db, session.id, "summary")
+            summary_text = summary_content.content if summary_content else None
+        except Exception as e:
+            logger.debug(
+                "embedding_summary_fetch_failed",
+                session_id=session.id,
+                error=str(e),
+            )
+        finally:
+            db.close()
+
+        # Prepare text with fetched summary
+        return self._prepare_session_text(
+            title=session.title,
+            short_description=session.short_description,
+            summary=summary_text,
+        )
+
     @staticmethod
     def validate_embedding_text(text: str, max_length: int = MAX_EMBEDDING_TEXT_LENGTH) -> bool:
         """
@@ -307,12 +347,42 @@ class EmbeddingService:
 
         return True
 
+    def _build_session_metadata(self, session) -> dict:
+        """
+        Build Chroma metadata dict from session object.
+
+        Knows the structure of session model and maps it to Chroma filter metadata.
+        This is the single source of truth for session metadata structure.
+
+        Args:
+            session: Session entity with attributes like title, status, tags, etc.
+
+        Returns:
+            Dictionary of metadata for Chroma filtering
+        """
+        return {
+            "title": session.title,
+            "status": session.status.value if session.status else None,
+            "event_id": session.event_id if session.event_id else None,
+            "session_format": session.session_format.value if session.session_format else None,
+            "tags": session.tags or None,
+            "language": session.language or None,
+            "location": session.location or None,
+            "duration": session.duration if session.duration else None,
+            "speakers": session.speakers or None,
+            "start_datetime": (
+                session.start_datetime.timestamp() if session.start_datetime else None
+            ),
+            "end_datetime": session.end_datetime.timestamp() if session.end_datetime else None,
+        }
+
     async def store_session_embedding(
         self,
         session_id: int,
         embedding: list[float],
         text: str,
         metadata: dict | None = None,
+        session=None,
     ) -> None:
         """
         Store session embedding in Chroma with optional metadata for filtering.
@@ -321,20 +391,19 @@ class EmbeddingService:
             session_id: Session ID
             embedding: Embedding vector
             text: Original text that was embedded
-            metadata: Optional dict with session details for filtering:
-                - status: "draft" or "published"
-                - event_id: Event ID
-                - session_format: Session format
-                - tags: List of tags
-                - language: Language code
-                - duration: Duration in minutes
-                - speakers: Speaker names (comma-separated or list)
-                - title: Session title
+            metadata: Optional pre-built metadata dict. If not provided and session is
+                given, metadata will be built from session object.
+            session: Optional session entity. If provided and metadata is None, metadata
+                will be automatically built from the session.
 
         Raises:
             Exception: If storing fails
         """
         try:
+            # Build metadata from session if not provided
+            if metadata is None and session is not None:
+                metadata = self._build_session_metadata(session)
+
             # Build metadata with session_id and type always included
             chroma_metadata = {"session_id": session_id, "type": "session"}
             if metadata:
