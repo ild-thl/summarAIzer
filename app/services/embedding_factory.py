@@ -13,6 +13,7 @@ from app.config.settings import get_settings
 from app.services.embedding_exceptions import ChromaConnectionError
 from app.services.embedding_search_service import EmbeddingSearchService
 from app.services.embedding_service import EmbeddingService
+from app.services.recommendation.service import RecommendationService
 
 logger = structlog.get_logger()
 
@@ -85,6 +86,16 @@ def get_search_service() -> EmbeddingSearchService:
         raise ChromaConnectionError("Embeddings are disabled")
 
     return EmbeddingSearchService(embedding_service)
+
+
+def get_recommendation_service() -> RecommendationService:
+    """Factory for RecommendationService."""
+    embedding_service = get_embedding_service()
+
+    if embedding_service is None:
+        raise ChromaConnectionError("Embeddings are disabled")
+
+    return RecommendationService(embedding_service)
 
 
 def reset_services():

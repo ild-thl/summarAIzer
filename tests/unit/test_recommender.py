@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 
 from app.schemas.session import RecommendRequest, SessionStatus
 from app.services.embedding_exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
-from app.services.embedding_search_service import EmbeddingSearchService
 from app.services.embedding_service import EmbeddingService
+from app.services.recommendation.service import RecommendationService
 
 
 class TestQueryEmbeddingDetermination:
@@ -30,7 +30,7 @@ class TestQueryEmbeddingDetermination:
     @pytest.fixture
     def search_service(self, mock_embedding_service):
         """Create EmbeddingSearchService with mocked EmbeddingService."""
-        return EmbeddingSearchService(mock_embedding_service)
+        return RecommendationService(mock_embedding_service)
 
     @pytest.mark.asyncio
     async def test_query_embedding_with_text_query(self, search_service, mock_embedding_service):
@@ -113,7 +113,7 @@ class TestRecommendationScoring:
     @pytest.fixture
     def search_service(self, mock_embedding_service):
         """Create EmbeddingSearchService."""
-        return EmbeddingSearchService(mock_embedding_service)
+        return RecommendationService(mock_embedding_service)
 
     @pytest.mark.asyncio
     async def test_scoring_with_semantic_similarity_only(self, search_service):
@@ -230,7 +230,7 @@ class TestCosineSimilarity:
     @pytest.fixture
     def search_service(self):
         """Create EmbeddingSearchService."""
-        return EmbeddingSearchService(AsyncMock(spec=EmbeddingService))
+        return RecommendationService(AsyncMock(spec=EmbeddingService))
 
     def test_identical_vectors(self, search_service):
         """Test that identical vectors produce similarity near 1.0."""
@@ -295,7 +295,7 @@ class TestRecommendFallback:
     @pytest.fixture
     def search_service(self, mock_embedding_service):
         """Create EmbeddingSearchService."""
-        return EmbeddingSearchService(mock_embedding_service)
+        return RecommendationService(mock_embedding_service)
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
@@ -307,7 +307,7 @@ class TestRecommendFallback:
             Mock(id=3, status=SessionStatus.PUBLISHED, event_id=100),
         ]
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.list_with_filters.return_value = mock_sessions
 
             results = await search_service._recommend_fallback(
@@ -330,7 +330,7 @@ class TestRecommendFallback:
             for i in range(1, 11)  # 10 sessions
         ]
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.list_with_filters.return_value = mock_sessions
 
             results = await search_service._recommend_fallback(
@@ -348,7 +348,7 @@ class TestRecommendFallback:
         """Test that fallback passes filters to CRUD."""
         mock_sessions = [Mock(id=1, status=SessionStatus.PUBLISHED, event_id=100)]
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.list_with_filters.return_value = mock_sessions
 
             await search_service._recommend_fallback(
@@ -373,7 +373,7 @@ class TestRecommendFallback:
         """Test that fallback returns (session, scores) tuples."""
         mock_session = Mock(id=1, status=SessionStatus.PUBLISHED)
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.list_with_filters.return_value = [mock_session]
 
             results = await search_service._recommend_fallback(
@@ -421,7 +421,7 @@ class TestFullRecommendationPipeline:
     @pytest.fixture
     def search_service(self, mock_embedding_service):
         """Create EmbeddingSearchService."""
-        return EmbeddingSearchService(mock_embedding_service)
+        return RecommendationService(mock_embedding_service)
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
@@ -432,7 +432,7 @@ class TestFullRecommendationPipeline:
             2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
 
             results = await search_service.recommend_sessions(
@@ -472,7 +472,7 @@ class TestFullRecommendationPipeline:
             2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
 
             results = await service.recommend_sessions(
@@ -499,7 +499,7 @@ class TestFullRecommendationPipeline:
             1: Mock(id=1, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.return_value = next(iter(mock_sessions.values()))
 
             await search_service.recommend_sessions(
@@ -532,7 +532,7 @@ class TestFullRecommendationPipeline:
             end_datetime=datetime(2026, 3, 17, 11, 0, 0),
         )
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             await search_service.recommend_sessions(
@@ -563,7 +563,7 @@ class TestFullRecommendationPipeline:
         """Test that invalid query raises InvalidEmbeddingTextError."""
         with (
             patch(
-                "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
+                "app.services.recommendation.service.EmbeddingService.validate_embedding_text",
                 return_value=False,
             ),
             pytest.raises(InvalidEmbeddingTextError),
@@ -605,7 +605,7 @@ class TestDislikedSessionPenalty:
 
     @pytest.fixture
     def search_service(self, mock_embedding_service):
-        return EmbeddingSearchService(mock_embedding_service)
+        return RecommendationService(mock_embedding_service)
 
     @pytest.fixture
     def mock_db_session(self):
@@ -621,7 +621,7 @@ class TestDislikedSessionPenalty:
             3: Mock(id=3, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
 
             # Query-based recommendation with disliked session 3
@@ -660,7 +660,7 @@ class TestDislikedSessionPenalty:
             2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.return_value = next(iter(mock_sessions.values()))
 
             # Get recommendation with disliked session
@@ -694,7 +694,7 @@ class TestDislikedSessionPenalty:
             3: Mock(id=3, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
 
             results_no_penalty = await search_service.recommend_sessions(
@@ -734,7 +734,7 @@ class TestDislikedSessionPenalty:
             2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
         }
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
             mock_crud.read.return_value = next(iter(mock_sessions.values()))
 
             # Session 1 is both liked and disliked (shouldn't happen in practice)
@@ -757,7 +757,7 @@ class TestPlanModeOptimization:
     def search_service(self):
         service = AsyncMock(spec=EmbeddingService)
         service.embedding_dimension = 768
-        return EmbeddingSearchService(service)
+        return RecommendationService(service)
 
     def _make_session(self, sid: int, start: datetime, end: datetime):
         session = Mock()

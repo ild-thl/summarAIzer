@@ -287,17 +287,17 @@ async def recommend_sessions(
         EmbeddingSearchError,
         InvalidEmbeddingTextError,
     )
-    from app.services.embedding_factory import get_search_service
+    from app.services.embedding_factory import get_recommendation_service
 
     try:
         # Validate request
         recommend_req = request_body
 
-        # Get search service
-        search_service = get_search_service()
+        # Get recommendation service
+        recommendation_service = get_recommendation_service()
 
         # Call recommender with Phase 2 re-ranking + Phase 3 soft filter parameters
-        sessions = await search_service.recommend_sessions(
+        sessions = await recommendation_service.recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
             rejected_ids=recommend_req.rejected_ids,
