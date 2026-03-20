@@ -280,7 +280,7 @@ async def recommend_sessions(
         # Get search service
         search_service = get_search_service()
 
-        # Call recommender with Phase 2 re-ranking parameters
+        # Call recommender with Phase 2 re-ranking + Phase 3 soft filter parameters
         sessions = await search_service.recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
@@ -300,6 +300,9 @@ async def recommend_sessions(
             end_before=end_before_dt,
             liked_embedding_weight=recommend_req.liked_embedding_weight,
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
+            filter_mode=recommend_req.filter_mode,
+            filter_margin_weight=recommend_req.filter_margin_weight,
+            soft_filter_limit_ratio=recommend_req.soft_filter_limit_ratio,
         )
 
         logger.info(
@@ -320,6 +323,7 @@ async def recommend_sessions(
                 liked_cluster_similarity=scores["liked_cluster_similarity"],
                 disliked_similarity=scores["disliked_similarity"],
                 filter_match_ratio=scores["filter_match_ratio"],
+                filter_compliance_score=scores["filter_compliance_score"],
                 explanation=scores["explanation"],
             )
             for session, scores in sessions

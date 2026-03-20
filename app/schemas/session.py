@@ -295,6 +295,29 @@ class RecommendRequest(BaseModel):
         "Higher = stronger penalty from disliked similarities. Default 0.2",
     )
 
+    # Phase 3: Soft filter margins
+    filter_mode: str = Field(
+        default="hard",
+        description="Filter enforcement mode: 'hard' = strictly match all filters (default), "
+        "'soft' = find exact matches first, then fill gaps with near-matches that partially match filters",
+    )
+    filter_margin_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="When filter_mode='soft', weight to blend filter_match_ratio into overall_score (0-1). "
+        "Default 0.1 means filter compliance contributes 10% to final score. Set to 0.0 if using soft "
+        "mode only to expand candidate pool (compliance shown in response but not scored).",
+    )
+    soft_filter_limit_ratio: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=1.0,
+        description="When filter_mode='soft', if hard-filter results < limit * ratio, enable soft-filter pass. "
+        "Default 0.5: if limit=10 and hard results < 5, do soft pass. Set to 1.0 to always use soft (harder to "
+        "require all filters to be met).",
+    )
+
     @field_validator("language", mode="before")
     @classmethod
     def normalize_language(cls, v: str | None) -> str | None:
@@ -329,6 +352,12 @@ class SessionWithScore(BaseModel):
         ge=0,
         le=1,
         description="Ratio of matched filters (0-1, 1.0 = all filters matched)",
+    )
+    filter_compliance_score: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Phase 3 - Filter compliance for soft-filter margins (0-1, None if hard filter mode)",
     )
     explanation: str | None = Field(
         None, description="Human-readable explanation of why this session was recommended"

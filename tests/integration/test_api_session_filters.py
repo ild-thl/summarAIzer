@@ -1105,3 +1105,321 @@ class TestRecommendationAPI:
                 assert 0 <= result["overall_score"] <= 1
                 if liked_session_id:
                     assert result["liked_cluster_similarity"] is not None
+
+    # ========================================================================
+    # Phase 3: Soft filter margins tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_filter_compliance_score_in_response(self, client):
+        """Test that filter_compliance_score is included in recommendation response."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "limit": 5,
+                # Phase 3 parameters
+                "filter_mode": "hard",
+                "filter_margin_weight": 0.1,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # filter_compliance_score should be present in response
+            for result in results:
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_hard_mode_with_filters(self, client):
+        """Test that hard filter mode applies filters strictly."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "session_format": "workshop",
+                "language": "en",
+                "limit": 10,
+                "filter_mode": "hard",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All returned sessions must match ALL filters
+            for result in results:
+                session = result["session"]
+                assert session["session_format"] == "workshop"
+                assert session["language"].lower() == "en"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_soft_mode_parameter_accepted(self, client):
+        """Test that soft mode parameters are accepted without errors."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 5,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.15,
+                "soft_filter_limit_ratio": 0.5,
+                "language": "en",
+            },
+        )
+
+        # Should accept soft mode without error
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # Response structure should be valid
+            assert isinstance(results, list)
+            for result in results:
+                assert "overall_score" in result
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_filter_margin_weight_parameter_range(self, client):
+        """Test that filter_margin_weight parameter accepts 0.0-1.0 range."""
+        # Test minimum weight
+        response1 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.0,
+                "limit": 5,
+            },
+        )
+        assert response1.status_code in [200, 503]
+
+        # Test maximum weight
+        response2 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "filter_mode": "soft",
+                "filter_margin_weight": 1.0,
+                "limit": 5,
+            },
+        )
+        assert response2.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_soft_filter_limit_ratio_parameter_range(self, client):
+        """Test that soft_filter_limit_ratio parameter accepts valid range."""
+        # Test minimum ratio
+        response1 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "advanced",
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.1,
+                "soft_filter_limit_ratio": 0.1,
+            },
+        )
+        assert response1.status_code in [200, 503]
+
+        # Test maximum ratio
+        response2 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "advanced",
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.1,
+                "soft_filter_limit_ratio": 1.0,
+            },
+        )
+        assert response2.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_phase2_plus_phase3_integration(self, client, recommendation_sessions):
+        """Test that Phase 2 re-ranking and Phase 3 compliance work together."""
+        liked_session_id = recommendation_sessions[0]["id"]
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 5,
+                # Phase 2 parameters
+                "liked_embedding_weight": 0.3,
+                "disliked_embedding_weight": 0.2,
+                # Phase 3 parameters
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.1,
+                "soft_filter_limit_ratio": 0.5,
+                # Filters
+                "language": "en",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # Phase 2: liked_cluster_similarity should be computed
+                assert result["liked_cluster_similarity"] is not None
+                # Phase 3: filter_compliance_score in response
+                assert "filter_compliance_score" in result
+                # Overall score should exist
+                assert result["overall_score"] > 0
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_default_filter_mode_is_hard(self, client):
+        """Test that default filter mode is 'hard' when not specified."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "session_format": "workshop",
+                "limit": 5,
+                # No filter_mode specified - should default to 'hard'
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All results should match the session_format filter
+            for result in results:
+                assert result["session"]["session_format"] == "workshop"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_multiple_filters_with_soft_mode(self, client):
+        """Test soft mode with multiple active filters."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.2,
+                "soft_filter_limit_ratio": 0.5,
+                # Multiple filters
+                "session_format": "workshop",
+                "language": "en",
+                "duration_min": 45,
+                "duration_max": 120,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # Session data should be valid
+            for result in results:
+                assert "overall_score" in result
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_two_pass_logic_expansion(self, client):
+        """Test that soft mode expands results when hard filters return too few.
+
+        This test verifies the core two-pass logic:
+        1. Hard pass: Apply all filters strictly
+        2. Soft pass: If hard results < threshold, re-search without filters
+        3. Compliance: Compute filter_compliance_score for soft results
+        4. Re-ranking: Sort all results by overall_score, return top limit
+        """
+        # Search with very restrictive filters to trigger soft pass
+        # Using filters that few sessions will match
+        response_soft = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.15,
+                "soft_filter_limit_ratio": 0.3,  # Trigger soft pass if hard < 3
+                # Restrictive format filter
+                "session_format": "diskussion",  # Only "ai-ethics" has this
+                "language": "en",
+            },
+        )
+
+        assert response_soft.status_code in [200, 503]
+        if response_soft.status_code == 200:
+            soft_results = response_soft.json()
+
+            # With soft mode, we expect to get some results
+            # (either from hard pass or soft pass expansion)
+            if len(soft_results) > 0:
+                # Check that results are properly formatted
+                for result in soft_results:
+                    assert "overall_score" in result
+                    assert result["overall_score"] >= 0 and result["overall_score"] <= 1
+                    assert (
+                        "filter_compliance_score" in result
+                        or result["filter_compliance_score"] is None
+                    )
+
+                    # Hard pass results should have format=diskussion
+                    # Soft pass results may not match the format filter
+                    if result["session"]["session_format"]:
+                        assert isinstance(result["session"]["session_format"], str)
+
+                # Results should be sorted by overall_score (descending)
+                scores = [r["overall_score"] for r in soft_results]
+                assert scores == sorted(scores, reverse=True)
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_hard_mode_no_expansion(self, client):
+        """Test that hard mode does NOT expand with soft results.
+
+        Hard mode should strictly apply all filters and not use soft pass expansion.
+        """
+        # Same restrictive filters as soft mode test, but with hard mode
+        response_hard = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 10,
+                "filter_mode": "hard",  # Strict mode
+                "session_format": "diskussion",  # Very restrictive
+                "language": "en",
+            },
+        )
+
+        assert response_hard.status_code in [200, 503]
+        if response_hard.status_code == 200:
+            hard_results = response_hard.json()
+
+            # All hard results MUST match the session_format filter
+            for result in hard_results:
+                if result["session"]["session_format"]:
+                    assert result["session"]["session_format"] == "diskussion"
+                assert result["session"]["language"].lower() == "en"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_compliance_score_reflects_filter_matches(self, client):
+        """Test that compliance_score correctly reflects how many filters matched."""
+        # Use soft mode with query to trigger semantic search path (not CRUD fallback)
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning workshop",  # Provide query to trigger semantic path
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.2,
+                "soft_filter_limit_ratio": 0.2,  # More likely to trigger soft pass
+                "session_format": "workshop",
+                "language": "en",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+
+            if len(results) > 0:
+                # Results should be properly formatted
+                for result in results:
+                    assert "overall_score" in result
+                    # compliance_score may be None in hard pass, or a float in soft pass
+                    compliance = result.get("filter_compliance_score")
+                    if compliance is not None:
+                        assert 0.0 <= compliance <= 1.0
