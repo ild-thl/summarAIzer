@@ -17,7 +17,6 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/sessions", tags=["embeddings"])
 
 
-
 @router.post(
     "/{session_id}/embedding/refresh",
     response_model=dict,
@@ -133,8 +132,8 @@ async def search_similar_sessions(
         normalized_language = language.lower() if language else None
 
         # Parse datetime filters using helper
-        start_after_dt, start_before_dt, end_after_dt, end_before_dt = DateTimeUtils.parse_datetime_filters(
-            start_after, start_before, end_after, end_before
+        start_after_dt, start_before_dt, end_after_dt, end_before_dt = (
+            DateTimeUtils.parse_datetime_filters(start_after, start_before, end_after, end_before)
         )
 
         # Get search service and invoke
@@ -281,7 +280,7 @@ async def recommend_sessions(
         # Get search service
         search_service = get_search_service()
 
-        # Call recommender
+        # Call recommender with Phase 2 re-ranking parameters
         sessions = await search_service.recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
@@ -299,6 +298,8 @@ async def recommend_sessions(
             start_before=start_before_dt,
             end_after=end_after_dt,
             end_before=end_before_dt,
+            liked_embedding_weight=recommend_req.liked_embedding_weight,
+            disliked_embedding_weight=recommend_req.disliked_embedding_weight,
         )
 
         logger.info(

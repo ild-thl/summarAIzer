@@ -77,7 +77,6 @@ class DateTimeUtils:
         return DateTimeUtils.parse_iso_datetime(str(value))
 
 
-
 class URIUtils:
     """Utilities for URI/slug operations."""
 

@@ -279,6 +279,22 @@ class RecommendRequest(BaseModel):
     end_after: datetime | None = Field(None, description="Sessions ending after (ISO 8601)")
     end_before: datetime | None = Field(None, description="Sessions ending before (ISO 8601)")
 
+    # Phase 2: Tuning parameters for re-ranking
+    liked_embedding_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight (a) to boost sessions similar to liked sessions (0-1). "
+        "Higher = more influence from liked session similarities. Default 0.3",
+    )
+    disliked_embedding_weight: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Weight (b) to penalize sessions similar to disliked sessions (0-1). "
+        "Higher = stronger penalty from disliked similarities. Default 0.2",
+    )
+
     @field_validator("language", mode="before")
     @classmethod
     def normalize_language(cls, v: str | None) -> str | None:

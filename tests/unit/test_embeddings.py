@@ -201,8 +201,8 @@ class TestEmbeddingSearchService:
             )
 
         assert len(results) == 2
-        assert results[0].id == 1
-        assert results[1].id == 2
+        assert results[0][0].id == 1
+        assert results[1][0].id == 2
         mock_embedding_service.embed_query.assert_called_once_with(query_text)
 
     @pytest.mark.asyncio
@@ -237,7 +237,7 @@ class TestEmbeddingSearchService:
 
         # Should only return published session
         assert len(results) == 1
-        assert results[0].id == 1
+        assert results[0][0].id == 1
 
     @pytest.mark.asyncio
     async def test_search_sessions_filters_by_event(
@@ -273,7 +273,7 @@ class TestEmbeddingSearchService:
 
         # Should only return session from event 100
         assert len(results) == 1
-        assert results[0].event_id == 100
+        assert results[0][0].event_id == 100
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")

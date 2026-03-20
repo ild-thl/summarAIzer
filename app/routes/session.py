@@ -242,8 +242,8 @@ async def list_sessions(
         location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
 
     # Parse datetime strings if provided using helper
-    start_after_dt, start_before_dt, end_after_dt, end_before_dt = DateTimeUtils.parse_datetime_filters(
-        start_after, start_before, end_after, end_before
+    start_after_dt, start_before_dt, end_after_dt, end_before_dt = (
+        DateTimeUtils.parse_datetime_filters(start_after, start_before, end_after, end_before)
     )
 
     # Parse tags (comma-separated)

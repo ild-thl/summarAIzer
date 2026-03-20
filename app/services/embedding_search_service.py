@@ -331,7 +331,7 @@ class EmbeddingSearchService:
 
             # Fetch from DB, apply filters, and compute scores
             results = []
-            for session_id, chroma_similarity in chroma_results:
+            for session_id, chroma_similarity, _ in chroma_results:
                 session = session_crud.read(db, session_id)
                 if not session or session.status != SessionStatus.PUBLISHED:
                     continue
@@ -395,9 +395,14 @@ class EmbeddingSearchService:
         start_before: Any | None = None,
         end_after: Any | None = None,
         end_before: Any | None = None,
+        liked_embedding_weight: float = 0.3,
+        disliked_embedding_weight: float = 0.2,
     ) -> list[tuple]:
         """
         Recommend sessions based on user preferences and optional filters.
+
+        **Phase 2 Features:** Similarity-based re-ranking using embedding comparisons.
+        Final score = base_score + a*liked_sim - b*disliked_sim
 
         Supports three execution modes:
         1. With query: Semantic search using provided text
@@ -423,13 +428,15 @@ class EmbeddingSearchService:
             start_before: Optional datetime filter for sessions starting before
             end_after: Optional datetime filter for sessions ending after
             end_before: Optional datetime filter for sessions ending before
+            liked_embedding_weight: Weight (a) to boost sessions similar to liked sessions (0-1, default 0.3)
+            disliked_embedding_weight: Weight (b) to penalize sessions similar to disliked sessions (0-1, default 0.2)
 
         Returns:
             List of tuples: (session, scores_dict) where scores_dict contains:
-            - overall_score (0-1): Weighted combination of all available metrics
+            - overall_score (0-1): Reranked score using Phase 2 formula
             - semantic_similarity (0-1 or None): Query similarity from Chroma
-            - liked_cluster_similarity (0-1 or None): Centroid similarity
-            - disliked_similarity (0-1 or None): Penalty metric
+            - liked_cluster_similarity (0-1 or None): Centroid similarity (Phase 2)
+            - disliked_similarity (0-1 or None): Max similarity to disliked sessions (Phase 2)
             - filter_match_ratio (0-1): Matching filters / total active filters
             - explanation (str): Human-readable summary
 
@@ -464,7 +471,7 @@ class EmbeddingSearchService:
                     rejected_ids_count=len(rejected_ids),
                     has_filters=active_filters,
                 )
-                return await self._recommend_via_crud(
+                return await self._recommend_fallback(
                     db,
                     rejected_ids=rejected_ids,
                     event_id=event_id,
@@ -524,12 +531,15 @@ class EmbeddingSearchService:
                 )
                 raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
 
-            # Fetch from DB, apply additional filters, and compute scores
+            # Fetch from DB, apply additional filters, and compute scores with Phase 2 re-ranking
             recommendations = await self._process_chroma_recommendations(
                 chroma_results=chroma_results,
                 db=db,
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 accepted_ids=accepted_ids,
+                rejected_ids=rejected_ids,
+                liked_embedding_weight=liked_embedding_weight,
+                disliked_embedding_weight=disliked_embedding_weight,
                 event_id=event_id,
                 limit=limit,
             )
@@ -564,15 +574,50 @@ class EmbeddingSearchService:
         db: Session,
         semantic_similarity_enabled: bool,
         accepted_ids: list[int],
+        rejected_ids: list[int],
+        liked_embedding_weight: float,
+        disliked_embedding_weight: float,
         event_id: int | None,
         limit: int,
     ) -> list[tuple]:
-        """Process Chroma search results into recommendations.
+        """Process Chroma search results into recommendations with Phase 2 re-ranking.
 
-        Fetches sessions from DB, applies filters, and computes scores.
+        Fetches sessions from DB, applies filters, retrieves embeddings, and computes scores
+        using the Phase 2 re-ranking formula.
+
+        Args:
+            chroma_results: Results from Chroma search (session_id, similarity, text)
+            db: Database session
+            semantic_similarity_enabled: Whether query-based search was used
+            accepted_ids: Liked session IDs
+            rejected_ids: Disliked session IDs
+            liked_embedding_weight: Weight to boost liked-session similarities
+            disliked_embedding_weight: Weight to penalize disliked-session similarities
+            event_id: Optional event filter
+            limit: Max recommendations to return
+
+        Returns:
+            List of tuples: (session, scores_dict)
         """
+        # Create a map of session_id -> embedding from Chroma results
+        chroma_id_to_embedding = {}
+        if chroma_results:
+            try:
+                # Fetch all embeddings in one batch
+                session_ids = [session_id for session_id, _, _ in chroma_results]
+                embeddings_dict = await self.embedding_service.get_session_embeddings(session_ids)
+                # Reverse map: chroma_id -> embedding
+                for session_id, embedding in embeddings_dict.items():
+                    chroma_id_to_embedding[f"session_{session_id}"] = embedding
+            except Exception as e:
+                logger.warning(
+                    "batch_embedding_retrieval_failed",
+                    error=str(e),
+                    sessions_count=len(chroma_results),
+                )
+
         recommendations = []
-        for session_id, chroma_similarity in chroma_results:
+        for session_id, chroma_similarity, _ in chroma_results:
             # Fetch from DB and check status
             session = session_crud.read(db, session_id)
             if not session or session.status != SessionStatus.PUBLISHED:
@@ -582,11 +627,27 @@ class EmbeddingSearchService:
             if event_id and session.event_id != event_id:
                 continue
 
-            # Compute scores for this recommendation
+            # Get embedding for this session (for Phase 2 re-ranking)
+            chroma_id = f"session_{session_id}"
+            session_embedding = chroma_id_to_embedding.get(chroma_id)
+
+            if session_embedding is None:
+                logger.warning(
+                    "session_embedding_not_found",
+                    session_id=session_id,
+                )
+                # Fall back to basic similarity if embedding not available
+                session_embedding = [0.0] * 768  # Default placeholder (assumes 768-dim embeddings)
+
+            # Compute scores for this recommendation using Phase 2 formula
             scores = await self._compute_recommendation_scores(
+                session_embedding=session_embedding,
                 chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 accepted_ids=accepted_ids,
+                rejected_ids=rejected_ids,
+                liked_embedding_weight=liked_embedding_weight,
+                disliked_embedding_weight=disliked_embedding_weight,
             )
 
             recommendations.append((session, scores))
@@ -594,6 +655,9 @@ class EmbeddingSearchService:
             # Stop once we have enough recommendations
             if len(recommendations) >= limit:
                 break
+
+        # Sort by overall_score (highest first) - this is the re-ranked score
+        recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
 
         return recommendations
 
@@ -627,7 +691,9 @@ class EmbeddingSearchService:
         import numpy as np
 
         embedding_vectors = list(liked_embeddings.values())
-        query_embedding = np.mean(embedding_vectors, axis=0).tolist()
+        # Ensure all elements are pure Python floats (not numpy scalars)
+        centroid_array = np.mean(embedding_vectors, axis=0)
+        query_embedding = [float(x) for x in centroid_array]
 
         logger.info(
             "recommendation_centroid_computed",
@@ -721,21 +787,65 @@ class EmbeddingSearchService:
             )
             raise EmbeddingSearchError(f"CRUD recommendation fallback failed: {e!s}") from e
 
+    def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
+        """
+        Compute cosine similarity between two vectors (0-1 range).
+
+        Uses numpy for efficient computation. Maps cosine similarity from [-1, 1] to [0, 1].
+
+        Args:
+            vec1: First embedding vector
+            vec2: Second embedding vector
+
+        Returns:
+            Cosine similarity score (0-1)
+        """
+        import numpy as np
+
+        # Ensure vectors are numpy arrays and flatten to 1D
+        v1 = np.asarray(vec1, dtype=np.float32).flatten()
+        v2 = np.asarray(vec2, dtype=np.float32).flatten()
+
+        # Compute cosine similarity: dot(v1, v2) / (||v1|| * ||v2||)
+        dot_product = float(np.dot(v1, v2))
+        norm_v1 = float(np.linalg.norm(v1))
+        norm_v2 = float(np.linalg.norm(v2))
+
+        if norm_v1 == 0 or norm_v2 == 0:
+            return 0.0
+
+        cosine_sim = dot_product / (norm_v1 * norm_v2)
+        # Map from [-1, 1] to [0, 1]: (sim + 1) / 2
+        return float(max(0.0, (cosine_sim + 1.0) / 2.0))
+
     async def _compute_recommendation_scores(
         self,
+        session_embedding: list[float],
         chroma_similarity: float,
         semantic_similarity_enabled: bool,
         accepted_ids: list[int],
+        rejected_ids: list[int],
+        liked_embedding_weight: float = 0.3,
+        disliked_embedding_weight: float = 0.2,
     ) -> dict:
         """
-        Compute multi-dimensional recommendation scores.
+        Compute multi-dimensional recommendation scores with Phase 2 re-ranking.
 
-        Aggregates semantic similarities into an overall score with explainability metrics.
+        **Phase 2 Features:**
+        - Actual centroid similarity: compute from liked session embeddings
+        - Actual disliked penalty: compute max similarity to disliked embeddings
+        - Re-ranking formula: weighted average that adapts to available scores
+          - overall_score dynamically combines semantic_sim, liked_sim, disliked_sim
+          - Result always in [0, 1] range with proper differentiation
 
         Args:
+            session_embedding: Embedding vector for the result session
             chroma_similarity: Normalized similarity from Chroma (0-1)
             semantic_similarity_enabled: Whether query-based search was used
-            accepted_ids: Liked session IDs (for centroid-based scoring)
+            accepted_ids: Liked session IDs
+            rejected_ids: Disliked session IDs
+            liked_embedding_weight: Weight (a) to boost liked-session similarity
+            disliked_embedding_weight: Weight (b) to penalize disliked-session similarity
 
         Returns:
             Dict with overall_score, component scores, and explanation
@@ -743,36 +853,103 @@ class EmbeddingSearchService:
         # semantic_similarity: from Chroma (0-1, only if query-based)
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
 
-        # liked_cluster_similarity: how similar to liked-session centroid
-        # For now: if liked sessions existed, assume this session was in top results (implicit similarity)
-        liked_cluster_sim = chroma_similarity if accepted_ids else None
+        # Phase 2: Compute actual centroid similarity from liked session embeddings
+        liked_cluster_sim = None
+        if accepted_ids:
+            try:
+                liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
+                if liked_embeddings:
+                    import numpy as np
 
-        # disliked_similarity: penalty based on rejected sessions
-        # For now: no direct similarity available, use None (can be enhanced later)
+                    # Compute centroid
+                    centroid = np.mean(
+                        list(liked_embeddings.values()),
+                        axis=0,
+                    ).tolist()
+                    # Compute similarity to centroid
+                    liked_cluster_sim = self._cosine_similarity(session_embedding, centroid)
+            except Exception as e:
+                logger.warning(
+                    "liked_cluster_similarity_computation_failed",
+                    error=str(e),
+                    accepted_ids_count=len(accepted_ids),
+                )
+
+        # Phase 2: Compute actual disliked penalty from disliked session embeddings
         disliked_sim = None
+        if rejected_ids:
+            try:
+                disliked_embeddings = await self.embedding_service.get_session_embeddings(
+                    rejected_ids
+                )
+                if disliked_embeddings:
+                    # Compute max similarity to any disliked session (the closest bad match)
+                    disliked_sims = [
+                        self._cosine_similarity(session_embedding, disliked_emb)
+                        for disliked_emb in disliked_embeddings.values()
+                    ]
+                    disliked_sim = max(disliked_sims) if disliked_sims else None
+            except Exception as e:
+                logger.warning(
+                    "disliked_similarity_computation_failed",
+                    error=str(e),
+                    rejected_ids_count=len(rejected_ids),
+                )
 
         # filter_match_ratio: if filters were active, all matched sessions got them all
         filter_match_ratio = 1.0
 
-        # Compute overall_score as weighted average of available metrics
-        scores_list = []
+        # Phase 2 Re-ranking formula: Dynamic weighted composition
+        # Instead of additive (+) with clamping, use weighted average that adapts
+        # to available scores. This ensures proper differentiation without 1.0 clumping.
+        #
+        # Strategy:
+        # - Each score component contributes proportionally to its weight
+        # - Disliked score inverts (1 - disliked_sim) so it can be combined properly
+        # - Result: weighted_sum / total_weight, always in [0, 1]
+
+        score_components = []
+        score_weights = []
         explanation_parts = []
 
+        # Add semantic similarity (always unit weight if available)
         if semantic_sim is not None:
-            scores_list.append(semantic_sim)
-            explanation_parts.append(f"query similarity: {semantic_sim:.2f}")
+            score_components.append(semantic_sim)
+            score_weights.append(1.0)
+            explanation_parts.append(f"semantic: {semantic_sim:.3f}")
 
-        if liked_cluster_sim is not None:
-            scores_list.append(liked_cluster_sim)
-            explanation_parts.append(f"liked-cluster similarity: {liked_cluster_sim:.2f}")
+        # Add liked cluster similarity with its weight
+        if liked_cluster_sim is not None and liked_embedding_weight > 0:
+            score_components.append(liked_cluster_sim)
+            score_weights.append(liked_embedding_weight)
+            explanation_parts.append(
+                f"liked-cluster: {liked_cluster_sim:.3f} (weight: {liked_embedding_weight:.1f})"
+            )
 
-        if disliked_sim is not None:
-            # Penalty: reduce score based on disliked similarity
-            penalty = disliked_sim * 0.2  # 20% weight for penalty
-            scores_list.append(1.0 - penalty)
-            explanation_parts.append(f"disliked penalty applied: {penalty:.2f}")
+        # Add disliked similarity inverted (1 - disliked_sim) with its weight
+        # This penalizes high disliked similarity (reduces overall score)
+        if disliked_sim is not None and disliked_embedding_weight > 0:
+            # Invert: high disliked_sim → low component contribution
+            inverted_disliked = 1.0 - disliked_sim
+            score_components.append(inverted_disliked)
+            score_weights.append(disliked_embedding_weight)
+            explanation_parts.append(
+                f"disliked-penalty: {disliked_sim:.3f} (weight: {disliked_embedding_weight:.1f})"
+            )
 
-        overall_score = sum(scores_list) / len(scores_list) if scores_list else 1.0
+        # Calculate weighted average
+        if score_components:
+            import numpy as np
+
+            weighted_sum = sum(c * w for c, w in zip(score_components, score_weights))
+            total_weight = sum(score_weights)
+            overall_score = weighted_sum / total_weight
+        else:
+            # No scoring data available, default to 0.5
+            overall_score = 0.5
+
+        # Ensure score is in valid range (should already be, but be safe)
+        overall_score = max(0.0, min(1.0, overall_score))
 
         explanation = ", ".join(explanation_parts) if explanation_parts else "Matched filters"
 

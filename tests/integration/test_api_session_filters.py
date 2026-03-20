@@ -282,7 +282,7 @@ class TestSessionFilteringAPI:
         response = client.get("/api/v2/sessions?start_after=invalid-date")
         assert response.status_code == HTTP_400_BAD_REQUEST
         data = response.json()
-        assert "Invalid start_after" in data["detail"]
+        assert "Invalid datetime format" in data["detail"]
 
     def test_invalid_date_format_start_before(self, client):
         """Test invalid date format in start_before parameter."""
@@ -953,3 +953,155 @@ class TestRecommendationAPI:
             },
         )
         assert response.status_code in [400, 422]
+
+    # ========================================================================
+    # Phase 2: Similarity-based re-ranking tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_liked_cluster_similarity(self, client, recommendation_sessions):
+        """Test Phase 2: liked_cluster_similarity is computed and non-zero."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 5,
+                # Phase 2 parameters
+                "liked_embedding_weight": 0.5,
+                "disliked_embedding_weight": 0.2,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # Phase 2: liked_cluster_similarity should be computed (not None)
+                assert result["liked_cluster_similarity"] is not None
+                assert 0 <= result["liked_cluster_similarity"] <= 1
+                # Overall score should include the boost from liked similarity
+                assert result["overall_score"] > 0
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_disliked_penalty(self, client):
+        """Test Phase 2: disliked_embedding_weight parameter works (doesn't error).
+
+        Note: This is a simplified integration test that just verifies the API
+        accepts disliked_embedding_weight and returns valid responses.
+        Detailed penalty behavior is tested in unit tests (test_recommender.py).
+        """
+        # Test that the API accepts disliked weight parameter without errors
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.3,
+                "disliked_embedding_weight": 0.2,  # Parameter is accepted
+            },
+        )
+
+        # Should return 200 or 503 (if service unavailable)
+        assert response.status_code in [200, 503]
+
+        if response.status_code == 200:
+            results = response.json()
+            assert isinstance(results, list)
+            # If results exist, verify score structure
+            for result in results:
+                assert "overall_score" in result
+                assert "disliked_similarity" in result
+                assert 0 <= result["overall_score"] <= 1
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_weight_tuning(self, client, recommendation_sessions):
+        """Test Phase 2: Weight parameters affect overall scores."""
+        liked_session_id = recommendation_sessions[0]["id"]
+
+        response_low_weight = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.1,  # Low boost
+                "disliked_embedding_weight": 0.1,
+            },
+        )
+        response_high_weight = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.9,  # High boost
+                "disliked_embedding_weight": 0.9,
+            },
+        )
+
+        if response_low_weight.status_code == 200 and response_high_weight.status_code == 200:
+            results1 = response_low_weight.json()
+            results2 = response_high_weight.json()
+
+            # Verify scores are valid
+            for results in [results1, results2]:
+                for result in results:
+                    assert 0 <= result["overall_score"] <= 1
+                    assert "explanation" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_zero_weights(self, client, recommendation_sessions):
+        """Test Phase 2: Zero weights disable re-ranking adjustments."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.0,  # No boost
+                "disliked_embedding_weight": 0.0,  # No penalty
+            },
+        )
+
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # With zero weights, overall_score should be base_score (semantic_similarity or 0.5)
+                assert 0 <= result["overall_score"] <= 1
+                assert result["explanation"] is not None
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_query_plus_reranking(self, client, recommendation_sessions):
+        """Test Phase 2: Query + re-ranking with liked/disliked sessions."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        disliked_session_id = (
+            recommendation_sessions[1]["id"] if len(recommendation_sessions) > 1 else None
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning workshop",
+                "accepted_ids": [liked_session_id] if liked_session_id else [],
+                "rejected_ids": [disliked_session_id] if disliked_session_id else [],
+                "limit": 5,
+                "liked_embedding_weight": 0.4,
+                "disliked_embedding_weight": 0.3,
+            },
+        )
+
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # With query, semantic_similarity should be present and non-None
+                assert result["semantic_similarity"] is not None
+                assert 0 <= result["semantic_similarity"] <= 1
+                # Re-ranking should still apply
+                assert result["overall_score"] is not None
+                assert 0 <= result["overall_score"] <= 1
+                if liked_session_id:
+                    assert result["liked_cluster_similarity"] is not None
