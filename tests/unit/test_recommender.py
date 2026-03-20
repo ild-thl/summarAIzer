@@ -121,8 +121,8 @@ class TestRecommendationScoring:
             session_embedding=[0.5] * 768,
             chroma_similarity=0.85,
             semantic_similarity_enabled=True,
-            accepted_ids=[],
-            rejected_ids=[],
+            liked_embeddings={},
+            disliked_embeddings={},
             liked_embedding_weight=0.3,
             disliked_embedding_weight=0.2,
         )
@@ -140,8 +140,8 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,  # Similar to liked session [0.2]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            accepted_ids=[1],  # Will fetch session 1 embedding
-            rejected_ids=[],
+            liked_embeddings={1: [0.2] * 768},
+            disliked_embeddings={},
             liked_embedding_weight=0.3,
             disliked_embedding_weight=0.2,
         )
@@ -159,8 +159,8 @@ class TestRecommendationScoring:
             session_embedding=[0.3] * 768,  # Similar to disliked [0.3]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            accepted_ids=[],
-            rejected_ids=[999],  # Will fetch session 999 embedding
+            liked_embeddings={},
+            disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.3,
             disliked_embedding_weight=0.2,
         )
@@ -176,8 +176,8 @@ class TestRecommendationScoring:
             session_embedding=[0.25] * 768,  # Midpoint between liked and disliked
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            accepted_ids=[1],
-            rejected_ids=[999],
+            liked_embeddings={1: [0.2] * 768},
+            disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.2,  # Weight for liked component
             disliked_embedding_weight=0.1,  # Weight for disliked component
         )
@@ -196,8 +196,8 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,
             chroma_similarity=0.6,
             semantic_similarity_enabled=True,
-            accepted_ids=[1],
-            rejected_ids=[999],
+            liked_embeddings={1: [0.2] * 768},
+            disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.0,  # Disabled
             disliked_embedding_weight=0.0,  # Disabled
         )
@@ -213,8 +213,8 @@ class TestRecommendationScoring:
             session_embedding=[1.0] * 768,  # Perfect match
             chroma_similarity=0.9,
             semantic_similarity_enabled=True,
-            accepted_ids=[1],
-            rejected_ids=[],
+            liked_embeddings={1: [0.2] * 768},
+            disliked_embeddings={},
             liked_embedding_weight=0.5,  # Large boost
             disliked_embedding_weight=0.0,
         )

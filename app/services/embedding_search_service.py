@@ -582,13 +582,17 @@ class EmbeddingSearchService:
                     chroma_results_soft = []
 
             # Fetch from DB, apply filters, and compute scores with Phase 2 + Phase 3 re-ranking
+            preference_embeddings = await self._prefetch_preference_embeddings(
+                accepted_ids=accepted_ids,
+                rejected_ids=rejected_ids,
+            )
             recommendations = await self._process_chroma_recommendations(
                 chroma_results_hard=chroma_results_hard,
                 chroma_results_soft=chroma_results_soft,
                 db=db,
                 semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
+                liked_embeddings=preference_embeddings["liked"],
+                disliked_embeddings=preference_embeddings["disliked"],
                 liked_embedding_weight=liked_embedding_weight,
                 disliked_embedding_weight=disliked_embedding_weight,
                 event_id=event_id,
@@ -638,8 +642,8 @@ class EmbeddingSearchService:
         chroma_results_soft: list,
         db: Session,
         semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
+        liked_embeddings: dict[int, list[float]],
+        disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float,
         disliked_embedding_weight: float,
         event_id: int | None,
@@ -670,8 +674,8 @@ class EmbeddingSearchService:
             chroma_results_soft: Near-match results from soft pass (if triggered)
             db: Database session
             semantic_similarity_enabled: Whether query-based search was used
-            accepted_ids: Liked session IDs
-            rejected_ids: Disliked session IDs
+            liked_embeddings: Prefetched liked session embeddings keyed by session ID
+            disliked_embeddings: Prefetched disliked session embeddings keyed by session ID
             liked_embedding_weight: Weight to boost liked-session similarities
             disliked_embedding_weight: Weight to penalize disliked-session similarities
             event_id: Optional event filter
@@ -707,8 +711,8 @@ class EmbeddingSearchService:
             event_id=event_id,
             chroma_id_to_embedding=chroma_id_to_embedding,
             semantic_similarity_enabled=semantic_similarity_enabled,
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
+            liked_embeddings=liked_embeddings,
+            disliked_embeddings=disliked_embeddings,
             liked_embedding_weight=liked_embedding_weight,
             disliked_embedding_weight=disliked_embedding_weight,
             filter_margin_weight=filter_margin_weight,
@@ -735,8 +739,8 @@ class EmbeddingSearchService:
                 end_before=end_before,
                 chroma_id_to_embedding=chroma_id_to_embedding,
                 semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
+                liked_embeddings=liked_embeddings,
+                disliked_embeddings=disliked_embeddings,
                 liked_embedding_weight=liked_embedding_weight,
                 disliked_embedding_weight=disliked_embedding_weight,
                 filter_margin_weight=filter_margin_weight,
@@ -891,171 +895,45 @@ class EmbeddingSearchService:
             )
             raise EmbeddingSearchError(f"CRUD recommendation fallback failed: {e!s}") from e
 
-    async def _batch_fetch_embeddings(
+    async def _prefetch_preference_embeddings(
         self,
-        chroma_results_hard: list,
-        chroma_results_soft: list,
-    ) -> dict:
-        """Batch fetch embeddings for all session IDs from hard and soft results."""
-        all_session_ids = []
-        for session_id, _, _ in chroma_results_hard + chroma_results_soft:
-            if session_id not in all_session_ids:
-                all_session_ids.append(session_id)
+        accepted_ids: list[int],
+        rejected_ids: list[int],
+    ) -> dict[str, dict[int, list[float]]]:
+        """Fetch liked/disliked embeddings once per request for reuse during scoring."""
+        liked_embeddings: dict[int, list[float]] = {}
+        disliked_embeddings: dict[int, list[float]] = {}
 
-        embeddings = {}
-        if all_session_ids:
+        if accepted_ids:
             try:
-                embeddings_dict = await self.embedding_service.get_session_embeddings(
-                    all_session_ids
-                )
-                for session_id, embedding in embeddings_dict.items():
-                    embeddings[f"session_{session_id}"] = embedding
+                liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
             except Exception as e:
                 logger.warning(
-                    "batch_embedding_retrieval_failed",
+                    "liked_embeddings_prefetch_failed",
                     error=str(e),
-                    sessions_count=len(all_session_ids),
+                    accepted_ids_count=len(accepted_ids),
                 )
-        return embeddings
 
-    async def _process_hard_pass_results(
-        self,
-        chroma_results_hard: list,
-        db: Session,
-        event_id: int | None,
-        chroma_id_to_embedding: dict,
-        semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_margin_weight: float,
-        limit: int,
-        recommendations: list,
-    ) -> int:
-        """Process hard pass results (strict filter matches)."""
-        hard_count = 0
-        for session_id, chroma_similarity, _ in chroma_results_hard:
-            session = session_crud.read(db, session_id)
-            if not session or session.status != SessionStatus.PUBLISHED:
-                continue
-
-            if event_id and session.event_id != event_id:
-                continue
-
-            chroma_id = f"session_{session_id}"
-            session_embedding = chroma_id_to_embedding.get(chroma_id)
-            if session_embedding is None:
+        if rejected_ids:
+            try:
+                disliked_embeddings = await self.embedding_service.get_session_embeddings(
+                    rejected_ids
+                )
+            except Exception as e:
                 logger.warning(
-                    "session_embedding_not_found",
-                    session_id=session_id,
+                    "disliked_embeddings_prefetch_failed",
+                    error=str(e),
+                    rejected_ids_count=len(rejected_ids),
                 )
-                session_embedding = [0.0] * 768
 
-            # Hard pass results have perfect compliance
-            filter_compliance_score = 1.0
+        return {
+            "liked": liked_embeddings,
+            "disliked": disliked_embeddings,
+        }
 
-            scores = await self._compute_recommendation_scores(
-                session_embedding=session_embedding,
-                chroma_similarity=chroma_similarity,
-                semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
-                filter_compliance_score=filter_compliance_score,
-                filter_margin_weight=filter_margin_weight,
-            )
-
-            recommendations.append((session, scores, "hard"))
-            hard_count += 1
-
-            if len(recommendations) >= limit:
-                break
-
-        return hard_count
-
-    async def _process_soft_pass_results(
-        self,
-        chroma_results_soft: list,
-        hard_pass_session_ids: set,
-        db: Session,
-        event_id: int | None,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
-        chroma_id_to_embedding: dict,
-        semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_margin_weight: float,
-        limit: int,
-        recommendations: list,
-    ) -> None:
-        """Process soft pass results (near-matches when hard filters too restrictive)."""
-        for session_id, chroma_similarity, _ in chroma_results_soft:
-            if session_id in hard_pass_session_ids:
-                continue
-
-            session = session_crud.read(db, session_id)
-            if not session or session.status != SessionStatus.PUBLISHED:
-                continue
-
-            if event_id and session.event_id != event_id:
-                continue
-
-            if any(rec[0].id == session_id for rec in recommendations):
-                continue
-
-            chroma_id = f"session_{session_id}"
-            session_embedding = chroma_id_to_embedding.get(chroma_id)
-            if session_embedding is None:
-                logger.warning(
-                    "session_embedding_not_found_soft_pass",
-                    session_id=session_id,
-                )
-                session_embedding = [0.0] * 768
-
-            # Compute actual compliance for soft pass
-            filter_compliance_score = self._compute_filter_compliance_score(
-                session=session,
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
-            )
-
-            scores = await self._compute_recommendation_scores(
-                session_embedding=session_embedding,
-                chroma_similarity=chroma_similarity,
-                semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
-                filter_compliance_score=filter_compliance_score,
-                filter_margin_weight=filter_margin_weight,
-            )
-
-            recommendations.append((session, scores, "soft"))
-
-            if len(recommendations) >= limit:
-                break
+    def _get_default_embedding(self) -> list[float]:
+        """Build a zero-vector fallback matching configured embedding dimensions."""
+        return [0.0] * self.embedding_service.embedding_dimension
 
     async def _batch_fetch_embeddings(
         self,
@@ -1092,8 +970,8 @@ class EmbeddingSearchService:
         event_id: int | None,
         chroma_id_to_embedding: dict,
         semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
+        liked_embeddings: dict[int, list[float]],
+        disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float,
         disliked_embedding_weight: float,
         filter_margin_weight: float,
@@ -1114,7 +992,7 @@ class EmbeddingSearchService:
 
             if session_embedding is None:
                 logger.warning("session_embedding_not_found", session_id=session_id)
-                session_embedding = [0.0] * 768
+                session_embedding = self._get_default_embedding()
 
             filter_compliance_score = 1.0
 
@@ -1122,8 +1000,8 @@ class EmbeddingSearchService:
                 session_embedding=session_embedding,
                 chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
+                liked_embeddings=liked_embeddings,
+                disliked_embeddings=disliked_embeddings,
                 liked_embedding_weight=liked_embedding_weight,
                 disliked_embedding_weight=disliked_embedding_weight,
                 filter_compliance_score=filter_compliance_score,
@@ -1153,8 +1031,8 @@ class EmbeddingSearchService:
         end_before: Any | None,
         chroma_id_to_embedding: dict,
         semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
+        liked_embeddings: dict[int, list[float]],
+        disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float,
         disliked_embedding_weight: float,
         filter_margin_weight: float,
@@ -1181,7 +1059,7 @@ class EmbeddingSearchService:
 
             if session_embedding is None:
                 logger.warning("session_embedding_not_found_soft_pass", session_id=session_id)
-                session_embedding = [0.0] * 768
+                session_embedding = self._get_default_embedding()
 
             filter_compliance_score = self._compute_filter_compliance_score(
                 session=session,
@@ -1201,8 +1079,8 @@ class EmbeddingSearchService:
                 session_embedding=session_embedding,
                 chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
+                liked_embeddings=liked_embeddings,
+                disliked_embeddings=disliked_embeddings,
                 liked_embedding_weight=liked_embedding_weight,
                 disliked_embedding_weight=disliked_embedding_weight,
                 filter_compliance_score=filter_compliance_score,
@@ -1360,20 +1238,16 @@ class EmbeddingSearchService:
 
         return 1.0 if total == 0 else matched / total
 
-    async def _compute_liked_similarity(
+    def _compute_liked_similarity(
         self,
         session_embedding: list[float],
-        accepted_ids: list[int],
+        liked_embeddings: dict[int, list[float]],
     ) -> float | None:
-        """Compute centroid similarity from liked session embeddings."""
-        if not accepted_ids:
+        """Compute centroid similarity from prefetched liked session embeddings."""
+        if not liked_embeddings:
             return None
 
         try:
-            liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
-            if not liked_embeddings:
-                return None
-
             import numpy as np
 
             centroid = np.mean(list(liked_embeddings.values()), axis=0).tolist()
@@ -1382,24 +1256,20 @@ class EmbeddingSearchService:
             logger.warning(
                 "liked_cluster_similarity_computation_failed",
                 error=str(e),
-                accepted_ids_count=len(accepted_ids),
+                embeddings_count=len(liked_embeddings),
             )
             return None
 
-    async def _compute_disliked_similarity(
+    def _compute_disliked_similarity(
         self,
         session_embedding: list[float],
-        rejected_ids: list[int],
+        disliked_embeddings: dict[int, list[float]],
     ) -> float | None:
-        """Compute max similarity to any disliked session."""
-        if not rejected_ids:
+        """Compute max similarity to prefetched disliked session embeddings."""
+        if not disliked_embeddings:
             return None
 
         try:
-            disliked_embeddings = await self.embedding_service.get_session_embeddings(rejected_ids)
-            if not disliked_embeddings:
-                return None
-
             disliked_sims = [
                 self._cosine_similarity(session_embedding, disliked_emb)
                 for disliked_emb in disliked_embeddings.values()
@@ -1409,7 +1279,7 @@ class EmbeddingSearchService:
             logger.warning(
                 "disliked_similarity_computation_failed",
                 error=str(e),
-                rejected_ids_count=len(rejected_ids),
+                embeddings_count=len(disliked_embeddings),
             )
             return None
 
@@ -1474,8 +1344,8 @@ class EmbeddingSearchService:
         session_embedding: list[float],
         chroma_similarity: float,
         semantic_similarity_enabled: bool,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
+        liked_embeddings: dict[int, list[float]],
+        disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
         filter_compliance_score: float | None = None,
@@ -1501,8 +1371,8 @@ class EmbeddingSearchService:
             session_embedding: Embedding vector for the result session
             chroma_similarity: Normalized similarity from Chroma (0-1)
             semantic_similarity_enabled: Whether query-based search was used
-            accepted_ids: Liked session IDs
-            rejected_ids: Disliked session IDs
+            liked_embeddings: Prefetched liked session embeddings
+            disliked_embeddings: Prefetched disliked session embeddings
             liked_embedding_weight: Weight (a) to boost liked-session similarity
             disliked_embedding_weight: Weight (b) to penalize disliked-session similarity
             filter_compliance_score: Phase 3 - ratio of matched filters (0-1)
@@ -1513,8 +1383,8 @@ class EmbeddingSearchService:
         """
         # Compute component scores
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
-        liked_cluster_sim = await self._compute_liked_similarity(session_embedding, accepted_ids)
-        disliked_sim = await self._compute_disliked_similarity(session_embedding, rejected_ids)
+        liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
+        disliked_sim = self._compute_disliked_similarity(session_embedding, disliked_embeddings)
 
         # Build score components and weights
         score_components, score_weights, explanation_parts = self._build_score_components(

@@ -1,6 +1,7 @@
 """Pydantic schemas for request/response validation."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
@@ -296,7 +297,7 @@ class RecommendRequest(BaseModel):
     )
 
     # Phase 3: Soft filter margins
-    filter_mode: str = Field(
+    filter_mode: Literal["hard", "soft"] = Field(
         default="hard",
         description="Filter enforcement mode: 'hard' = strictly match all filters (default), "
         "'soft' = find exact matches first, then fill gaps with near-matches that partially match filters",
