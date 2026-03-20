@@ -11,8 +11,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.schemas.session import RecommendRequest, SessionStatus
-from app.services.embedding_exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
+from app.services.embedding.service import EmbeddingService
 from app.services.recommendation.service import RecommendationService
 
 

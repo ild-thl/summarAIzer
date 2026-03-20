@@ -114,11 +114,11 @@ async def search_similar_sessions(
     - `/api/v2/sessions/search/similar?query=learning&duration_min=30&duration_max=90`
     - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-01-01T00:00:00","end":"2024-12-31T23:59:59"}]`
     """
-    from app.services.embedding_exceptions import (
+    from app.services.embedding.exceptions import (
         EmbeddingError,
         InvalidEmbeddingTextError,
     )
-    from app.services.embedding_factory import get_search_service
+    from app.services.embedding.factory import get_search_service
 
     try:
         # Parse tags and location (comma-separated)
@@ -282,12 +282,12 @@ async def recommend_sessions(
             }
             ```
     """
-    from app.services.embedding_exceptions import (
+    from app.services.embedding.exceptions import (
         EmbeddingError,
         EmbeddingSearchError,
         InvalidEmbeddingTextError,
     )
-    from app.services.embedding_factory import get_recommendation_service
+    from app.services.embedding.factory import get_recommendation_service
 
     try:
         # Validate request

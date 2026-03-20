@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.crud.session import session_crud
 from app.database.models import SessionStatus
-from app.services.embedding_exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
+from app.services.embedding.service import EmbeddingService
 
 logger = structlog.get_logger()
 

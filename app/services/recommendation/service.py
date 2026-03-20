@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.crud.session import session_crud
 from app.database.models import SessionStatus
-from app.services.embedding_exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
+from app.services.embedding.service import EmbeddingService
 from app.services.recommendation.candidates import RecommendationCandidateCollector
 from app.services.recommendation.filters import RecommendationFilterEvaluator
 from app.services.recommendation.planning import RecommendationPlanner

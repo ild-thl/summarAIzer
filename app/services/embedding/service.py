@@ -1,17 +1,24 @@
 """Embedding service for semantic search using configurable embeddings and Chroma storage."""
 
-import chromadb
 import structlog
-from chromadb.config import Settings as ChromaSettings
 
 from app.constants.embedding import (
-    COLLECTION_METADATA_COSINE,
     MAX_EMBEDDING_TEXT_LENGTH,
     SESSIONS_COLLECTION,
 )
 from app.crud import generated_content as content_crud
 from app.database.connection import SessionLocal
-from app.services.embeddings_manager import create_embeddings_backend
+from app.services.embedding.providers.factory import create_embeddings_backend
+from app.services.embedding.metadata import EmbeddingMetadataBuilder
+from app.services.embedding.vector_db.chroma import ChromaInitializer
+from app.services.embedding.protocols import (
+    ChromaClientProtocol,
+    ChromaCollectionProtocol,
+    EmbeddingsBackendProtocol,
+    VectorStoreProtocol,
+)
+from app.services.embedding.text import EmbeddingTextHelper
+from app.services.embedding.vector_db.store import ChromaSessionVectorStore
 
 logger = structlog.get_logger()
 
@@ -49,6 +56,8 @@ class EmbeddingService:
         """
         self.provider = embedding_provider
         self.embedding_dimension = embedding_dimension
+        self.text_helper = EmbeddingTextHelper()
+        self.metadata_builder = EmbeddingMetadataBuilder()
 
         try:
             # Initialize embeddings backend based on provider
@@ -57,7 +66,7 @@ class EmbeddingService:
                     raise ValueError(
                         "OpenAI embeddings requires: embedding_api_key, embedding_api_base_url, embedding_model_name"
                     )
-                self.embeddings = create_embeddings_backend(
+                self.embeddings: EmbeddingsBackendProtocol = create_embeddings_backend(
                     provider="openai",
                     api_key=embedding_api_key,
                     base_url=embedding_api_base_url,
@@ -89,50 +98,21 @@ class EmbeddingService:
                 )
 
             # Initialize Chroma client
-            if chroma_credentials and chroma_provider:
-                logger.info(
-                    "chroma_client_auth_enabled",
-                    provider=chroma_provider,
-                    host=chroma_host,
-                    port=chroma_port,
-                )
-
-                self.chroma_client = chromadb.HttpClient(
-                    host=chroma_host,
-                    port=chroma_port,
-                    settings=ChromaSettings(
-                        chroma_client_auth_provider=chroma_provider,
-                        chroma_client_auth_credentials=chroma_credentials,
-                        chroma_auth_token_transport_header="Authorization",
-                        anonymized_telemetry=False,
-                    ),
-                    tenant=chroma_tenant,
-                )
-                logger.info(
-                    "chroma_client_initialized",
-                    host=chroma_host,
-                    port=chroma_port,
-                    auth_enabled=True,
-                )
-            else:
-                logger.info(
-                    "chroma_client_no_auth",
-                    host=chroma_host,
-                    port=chroma_port,
-                )
-                self.chroma_client = chromadb.HttpClient(
-                    host=chroma_host,
-                    port=chroma_port,
-                )
-                logger.info(
-                    "chroma_client_initialized",
-                    host=chroma_host,
-                    port=chroma_port,
-                    auth_enabled=False,
-                )
+            self.chroma_client: ChromaClientProtocol = ChromaInitializer.create_client(
+                chroma_host=chroma_host,
+                chroma_port=chroma_port,
+                chroma_tenant=chroma_tenant,
+                chroma_credentials=chroma_credentials,
+                chroma_provider=chroma_provider,
+            )
 
             # Get or create collections with explicit configuration
-            self.sessions_collection = self._init_collection(SESSIONS_COLLECTION)
+            self.sessions_collection: ChromaCollectionProtocol = self._init_collection(
+                SESSIONS_COLLECTION
+            )
+            self.vector_store: VectorStoreProtocol = ChromaSessionVectorStore(
+                self.sessions_collection
+            )
             logger.info("embedding_collections_ready", sessions=True)
 
         except Exception as e:
@@ -145,7 +125,7 @@ class EmbeddingService:
             )
             raise
 
-    def _init_collection(self, name: str) -> "chromadb.Collection":
+    def _init_collection(self, name: str) -> ChromaCollectionProtocol:
         """
         Initialize a Chroma collection with fallback pattern.
 
@@ -160,31 +140,7 @@ class EmbeddingService:
         Raises:
             Exception: If collection cannot be initialized
         """
-        try:
-            collection = self.chroma_client.get_or_create_collection(
-                name=name,
-                metadata=COLLECTION_METADATA_COSINE,
-            )
-            logger.info("collection_created", name=name)
-            return collection
-        except Exception as e:
-            logger.debug(
-                "collection_creation_with_metadata_failed",
-                name=name,
-                error=str(e),
-            )
-            # Try without metadata if metadata fails
-            try:
-                collection = self.chroma_client.get_collection(name=name)
-                logger.info("collection_retrieved_existing", name=name)
-                return collection
-            except Exception as e2:
-                logger.error(
-                    "collection_initialization_failed",
-                    name=name,
-                    error=str(e2),
-                )
-                raise
+        return ChromaInitializer.init_collection(self.chroma_client, name)
 
     async def embed_query(self, text: str) -> list[float]:
         """
@@ -277,12 +233,8 @@ class EmbeddingService:
         Returns:
             Combined text for embedding
         """
-        # Truncate summary to 1000 chars to balance detail with token limits
         summary_truncated = summary[:1000] if summary else None
-        return self._prepare_text(
-            title=title,
-            fields=[short_description, summary_truncated],
-        )
+        return self._prepare_text(title=title, fields=[short_description, summary_truncated])
 
     def prepare_session_text_with_summary(self, session) -> str:
         """
@@ -334,7 +286,7 @@ class EmbeddingService:
         Returns:
             True if valid, False otherwise
         """
-        if not text or not text.strip():
+        if not EmbeddingTextHelper.validate_embedding_text(text):
             return False
 
         if len(text) > max_length:
@@ -346,35 +298,6 @@ class EmbeddingService:
             return False
 
         return True
-
-    def _build_session_metadata(self, session) -> dict:
-        """
-        Build Chroma metadata dict from session object.
-
-        Knows the structure of session model and maps it to Chroma filter metadata.
-        This is the single source of truth for session metadata structure.
-
-        Args:
-            session: Session entity with attributes like title, status, tags, etc.
-
-        Returns:
-            Dictionary of metadata for Chroma filtering
-        """
-        return {
-            "title": session.title,
-            "status": session.status.value if session.status else None,
-            "event_id": session.event_id if session.event_id else None,
-            "session_format": session.session_format.value if session.session_format else None,
-            "tags": session.tags or None,
-            "language": session.language or None,
-            "location": session.location or None,
-            "duration": session.duration if session.duration else None,
-            "speakers": session.speakers or None,
-            "start_datetime": (
-                session.start_datetime.timestamp() if session.start_datetime else None
-            ),
-            "end_datetime": session.end_datetime.timestamp() if session.end_datetime else None,
-        }
 
     async def store_session_embedding(
         self,
@@ -399,35 +322,16 @@ class EmbeddingService:
         Raises:
             Exception: If storing fails
         """
-        try:
-            # Build metadata from session if not provided
-            if metadata is None and session is not None:
-                metadata = self._build_session_metadata(session)
+        # Build metadata from session if not provided
+        if metadata is None and session is not None:
+            metadata = self.metadata_builder.build_session_metadata(session)
 
-            # Build metadata with session_id and type always included
-            chroma_metadata = {"session_id": session_id, "type": "session"}
-            if metadata:
-                chroma_metadata.update(metadata)
-
-            self.sessions_collection.upsert(
-                ids=[f"session_{session_id}"],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[chroma_metadata],
-            )
-            logger.info(
-                "session_embedding_stored",
-                session_id=session_id,
-                embedding_dimension=len(embedding),
-                metadata_keys=list((metadata or {}).keys()),
-            )
-        except Exception as e:
-            logger.error(
-                "session_embedding_store_failed",
-                session_id=session_id,
-                error=str(e),
-            )
-            raise
+        await self.vector_store.upsert_session(
+            session_id=session_id,
+            embedding=embedding,
+            text=text,
+            metadata=metadata,
+        )
 
     async def search_similar_sessions(
         self,
@@ -452,40 +356,11 @@ class EmbeddingService:
         Raises:
             Exception: If search fails
         """
-        try:
-            query_kwargs = {
-                "query_embeddings": [embedding],
-                "n_results": limit,
-            }
-            if where:
-                query_kwargs["where"] = where
-
-            results = self.sessions_collection.query(**query_kwargs)
-
-            # Extract session_ids and similarity scores
-            output = []
-            if results["ids"] and len(results["ids"]) > 0:
-                for i, chroma_id in enumerate(results["ids"][0]):
-                    session_id = int(chroma_id.split("_")[1])
-                    # Chroma returns distances, convert to similarity (1 - distance for cosine)
-                    similarity = 1 - results["distances"][0][i]
-                    text = results["documents"][0][i] if results["documents"] else ""
-                    output.append((session_id, similarity, text))
-
-            logger.info(
-                "session_search_complete",
-                query_dimension=len(embedding),
-                results_found=len(output),
-                filters_applied=bool(where),
-            )
-            return output
-
-        except Exception as e:
-            logger.error(
-                "session_search_failed",
-                error=str(e),
-            )
-            raise
+        return await self.vector_store.query_similar_sessions(
+            embedding=embedding,
+            limit=limit,
+            where=where,
+        )
 
     async def delete_session_embedding(self, session_id: int) -> bool:
         """
@@ -500,18 +375,7 @@ class EmbeddingService:
         Raises:
             Exception: If deletion fails
         """
-        try:
-            chroma_id = f"session_{session_id}"
-            self.sessions_collection.delete(ids=[chroma_id])
-            logger.info("session_embedding_deleted", session_id=session_id)
-            return True
-        except Exception as e:
-            logger.error(
-                "session_embedding_deletion_failed",
-                session_id=session_id,
-                error=str(e),
-            )
-            raise
+        return await self.vector_store.delete_session(session_id)
 
     async def get_session_embeddings(self, session_ids: list[int]) -> dict[int, list[float]]:
         """
@@ -528,32 +392,4 @@ class EmbeddingService:
         Raises:
             Exception: If retrieval fails
         """
-        if not session_ids:
-            return {}
-
-        try:
-            chroma_ids = [f"session_{sid}" for sid in session_ids]
-            results = self.sessions_collection.get(ids=chroma_ids, include=["embeddings"])
-
-            out = {}
-            if results["ids"]:
-                for chroma_id, embedding in zip(
-                    results["ids"], results["embeddings"], strict=False
-                ):
-                    session_id = int(chroma_id.split("_")[1])
-                    out[session_id] = embedding
-
-            logger.info(
-                "session_embeddings_retrieved",
-                requested=len(session_ids),
-                found=len(out),
-            )
-            return out
-
-        except Exception as e:
-            logger.error(
-                "session_embeddings_retrieval_failed",
-                error=str(e),
-                session_ids_count=len(session_ids),
-            )
-            raise
+        return await self.vector_store.get_session_embeddings(session_ids)

@@ -14,8 +14,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.database.models import SessionStatus
-from app.services.embedding_search_service import EmbeddingSearchService
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.search_service import EmbeddingSearchService
+from app.services.embedding.service import EmbeddingService
 
 # ============================================================================
 # EmbeddingService Tests
@@ -41,7 +41,7 @@ class TestEmbeddingService:
         """Create EmbeddingService with mocked Chroma and backends."""
         with (
             patch("chromadb.HttpClient", return_value=mock_chroma_client),
-            patch("app.services.embedding_service.create_embeddings_backend"),
+            patch("app.services.embedding.service.create_embeddings_backend"),
         ):
             service = EmbeddingService(
                 embedding_provider="huggingface",
@@ -190,7 +190,7 @@ class TestEmbeddingSearchService:
         mock_session_2.event_id = 100
 
         # Mock CRUD reads
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.side_effect = [mock_session_1, mock_session_2]
 
             results = await search_service.search_sessions(
@@ -226,7 +226,7 @@ class TestEmbeddingSearchService:
         mock_session_2.id = 2
         mock_session_2.status = SessionStatus.DRAFT  # Not published
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.side_effect = [mock_session_1, mock_session_2]
 
             results = await search_service.search_sessions(
@@ -261,7 +261,7 @@ class TestEmbeddingSearchService:
         mock_session_2.status = SessionStatus.PUBLISHED
         mock_session_2.event_id = 999  # Different event
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.side_effect = [mock_session_1, mock_session_2]
 
             results = await search_service.search_sessions(
@@ -279,11 +279,11 @@ class TestEmbeddingSearchService:
     @pytest.mark.usefixtures("mock_embedding_service")
     async def test_search_sessions_invalid_query(self, search_service):
         """Test search with invalid query raises InvalidEmbeddingTextError."""
-        from app.services.embedding_exceptions import InvalidEmbeddingTextError
+        from app.services.embedding.exceptions import InvalidEmbeddingTextError
 
         with (
             patch(
-                "app.services.embedding_search_service.EmbeddingService.validate_embedding_text",
+                "app.services.embedding.search_service.EmbeddingService.validate_embedding_text",
                 return_value=False,
             ),
             pytest.raises(InvalidEmbeddingTextError, match="Query text is invalid or too long"),
@@ -311,8 +311,8 @@ class TestEmbeddingIntegration:
 
         # Mock the entire pipeline
         with (
-            patch("app.services.embedding_service.EmbeddingService") as MockEmbeddingService,
-            patch("app.services.embedding_search_service.session_crud") as mock_crud,
+            patch("app.services.embedding.service.EmbeddingService") as MockEmbeddingService,
+            patch("app.services.embedding.search_service.session_crud") as mock_crud,
         ):
 
             mock_service = AsyncMock()
@@ -381,7 +381,7 @@ class TestTagFilteringWhereClause:
         mock_session.id = 1
         mock_session.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             # Call with single tag - should work without throwing
@@ -421,7 +421,7 @@ class TestTagFilteringWhereClause:
         mock_session_2.id = 2
         mock_session_2.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.side_effect = [mock_session_1, mock_session_2]
 
             results = await search_service.search_sessions(
@@ -456,7 +456,7 @@ class TestTagFilteringWhereClause:
         mock_session.id = 1
         mock_session.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             results = await search_service.search_sessions(
@@ -492,7 +492,7 @@ class TestTagFilteringWhereClause:
         mock_session.id = 1
         mock_session.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             results = await search_service.search_sessions(
@@ -535,7 +535,7 @@ class TestTagFilteringWhereClause:
         mock_session.id = 1
         mock_session.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             results = await search_service.search_sessions(
@@ -565,7 +565,7 @@ class TestTagFilteringWhereClause:
         mock_session.id = 1
         mock_session.status = SessionStatus.PUBLISHED
 
-        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+        with patch("app.services.embedding.search_service.session_crud") as mock_crud:
             mock_crud.read.return_value = mock_session
 
             results = await search_service.search_sessions(

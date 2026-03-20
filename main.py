@@ -15,14 +15,7 @@ load_dotenv()
 from app.config.settings import get_settings
 from app.database.connection import engine
 from app.database.models import Base
-from app.routes import (
-    event,
-    session,
-    session_content,
-    session_workflow,
-    workflow_debug,
-    embedding,
-)
+from app.routes.v2 import build_api_v2_router
 
 # Configure Python's standard logging (required for structlog.stdlib.LoggerFactory)
 logging.basicConfig(
@@ -94,16 +87,10 @@ if settings.enable_cors:
         allow_headers=["*"],
     )
 
-# Include routers
-app.include_router(event.router, prefix="/api/v2")
-app.include_router(session.router, prefix="/api/v2")
-app.include_router(session_content.router, prefix="/api/v2")
-app.include_router(session_workflow.router, prefix="/api/v2")
-app.include_router(workflow_debug.router, prefix="/api/v2")
+# Include API v2 routes
+app.include_router(build_api_v2_router(settings.enable_embeddings))
 
-# Include embeddings router if feature is enabled
 if settings.enable_embeddings:
-    app.include_router(embedding.router, prefix="/api/v2")
     logger.info("embedding_routes_registered")
 else:
     logger.info("embedding_routes_disabled_by_config")
