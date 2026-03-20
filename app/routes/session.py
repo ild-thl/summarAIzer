@@ -27,6 +27,7 @@ from app.security.auth import (
     get_current_user_optional,
     require_session_owner,
 )
+from app.utils.helpers import DateTimeUtils
 
 logger = structlog.get_logger()
 
@@ -220,8 +221,6 @@ async def list_sessions(
     - `/api/v2/sessions?session_format=input,workshop`
     - `/api/v2/sessions?start_after=2024-06-01T10:00:00&end_before=2024-06-01T11:30:00` (sessions in timeframe)
     """
-    from datetime import datetime
-
     from app.database.models import SessionFormat, SessionStatus
 
     # Validate and parse enum values using helper
@@ -242,39 +241,10 @@ async def list_sessions(
     if location:
         location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
 
-    # Parse datetime strings if provided
-    start_after_dt = None
-    start_before_dt = None
-    end_after_dt = None
-    end_before_dt = None
-    if start_after:
-        try:
-            start_after_dt = datetime.fromisoformat(start_after.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid start_after format (use ISO 8601)"
-            ) from e
-    if start_before:
-        try:
-            start_before_dt = datetime.fromisoformat(start_before.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid start_before format (use ISO 8601)"
-            ) from e
-    if end_after:
-        try:
-            end_after_dt = datetime.fromisoformat(end_after.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid end_after format (use ISO 8601)"
-            ) from e
-    if end_before:
-        try:
-            end_before_dt = datetime.fromisoformat(end_before.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid end_before format (use ISO 8601)"
-            ) from e
+    # Parse datetime strings if provided using helper
+    start_after_dt, start_before_dt, end_after_dt, end_before_dt = DateTimeUtils.parse_datetime_filters(
+        start_after, start_before, end_after, end_before
+    )
 
     # Parse tags (comma-separated)
     tags_list = None

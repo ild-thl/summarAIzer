@@ -113,7 +113,7 @@ class TestFilteringBugsReproduction:
         # Should find s1 and s2 (both have "AI & Technology" tag)
         assert s1.id in result_ids, f"s1 (id={s1.id}) should match tag 'AI & Technology'"
         assert s2.id in result_ids, f"s2 (id={s2.id}) should match tag 'AI & Technology'"
-        assert s3.id not in result_ids, f"s3 should not have 'AI & Technology' tag"
+        assert s3.id not in result_ids, "s3 should not have 'AI & Technology' tag"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_tag_with_spaces(self, test_db_class, special_tags_dataset):
@@ -125,9 +125,9 @@ class TestFilteringBugsReproduction:
 
         # Should find only s2 (has "Innovative Learning" tag)
         assert s2.id in result_ids, f"s2 (id={s2.id}) should match tag 'Innovative Learning'"
-        assert s1.id not in result_ids, f"s1 should not have 'Innovative Learning' tag"
-        assert s3.id not in result_ids, f"s3 should not have 'Innovative Learning' tag"
-        assert s4.id not in result_ids, f"s4 should not have 'Innovative Learning' tag"
+        assert s1.id not in result_ids, "s1 should not have 'Innovative Learning' tag"
+        assert s3.id not in result_ids, "s3 should not have 'Innovative Learning' tag"
+        assert s4.id not in result_ids, "s4 should not have 'Innovative Learning' tag"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_multiple_special_tags_order_1(self, test_db_class, special_tags_dataset):
@@ -140,10 +140,10 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # OR logic: Should find s1 (has AI & Technology) and s2 (has both)
-        assert s1.id in result_ids, f"s1 should match 'AI & Technology' tag"
-        assert s2.id in result_ids, f"s2 should match both tags"
-        assert s3.id not in result_ids, f"s3 should not match any of these tags"
-        assert s4.id not in result_ids, f"s4 should not match any of these tags"
+        assert s1.id in result_ids, "s1 should match 'AI & Technology' tag"
+        assert s2.id in result_ids, "s2 should match both tags"
+        assert s3.id not in result_ids, "s3 should not match any of these tags"
+        assert s4.id not in result_ids, "s4 should not match any of these tags"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_multiple_special_tags_order_2(self, test_db_class, special_tags_dataset):
@@ -157,10 +157,10 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # OR logic: Should find s1 and s2 (same as order_1)
-        assert s1.id in result_ids, f"s1 should match 'AI & Technology' tag"
-        assert s2.id in result_ids, f"s2 should match both tags"
-        assert s3.id not in result_ids, f"s3 should not match any of these tags"
-        assert s4.id not in result_ids, f"s4 should not match any of these tags"
+        assert s1.id in result_ids, "s1 should match 'AI & Technology' tag"
+        assert s2.id in result_ids, "s2 should match both tags"
+        assert s3.id not in result_ids, "s3 should not match any of these tags"
+        assert s4.id not in result_ids, "s4 should not match any of these tags"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_simple_tags_order_1(self, test_db_class, special_tags_dataset):
@@ -172,10 +172,10 @@ class TestFilteringBugsReproduction:
 
         # OR logic: Should find s3 (has both "AI" and "Technology")
         # Note: s2 should NOT match because it doesn't have "AI" or "Technology" tags
-        assert s3.id in result_ids, f"s3 should match 'AI' or 'Technology' tags"
-        assert s1.id not in result_ids, f"s1 should not have 'AI' or 'Technology' tags"
-        assert s2.id not in result_ids, f"s2 should not have 'AI' or 'Technology' tags"
-        assert s4.id not in result_ids, f"s4 should not have 'AI' or 'Technology' tags"
+        assert s3.id in result_ids, "s3 should match 'AI' or 'Technology' tags"
+        assert s1.id not in result_ids, "s1 should not have 'AI' or 'Technology' tags"
+        assert s2.id not in result_ids, "s2 should not have 'AI' or 'Technology' tags"
+        assert s4.id not in result_ids, "s4 should not have 'AI' or 'Technology' tags"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_simple_tags_order_2(self, test_db_class, special_tags_dataset):
@@ -187,10 +187,10 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # OR logic: Should find s3 (has both tags)
-        assert s3.id in result_ids, f"s3 should match 'Technology' or 'AI' tags"
-        assert s1.id not in result_ids, f"s1 should not have these tags"
-        assert s2.id not in result_ids, f"s2 should not have these tags"
-        assert s4.id not in result_ids, f"s4 should not have these tags"
+        assert s3.id in result_ids, "s3 should match 'Technology' or 'AI' tags"
+        assert s1.id not in result_ids, "s1 should not have these tags"
+        assert s2.id not in result_ids, "s2 should not have these tags"
+        assert s4.id not in result_ids, "s4 should not have these tags"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_session_format_workshop(self, test_db_class, special_tags_dataset):
@@ -203,10 +203,10 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # Should find s2 and s4 (both WORKSHOP format)
-        assert s2.id in result_ids, f"s2 should have WORKSHOP format"
-        assert s4.id in result_ids, f"s4 should have WORKSHOP format"
-        assert s1.id not in result_ids, f"s1 has INPUT format, not WORKSHOP"
-        assert s3.id not in result_ids, f"s3 has LIGHTNING_TALK format, not WORKSHOP"
+        assert s2.id in result_ids, "s2 should have WORKSHOP format"
+        assert s4.id in result_ids, "s4 should have WORKSHOP format"
+        assert s1.id not in result_ids, "s1 has INPUT format, not WORKSHOP"
+        assert s3.id not in result_ids, "s3 has LIGHTNING_TALK format, not WORKSHOP"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_filter_by_session_format_input(self, test_db_class, special_tags_dataset):
@@ -217,10 +217,10 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # Should find only s1 (INPUT format)
-        assert s1.id in result_ids, f"s1 should have INPUT format"
-        assert s2.id not in result_ids, f"s2 has WORKSHOP format, not INPUT"
-        assert s3.id not in result_ids, f"s3 has LIGHTNING_TALK format, not INPUT"
-        assert s4.id not in result_ids, f"s4 has WORKSHOP format, not INPUT"
+        assert s1.id in result_ids, "s1 should have INPUT format"
+        assert s2.id not in result_ids, "s2 has WORKSHOP format, not INPUT"
+        assert s3.id not in result_ids, "s3 has LIGHTNING_TALK format, not INPUT"
+        assert s4.id not in result_ids, "s4 has WORKSHOP format, not INPUT"
 
     @pytest.mark.usefixtures("special_tags_dataset")
     def test_url_encoding_with_ampersand_in_tags(self, test_db_class, special_tags_dataset):
@@ -252,8 +252,8 @@ class TestFilteringBugsReproduction:
         result_ids = {s.id for s in results}
 
         # Should find sessions that have this tag
-        assert s1.id in result_ids, f"s1 should match tag 'AI & Technology'"
-        assert s2.id in result_ids, f"s2 should match tag 'AI & Technology'"
+        assert s1.id in result_ids, "s1 should match tag 'AI & Technology'"
+        assert s2.id in result_ids, "s2 should match tag 'AI & Technology'"
         # s3 and s4 don't have this tag
         assert s3.id not in result_ids
         assert s4.id not in result_ids

@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from fastapi import HTTPException
+
 
 class DateTimeUtils:
     """Utilities for datetime operations."""
@@ -31,6 +33,49 @@ class DateTimeUtils:
     ) -> bool:
         """Check if two datetime ranges overlap."""
         return start1 < end2 and start2 < end1
+
+    @staticmethod
+    def parse_iso_datetime(date_str: str | None) -> datetime | None:
+        """Parse ISO 8601 datetime string.
+
+        Raises HTTPException on invalid format.
+        """
+        if not date_str:
+            return None
+        try:
+            return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail="Invalid datetime format (use ISO 8601)"
+            ) from e
+
+    @staticmethod
+    def parse_datetime_filters(
+        start_after: str | None,
+        start_before: str | None,
+        end_after: str | None,
+        end_before: str | None,
+    ) -> tuple[datetime | None, datetime | None, datetime | None, datetime | None]:
+        """Parse all four datetime query parameters.
+
+        Returns tuple: (start_after_dt, start_before_dt, end_after_dt, end_before_dt)
+        """
+        return (
+            DateTimeUtils.parse_iso_datetime(start_after),
+            DateTimeUtils.parse_iso_datetime(start_before),
+            DateTimeUtils.parse_iso_datetime(end_after),
+            DateTimeUtils.parse_iso_datetime(end_before),
+        )
+
+    @staticmethod
+    def parse_datetime_or_none(value: datetime | str | None) -> datetime | None:
+        """Convert datetime object or ISO string to datetime, or return None."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return DateTimeUtils.parse_iso_datetime(str(value))
+
 
 
 class URIUtils:

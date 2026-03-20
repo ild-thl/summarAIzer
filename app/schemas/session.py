@@ -239,3 +239,81 @@ class SessionWithEvent(SessionResponse):
     """Schema for Session response with associated event."""
 
     event: EventResponse | None = None
+
+
+class RecommendRequest(BaseModel):
+    """Request schema for session recommendations.
+
+    All parameters are optional. Behavior depends on inputs:
+    - With query: Semantic search + optional liked/disliked refinement
+    - With accepted_ids: Centroid-based recommendations from liked sessions
+    - With only filters: Falls back to CRUD list_with_filters (efficient basic filtering)
+    - With rejected_ids only: Applies exclusion to basic filtered list
+    """
+
+    query: str | None = Field(
+        None,
+        max_length=8000,
+        description="Optional text query for semantic search",
+    )
+    accepted_ids: list[int] = Field(
+        default_factory=list,
+        description="Session IDs the user has liked (for centroid-based or query refinement)",
+    )
+    rejected_ids: list[int] = Field(
+        default_factory=list,
+        description="Session IDs to exclude from results",
+    )
+    limit: int = Field(10, ge=1, le=100, description="Maximum number of recommendations to return")
+
+    # Optional filters (same as search endpoint)
+    event_id: int | None = Field(None, description="Filter by event ID")
+    session_format: str | None = Field(None, description="Filter by session format")
+    tags: list[str] | None = Field(None, description="Filter by tags (OR logic)")
+    location: list[str] | None = Field(None, description="Filter by location (OR logic)")
+    language: str | None = Field(None, description="Filter by language (ISO 639-1 code)")
+    duration_min: int | None = Field(None, ge=0, description="Minimum duration in minutes")
+    duration_max: int | None = Field(None, ge=0, description="Maximum duration in minutes")
+    start_after: datetime | None = Field(None, description="Sessions starting after (ISO 8601)")
+    start_before: datetime | None = Field(None, description="Sessions starting before (ISO 8601)")
+    end_after: datetime | None = Field(None, description="Sessions ending after (ISO 8601)")
+    end_before: datetime | None = Field(None, description="Sessions ending before (ISO 8601)")
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: str | None) -> str | None:
+        """Normalize language code to lowercase for consistency."""
+        if v is None:
+            return v
+        return str(v).lower()
+
+
+class SessionWithScore(BaseModel):
+    """Session response with recommendation/search metrics."""
+
+    session: SessionResponse
+    overall_score: float = Field(..., ge=0, le=1, description="Overall recommendation score (0-1)")
+    semantic_similarity: float | None = Field(
+        None, ge=0, le=1, description="Semantic similarity to query (0-1, None if no query)"
+    )
+    liked_cluster_similarity: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Similarity to liked sessions cluster (0-1, None if no liked sessions)",
+    )
+    disliked_similarity: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Similarity to disliked sessions (0-1, None if no disliked sessions)",
+    )
+    filter_match_ratio: float = Field(
+        default=1.0,
+        ge=0,
+        le=1,
+        description="Ratio of matched filters (0-1, 1.0 = all filters matched)",
+    )
+    explanation: str | None = Field(
+        None, description="Human-readable explanation of why this session was recommended"
+    )

@@ -512,3 +512,48 @@ class EmbeddingService:
                 error=str(e),
             )
             raise
+
+    async def get_session_embeddings(self, session_ids: list[int]) -> dict[int, list[float]]:
+        """
+        Retrieve stored embeddings for given session IDs.
+
+        Used by recommendations to compute centroid when no text query is provided.
+
+        Args:
+            session_ids: List of session IDs to retrieve embeddings for
+
+        Returns:
+            Dictionary mapping session_id to embedding vector
+
+        Raises:
+            Exception: If retrieval fails
+        """
+        if not session_ids:
+            return {}
+
+        try:
+            chroma_ids = [f"session_{sid}" for sid in session_ids]
+            results = self.sessions_collection.get(ids=chroma_ids, include=["embeddings"])
+
+            out = {}
+            if results["ids"]:
+                for chroma_id, embedding in zip(
+                    results["ids"], results["embeddings"], strict=False
+                ):
+                    session_id = int(chroma_id.split("_")[1])
+                    out[session_id] = embedding
+
+            logger.info(
+                "session_embeddings_retrieved",
+                requested=len(session_ids),
+                found=len(out),
+            )
+            return out
+
+        except Exception as e:
+            logger.error(
+                "session_embeddings_retrieval_failed",
+                error=str(e),
+                session_ids_count=len(session_ids),
+            )
+            raise

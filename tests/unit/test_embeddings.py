@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from app.database.models import EventStatus, SessionStatus
+from app.database.models import SessionStatus
 from app.services.embedding_search_service import EmbeddingSearchService
 from app.services.embedding_service import EmbeddingService
 
@@ -293,6 +293,7 @@ class TestEmbeddingSearchService:
                 db=Mock(),
                 limit=10,
             )
+
 
 # ============================================================================
 # Integration Tests
