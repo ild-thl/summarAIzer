@@ -1,10 +1,9 @@
 """CRUD operations for Session model."""
 
-from datetime import datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import String, cast, or_
+from sqlalchemy import String, and_, cast, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -135,23 +134,26 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if duration_max is not None:
             filters.append(self.model.duration <= duration_max)
 
-    def _add_date_range_filters(
-        self,
-        filters: list,
-        start_after: datetime | None,
-        start_before: datetime | None,
-        end_after: datetime | None,
-        end_before: datetime | None,
-    ):
-        """Add date range filters to the filters list (start and end times)."""
-        if start_after:
-            filters.append(self.model.start_datetime >= start_after)
-        if start_before:
-            filters.append(self.model.start_datetime <= start_before)
-        if end_after:
-            filters.append(self.model.end_datetime >= end_after)
-        if end_before:
-            filters.append(self.model.end_datetime <= end_before)
+    def _add_time_window_filters(self, filters: list, time_windows: list[Any] | None):
+        """Add OR-ed time-window containment filters."""
+        if not time_windows:
+            return
+
+        window_conditions = []
+        for window in time_windows:
+            start = window["start"] if isinstance(window, dict) else getattr(window, "start", None)
+            end = window["end"] if isinstance(window, dict) else getattr(window, "end", None)
+            if start is None or end is None:
+                continue
+            window_conditions.append(
+                and_(
+                    self.model.start_datetime >= start,
+                    self.model.end_datetime <= end,
+                )
+            )
+
+        if window_conditions:
+            filters.append(or_(*window_conditions))
 
     def _build_session_filters(
         self,
@@ -164,10 +166,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         duration_min: int | None = None,
         duration_max: int | None = None,
         speaker: str | None = None,
-        start_after: datetime | None = None,
-        start_before: datetime | None = None,
-        end_after: datetime | None = None,
-        end_before: datetime | None = None,
+        time_windows: list[Any] | None = None,
         search: str | None = None,
     ) -> list:
         """Build filter conditions for session query."""
@@ -212,8 +211,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if speaker:
             filters.append(cast(self.model.speakers, String).ilike(f"%{speaker}%"))
 
-        # Date range filter
-        self._add_date_range_filters(filters, start_after, start_before, end_after, end_before)
+        # Time windows filter
+        self._add_time_window_filters(filters, time_windows)
 
         # Full-text search on title, description, and speakers
         if search:
@@ -242,10 +241,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         duration_min: int | None = None,
         duration_max: int | None = None,
         speaker: str | None = None,
-        start_after: datetime | None = None,
-        start_before: datetime | None = None,
-        end_after: datetime | None = None,
-        end_before: datetime | None = None,
+        time_windows: list[Any] | None = None,
         search: str | None = None,
     ) -> list[SessionModel]:
         """
@@ -264,10 +260,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             duration_min: Minimum duration in minutes
             duration_max: Maximum duration in minutes
             speaker: Search for speaker name
-            start_after: Sessions starting after this date
-            start_before: Sessions starting before this date
-            end_after: Sessions ending after this date
-            end_before: Sessions ending before this date
+            time_windows: Sessions must fit within any provided time window
             search: Full-text search on title, description, and speakers
 
         Returns:
@@ -287,10 +280,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             duration_min=duration_min,
             duration_max=duration_max,
             speaker=speaker,
-            start_after=start_after,
-            start_before=start_before,
-            end_after=end_after,
-            end_before=end_before,
+            time_windows=time_windows,
             search=search,
         )
 

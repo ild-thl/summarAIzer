@@ -1,5 +1,6 @@
 """Utility functions for common operations."""
 
+import json
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -50,22 +51,34 @@ class DateTimeUtils:
             ) from e
 
     @staticmethod
-    def parse_datetime_filters(
-        start_after: str | None,
-        start_before: str | None,
-        end_after: str | None,
-        end_before: str | None,
-    ) -> tuple[datetime | None, datetime | None, datetime | None, datetime | None]:
-        """Parse all four datetime query parameters.
+    def parse_time_windows_json(time_windows: str | None) -> list:
+        """Parse JSON time windows payload into validated TimeWindow models."""
+        if not time_windows:
+            return []
 
-        Returns tuple: (start_after_dt, start_before_dt, end_after_dt, end_before_dt)
-        """
-        return (
-            DateTimeUtils.parse_iso_datetime(start_after),
-            DateTimeUtils.parse_iso_datetime(start_before),
-            DateTimeUtils.parse_iso_datetime(end_after),
-            DateTimeUtils.parse_iso_datetime(end_before),
-        )
+        try:
+            parsed = json.loads(time_windows)
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid time_windows format (expected JSON array of {start,end})",
+            ) from e
+
+        if not isinstance(parsed, list):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid time_windows format (expected JSON array of {start,end})",
+            )
+
+        try:
+            from app.schemas.session import TimeWindow
+
+            return [TimeWindow.model_validate(item) for item in parsed]
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid time_windows values: {e}",
+            ) from e
 
     @staticmethod
     def parse_datetime_or_none(value: datetime | str | None) -> datetime | None:

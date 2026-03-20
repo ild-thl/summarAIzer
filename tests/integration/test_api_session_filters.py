@@ -1,6 +1,8 @@
 """Integration tests for Session API filtering endpoints."""
 
+import json
 from datetime import datetime, timedelta
+from itertools import pairwise
 
 import pytest
 from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
@@ -11,6 +13,11 @@ def _hash_api_key(key: str) -> str:
     import hashlib
 
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _time_windows_query(windows: list[dict[str, str]]) -> str:
+    """Encode window list for time_windows query parameter."""
+    return json.dumps(windows, separators=(",", ":"))
 
 
 @pytest.mark.integration
@@ -277,67 +284,88 @@ class TestSessionFilteringAPI:
         data = response.json()
         assert len(data) <= 2
 
-    def test_invalid_date_format_start_after(self, client):
-        """Test invalid date format in start_after parameter."""
-        response = client.get("/api/v2/sessions?start_after=invalid-date")
+    def test_invalid_time_windows_json(self, client):
+        """Test invalid JSON in time_windows parameter."""
+        response = client.get("/api/v2/sessions?time_windows=not-json")
         assert response.status_code == HTTP_400_BAD_REQUEST
         data = response.json()
-        assert "Invalid datetime format" in data["detail"]
+        assert "Invalid time_windows format" in data["detail"]
 
-    def test_invalid_date_format_start_before(self, client):
-        """Test invalid date format in start_before parameter."""
-        response = client.get("/api/v2/sessions?start_before=2024-13-45")
+    def test_invalid_time_windows_datetime(self, client):
+        """Test invalid datetime value in time_windows parameter."""
+        payload = _time_windows_query([{"start": "2024-13-45", "end": "2024-12-31T23:59:59"}])
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_400_BAD_REQUEST
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_valid_iso_datetime_start_after(self, client):
-        """Test valid ISO 8601 datetime in start_after."""
+    def test_valid_iso_datetime_time_windows(self, client):
+        """Test valid ISO 8601 datetimes in time_windows."""
         now = datetime.utcnow()
-        iso_datetime = (now + timedelta(hours=2)).isoformat()
-        response = client.get(f"/api/v2/sessions?start_after={iso_datetime}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now + timedelta(hours=2)).isoformat(),
+                    "end": (now + timedelta(hours=5)).isoformat(),
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_iso_datetime_with_z_suffix(self, client):
-        """Test ISO datetime with Z suffix is handled correctly."""
+    def test_time_windows_with_z_suffix(self, client):
+        """Test ISO datetimes with Z suffix are handled correctly."""
         now = datetime.utcnow()
-        iso_datetime = (now + timedelta(hours=2)).isoformat() + "Z"
-        response = client.get(f"/api/v2/sessions?start_after={iso_datetime}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now + timedelta(hours=2)).isoformat() + "Z",
+                    "end": (now + timedelta(hours=5)).isoformat() + "Z",
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_end_before(self, client):
-        """Test filtering by sessions ending before a specific time."""
+    def test_filter_by_time_window(self, client):
+        """Test filtering by sessions within one specific time window."""
         now = datetime.utcnow()
-        end_before_time = (now + timedelta(hours=3)).isoformat()
-        response = client.get(f"/api/v2/sessions?end_before={end_before_time}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now - timedelta(minutes=10)).isoformat(),
+                    "end": (now + timedelta(hours=4, minutes=10)).isoformat(),
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        # Should find sessions that end before the specified time
+        # Should find sessions that fit within the specified window
         assert len(data) >= 1
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_end_after(self, client):
-        """Test filtering by sessions ending after a specific time."""
+    def test_filter_by_multiple_time_windows(self, client):
+        """Test filtering by sessions in multiple separate windows."""
         now = datetime.utcnow()
-        end_after_time = (now + timedelta(hours=1)).isoformat()
-        response = client.get(f"/api/v2/sessions?end_after={end_after_time}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": now.isoformat(),
+                    "end": (now + timedelta(hours=1)).isoformat(),
+                },
+                {
+                    "start": (now + timedelta(hours=4)).isoformat(),
+                    "end": (now + timedelta(hours=5)).isoformat(),
+                },
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        # Sessions ending after the time should be returned
+        # Sessions in either window should be returned
         assert len(data) >= 0
-
-    @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_timeframe(self, client):
-        """Test filtering for sessions within a specific timeframe using start and end times."""
-        now = datetime.utcnow()
-        start_time = (now + timedelta(hours=1)).isoformat()
-        end_time = (now + timedelta(hours=4)).isoformat()
-        response = client.get(f"/api/v2/sessions?start_after={start_time}&end_before={end_time}")
-        assert response.status_code == HTTP_200_OK
-        data = response.json()
-        # Should return sessions that fit within the timeframe
-        assert isinstance(data, list)
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_sql_injection_in_search_param(self, client):
@@ -548,52 +576,37 @@ class TestSemanticSearchWithFilters:
                 assert 20 <= duration <= 90
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_start_after_filter(self, client):
-        """Test semantic search with start_after date filter."""
+    def test_semantic_search_with_time_window_filter(self, client):
+        """Test semantic search with a single time window filter."""
+        payload = _time_windows_query(
+            [{"start": "2024-01-01T00:00:00", "end": "2025-12-31T23:59:59"}]
+        )
         response = client.get(
-            "/api/v2/sessions/search/similar?query=workshop&start_after=2024-01-01T00:00:00"
+            f"/api/v2/sessions/search/similar?query=workshop&time_windows={payload}"
         )
         assert response.status_code in [200, 503]
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_date_range_filter(self, client):
-        """Test semantic search with date range filter."""
+    def test_semantic_search_with_multiple_time_windows(self, client):
+        """Test semantic search with multiple time windows."""
+        payload = _time_windows_query(
+            [
+                {"start": "2024-01-01T00:00:00", "end": "2024-06-30T23:59:59"},
+                {"start": "2024-09-01T00:00:00", "end": "2025-12-31T23:59:59"},
+            ]
+        )
         response = client.get(
-            "/api/v2/sessions/search/similar?query=machine+learning&start_after=2024-01-01T00:00:00&start_before=2025-12-31T23:59:59"
+            f"/api/v2/sessions/search/similar?query=machine+learning&time_windows={payload}"
         )
         assert response.status_code in [200, 503]
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_invalid_date_format(self, client):
-        """Test semantic search with invalid date format."""
+    def test_semantic_search_with_invalid_time_windows_format(self, client):
+        """Test semantic search with invalid time_windows format."""
         response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&start_after=invalid-date"
+            "/api/v2/sessions/search/similar?query=learning&time_windows=not-json"
         )
         assert response.status_code in [400, 422]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_end_before_filter(self, client):
-        """Test semantic search with end_before date filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&end_before=2025-12-31T23:59:59"
-        )
-        assert response.status_code in [200, 503]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_end_after_filter(self, client):
-        """Test semantic search with end_after date filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=workshop&end_after=2024-01-01T00:00:00"
-        )
-        assert response.status_code in [200, 503]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_timeframe_filter(self, client):
-        """Test semantic search with timeframe (start and end times) filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&start_after=2024-01-01T00:00:00&end_before=2025-12-31T23:59:59"
-        )
-        assert response.status_code in [200, 503]
 
     def test_semantic_search_query_required(self, client):
         """Test that query parameter is required."""
@@ -888,7 +901,7 @@ class TestRecommendationAPI:
 
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_with_timeframe_filter(self, client, recommendation_sessions):
-        """Test recommendations with start/end time filters (find sessions in timeslot)."""
+        """Test recommendations with plan window filters (find sessions in timeslot)."""
         liked_session_id = recommendation_sessions[0]["id"]
         now = datetime.utcnow()
         start_time = (now + timedelta(hours=3)).isoformat()
@@ -900,8 +913,8 @@ class TestRecommendationAPI:
                 "query": None,
                 "accepted_ids": [liked_session_id],
                 "rejected_ids": [],
-                "start_after": start_time,
-                "end_before": end_time,
+                "goal_mode": "plan",
+                "time_windows": [{"start": start_time, "end": end_time}],
                 "limit": 5,
             },
         )
@@ -1423,3 +1436,129 @@ class TestRecommendationAPI:
                     compliance = result.get("filter_compliance_score")
                     if compliance is not None:
                         assert 0.0 <= compliance <= 1.0
+
+    # ========================================================================
+    # Phase 4: Plan mode tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_non_overlapping(self, client):
+        """Plan mode should return a non-overlapping session schedule."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "limit": 10,
+                "goal_mode": "plan",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+
+            # Validate all session pairs are non-overlapping.
+            for i, left in enumerate(results):
+                left_start = datetime.fromisoformat(
+                    left["session"]["start_datetime"].replace("Z", "+00:00")
+                )
+                left_end = datetime.fromisoformat(
+                    left["session"]["end_datetime"].replace("Z", "+00:00")
+                )
+                for right in results[i + 1 :]:
+                    right_start = datetime.fromisoformat(
+                        right["session"]["start_datetime"].replace("Z", "+00:00")
+                    )
+                    right_end = datetime.fromisoformat(
+                        right["session"]["end_datetime"].replace("Z", "+00:00")
+                    )
+                    overlaps = left_start < right_end and right_start < left_end
+                    assert not overlaps
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_respects_time_window(self, client):
+        """Plan mode should keep sessions inside time_windows bounds."""
+        now = datetime.utcnow()
+        plan_start = (now + timedelta(hours=1)).isoformat()
+        plan_end = (now + timedelta(hours=8)).isoformat()
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "goal_mode": "plan",
+                "time_windows": [{"start": plan_start, "end": plan_end}],
+                "limit": 10,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            plan_start_dt = datetime.fromisoformat(plan_start.replace("Z", "+00:00"))
+            plan_end_dt = datetime.fromisoformat(plan_end.replace("Z", "+00:00"))
+
+            for result in results:
+                session_start = datetime.fromisoformat(
+                    result["session"]["start_datetime"].replace("Z", "+00:00")
+                )
+                session_end = datetime.fromisoformat(
+                    result["session"]["end_datetime"].replace("Z", "+00:00")
+                )
+                assert session_start >= plan_start_dt
+                assert session_end <= plan_end_dt
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_respects_min_break(self, client):
+        """Plan mode should enforce configured minimum break between selected sessions."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "goal_mode": "plan",
+                "min_break_minutes": 20,
+                "limit": 10,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            sessions = sorted(
+                [
+                    {
+                        "start": datetime.fromisoformat(
+                            r["session"]["start_datetime"].replace("Z", "+00:00")
+                        ),
+                        "end": datetime.fromisoformat(
+                            r["session"]["end_datetime"].replace("Z", "+00:00")
+                        ),
+                    }
+                    for r in results
+                ],
+                key=lambda x: x["start"],
+            )
+
+            for prev, nxt in pairwise(sessions):
+                break_minutes = (nxt["start"] - prev["end"]).total_seconds() / 60
+                assert break_minutes >= 20
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_invalid_window_rejected(self, client):
+        """Invalid planning window should be rejected by request validation."""
+        now = datetime.utcnow()
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "goal_mode": "plan",
+                "time_windows": [
+                    {
+                        "start": (now + timedelta(hours=2)).isoformat(),
+                        "end": (now + timedelta(hours=1)).isoformat(),
+                    }
+                ],
+                "query": "learning",
+            },
+        )
+
+        assert response.status_code in [400, 422]

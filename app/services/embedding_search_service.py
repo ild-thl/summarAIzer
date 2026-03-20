@@ -6,6 +6,7 @@ to provide a clean interface for similarity search across sessions/events.
 """
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -18,6 +19,7 @@ from app.services.embedding_exceptions import (
     InvalidEmbeddingTextError,
 )
 from app.services.embedding_service import EmbeddingService
+from app.utils.helpers import DateTimeUtils
 
 logger = structlog.get_logger()
 
@@ -52,24 +54,30 @@ class EmbeddingSearchService:
             return tag_conditions[0]
         return {"$or": tag_conditions}
 
-    def _build_datetime_range_conditions(
-        self,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
-    ) -> list[dict]:
-        """Build datetime range conditions for Chroma filtering."""
-        conditions = []
-        if start_after is not None:
-            conditions.append({"start_datetime": {"$gte": start_after.timestamp()}})
-        if start_before is not None:
-            conditions.append({"start_datetime": {"$lte": start_before.timestamp()}})
-        if end_after is not None:
-            conditions.append({"end_datetime": {"$gte": end_after.timestamp()}})
-        if end_before is not None:
-            conditions.append({"end_datetime": {"$lte": end_before.timestamp()}})
-        return conditions
+    def _build_time_windows_conditions(self, time_windows: list[Any] | None) -> dict | None:
+        """Build OR-ed Chroma conditions for time windows."""
+        if not time_windows:
+            return None
+
+        window_conditions = []
+        for window in time_windows:
+            start, end = self._extract_window_bounds(window)
+            if start is None or end is None:
+                continue
+            window_conditions.append(
+                {
+                    "$and": [
+                        {"start_datetime": {"$gte": start.timestamp()}},
+                        {"end_datetime": {"$lte": end.timestamp()}},
+                    ]
+                }
+            )
+
+        if not window_conditions:
+            return None
+        if len(window_conditions) == 1:
+            return window_conditions[0]
+        return {"$or": window_conditions}
 
     def _build_simple_conditions(
         self,
@@ -98,10 +106,7 @@ class EmbeddingSearchService:
         language: str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
-        start_after: Any | None = None,
-        start_before: Any | None = None,
-        end_after: Any | None = None,
-        end_before: Any | None = None,
+        time_windows: list[Any] | None = None,
     ) -> dict | None:
         """Build Chroma WHERE filter conditions from parameters.
 
@@ -123,9 +128,9 @@ class EmbeddingSearchService:
         if tags_condition:
             all_conditions.append(tags_condition)
 
-        all_conditions.extend(
-            self._build_datetime_range_conditions(start_after, start_before, end_after, end_before)
-        )
+        time_window_condition = self._build_time_windows_conditions(time_windows)
+        if time_window_condition:
+            all_conditions.append(time_window_condition)
 
         # Combine conditions
         if not all_conditions:
@@ -153,10 +158,7 @@ class EmbeddingSearchService:
         language: str | None,
         duration_min: int | None,
         duration_max: int | None,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
+        time_windows: list[Any] | None,
     ) -> bool:
         """Check if any filters are active."""
         return bool(
@@ -167,10 +169,7 @@ class EmbeddingSearchService:
             or language
             or duration_min
             or duration_max
-            or start_after
-            or start_before
-            or end_after
-            or end_before
+            or time_windows
         )
 
     async def search_by_collection(
@@ -267,10 +266,7 @@ class EmbeddingSearchService:
         language: str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
-        start_after: Any | None = None,
-        start_before: Any | None = None,
-        end_after: Any | None = None,
-        end_before: Any | None = None,
+        time_windows: list[Any] | None = None,
     ) -> list[tuple]:
         """
         Search for similar sessions by query text with optional filtering.
@@ -286,10 +282,7 @@ class EmbeddingSearchService:
             language: Optional filter by language (applied via Chroma metadata)
             duration_min: Optional minimum duration in minutes (applied via Chroma metadata)
             duration_max: Optional maximum duration in minutes (applied via Chroma metadata)
-            start_after: Optional datetime filter for sessions starting after (applied via Chroma metadata)
-            start_before: Optional datetime filter for sessions starting before (applied via Chroma metadata)
-            end_after: Optional datetime filter for sessions ending after (applied via Chroma metadata)
-            end_before: Optional datetime filter for sessions ending before (applied via Chroma metadata)
+            time_windows: Optional list of time windows (applied via Chroma metadata)
 
         Returns:
             List of tuples: (session, scores_dict) with similarity metrics
@@ -313,10 +306,7 @@ class EmbeddingSearchService:
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
+                time_windows=time_windows,
             )
 
             # Search Chroma with filters
@@ -391,15 +381,16 @@ class EmbeddingSearchService:
         language: str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
-        start_after: Any | None = None,
-        start_before: Any | None = None,
-        end_after: Any | None = None,
-        end_before: Any | None = None,
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
         filter_mode: str = "hard",
         filter_margin_weight: float = 0.1,
         soft_filter_limit_ratio: float = 0.5,
+        goal_mode: str = "similarity",
+        time_windows: list[Any] | None = None,
+        min_break_minutes: int = 0,
+        max_gap_minutes: int | None = None,
+        plan_candidate_multiplier: int = 3,
     ) -> list[tuple]:
         """
         Recommend sessions based on user preferences and optional filters.
@@ -430,15 +421,16 @@ class EmbeddingSearchService:
             language: Optional filter by language
             duration_min: Optional minimum duration in minutes
             duration_max: Optional maximum duration in minutes
-            start_after: Optional datetime filter for sessions starting after
-            start_before: Optional datetime filter for sessions starting before
-            end_after: Optional datetime filter for sessions ending after
-            end_before: Optional datetime filter for sessions ending before
             liked_embedding_weight: Weight (a) to boost sessions similar to liked sessions (0-1, default 0.3)
             disliked_embedding_weight: Weight (b) to penalize sessions similar to disliked sessions (0-1, default 0.2)
             filter_mode: Phase 3 - "hard" (strict) or "soft" (margins), default "hard"
             filter_margin_weight: Phase 3 - weight to blend filter compliance into score (0-1, default 0.1)
             soft_filter_limit_ratio: Phase 3 - trigger soft pass if hard results < limit * ratio (0-1, default 0.5)
+            goal_mode: Phase 4 - "similarity" (default) or "plan" for non-overlapping schedule
+            time_windows: Optional list of time windows used for filtering and plan mode
+            min_break_minutes: Minimum required break between sessions in plan mode
+            max_gap_minutes: Optional max allowed gap between planned sessions
+            plan_candidate_multiplier: Candidate pool multiplier before plan optimization
 
         Returns:
             List of tuples: (session, scores_dict) where scores_dict contains:
@@ -458,6 +450,8 @@ class EmbeddingSearchService:
         accepted_ids = accepted_ids or []
         rejected_ids = rejected_ids or []
         seen_ids = set(accepted_ids + rejected_ids)
+        is_plan_mode = goal_mode == "plan"
+        candidate_limit = limit * plan_candidate_multiplier if is_plan_mode else limit
 
         try:
             # Path 3: CRUD Fallback (no query AND no accepted_ids)
@@ -471,17 +465,15 @@ class EmbeddingSearchService:
                     language=language,
                     duration_min=duration_min,
                     duration_max=duration_max,
-                    start_after=start_after,
-                    start_before=start_before,
-                    end_after=end_after,
-                    end_before=end_before,
+                    time_windows=time_windows,
                 )
                 logger.info(
                     "recommendation_crud_fallback",
                     rejected_ids_count=len(rejected_ids),
                     has_filters=active_filters,
+                    goal_mode=goal_mode,
                 )
-                return await self._recommend_fallback(
+                recommendations = await self._recommend_fallback(
                     db,
                     rejected_ids=rejected_ids,
                     event_id=event_id,
@@ -491,110 +483,26 @@ class EmbeddingSearchService:
                     language=language,
                     duration_min=duration_min,
                     duration_max=duration_max,
-                    start_after=start_after,
-                    start_before=start_before,
-                    end_after=end_after,
-                    end_before=end_before,
+                    time_windows=time_windows,
+                    limit=candidate_limit,
+                )
+                return self._apply_plan_mode_if_needed(
+                    recommendations=recommendations,
+                    is_plan_mode=is_plan_mode,
                     limit=limit,
+                    time_windows=time_windows,
+                    min_break_minutes=min_break_minutes,
+                    max_gap_minutes=max_gap_minutes,
                 )
 
             # Path 1 & 2: Semantic Search (query OR accepted_ids provided)
-            # Determine query embedding
-            query_embedding, semantic_similarity_enabled = await self._determine_query_embedding(
+            recommendations, search_debug = await self._recommend_with_semantic_search(
+                db=db,
                 query=query,
                 accepted_ids=accepted_ids,
                 rejected_ids=rejected_ids,
-            )
-
-            # Build metadata filters
-            metadata_conditions = self._build_chroma_conditions(
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
-            )
-
-            # Phase 3: Two-Pass Search Logic for Soft Filter Mode
-            # ======================================================
-            # Hard pass: Strict filter constraints applied
-            nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
-            chroma_where = self._combine_conditions(nin_condition, metadata_conditions)
-
-            # Hard pass search
-            try:
-                if chroma_where:
-                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                        query_embedding, limit=limit, where=chroma_where
-                    )
-                else:
-                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                        query_embedding, limit=limit
-                    )
-            except Exception as e:
-                logger.error(
-                    "recommendation_chroma_search_failed",
-                    error=str(e),
-                )
-                raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
-
-            # Soft pass: Check if we should expand with near-matches
-            chroma_results_soft = []
-            soft_pass_triggered = False
-            soft_filter_threshold = limit * soft_filter_limit_ratio
-
-            if filter_mode == "soft" and len(chroma_results_hard) < soft_filter_threshold:
-                # Hard filters returned too few results, enable soft pass
-                soft_pass_triggered = True
-                try:
-                    # Over-sample without filters (fetch 2x to account for filtering in _process_chroma_recommendations)
-                    soft_search_limit = max(limit * 2, int(limit / soft_filter_limit_ratio))
-                    # Search without metadata filters, still exclude seen sessions
-                    chroma_where_soft = nin_condition  # Only exclude seen sessions
-
-                    if chroma_where_soft:
-                        chroma_results_soft = await self.embedding_service.search_similar_sessions(
-                            query_embedding, limit=soft_search_limit, where=chroma_where_soft
-                        )
-                    else:
-                        chroma_results_soft = await self.embedding_service.search_similar_sessions(
-                            query_embedding, limit=soft_search_limit
-                        )
-
-                    logger.info(
-                        "recommendation_soft_pass_enabled",
-                        hard_results=len(chroma_results_hard),
-                        soft_search_limit=soft_search_limit,
-                        soft_results_before_dedup=len(chroma_results_soft),
-                        soft_filter_threshold=soft_filter_threshold,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "recommendation_soft_pass_search_failed",
-                        error=str(e),
-                    )
-                    # Soft pass failure is non-critical; proceed with hard results only
-                    chroma_results_soft = []
-
-            # Fetch from DB, apply filters, and compute scores with Phase 2 + Phase 3 re-ranking
-            preference_embeddings = await self._prefetch_preference_embeddings(
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
-            )
-            recommendations = await self._process_chroma_recommendations(
-                chroma_results_hard=chroma_results_hard,
-                chroma_results_soft=chroma_results_soft,
-                db=db,
-                semantic_similarity_enabled=semantic_similarity_enabled,
-                liked_embeddings=preference_embeddings["liked"],
-                disliked_embeddings=preference_embeddings["disliked"],
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
+                seen_ids=seen_ids,
+                candidate_limit=candidate_limit,
                 event_id=event_id,
                 session_format=session_format,
                 tags=tags,
@@ -602,22 +510,30 @@ class EmbeddingSearchService:
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
+                time_windows=time_windows,
+                liked_embedding_weight=liked_embedding_weight,
+                disliked_embedding_weight=disliked_embedding_weight,
+                filter_mode=filter_mode,
                 filter_margin_weight=filter_margin_weight,
+                soft_filter_limit_ratio=soft_filter_limit_ratio,
+            )
+            recommendations = self._apply_plan_mode_if_needed(
+                recommendations=recommendations,
+                is_plan_mode=is_plan_mode,
                 limit=limit,
-                soft_pass_triggered=soft_pass_triggered,
+                time_windows=time_windows,
+                min_break_minutes=min_break_minutes,
+                max_gap_minutes=max_gap_minutes,
             )
 
             logger.info(
                 "recommendation_completed",
-                hard_pass_results=len(chroma_results_hard),
-                soft_pass_results=len(chroma_results_soft),
+                hard_pass_results=search_debug["hard_pass_results"],
+                soft_pass_results=search_debug["soft_pass_results"],
                 final_recommendations=len(recommendations),
                 limit=limit,
-                soft_pass_triggered=soft_pass_triggered,
+                soft_pass_triggered=search_debug["soft_pass_triggered"],
+                goal_mode=goal_mode,
             )
 
             return recommendations
@@ -636,6 +552,327 @@ class EmbeddingSearchService:
             )
             raise EmbeddingSearchError(f"Recommendation failed: {e!s}") from e
 
+    def _apply_plan_mode_if_needed(
+        self,
+        recommendations: list[tuple],
+        is_plan_mode: bool,
+        limit: int,
+        time_windows: list[Any] | None,
+        min_break_minutes: int,
+        max_gap_minutes: int | None,
+    ) -> list[tuple]:
+        """Apply Phase 4 plan optimization if goal mode requires it."""
+        if not is_plan_mode:
+            return recommendations
+        return self._optimize_session_plan(
+            recommendations=recommendations,
+            limit=limit,
+            time_windows=time_windows,
+            min_break_minutes=min_break_minutes,
+            max_gap_minutes=max_gap_minutes,
+        )
+
+    @staticmethod
+    def _extract_window_bounds(window: Any) -> tuple[datetime | None, datetime | None]:
+        """Extract (start, end) from TimeWindow objects or plain dicts."""
+        if isinstance(window, dict):
+            return window.get("start"), window.get("end")
+        return getattr(window, "start", None), getattr(window, "end", None)
+
+    def _build_time_windows_chroma_condition(self, time_windows: list[Any] | None) -> dict | None:
+        """Build Chroma OR condition for multiple time windows."""
+        return self._build_time_windows_conditions(time_windows)
+
+    async def _collect_soft_pass_candidates(
+        self,
+        query_embedding: list[float],
+        soft_search_limit: int,
+        nin_condition: dict | None,
+        time_windows: list[Any] | None,
+    ) -> list:
+        """Collect soft-pass candidates, splitting requests by window when provided."""
+        if not time_windows:
+            chroma_where_soft = self._combine_conditions(nin_condition, None)
+            if chroma_where_soft:
+                return await self.embedding_service.search_similar_sessions(
+                    query_embedding, limit=soft_search_limit, where=chroma_where_soft
+                )
+            return await self.embedding_service.search_similar_sessions(
+                query_embedding, limit=soft_search_limit
+            )
+
+        per_window_limit = max(1, soft_search_limit)
+        collected_results = []
+        for window in time_windows:
+            window_condition = self._build_time_windows_chroma_condition([window])
+            chroma_where_soft = self._combine_conditions(nin_condition, window_condition)
+            if chroma_where_soft:
+                results = await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=per_window_limit,
+                    where=chroma_where_soft,
+                )
+            else:
+                results = await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=per_window_limit,
+                )
+            collected_results.extend(results)
+
+        # Keep highest similarity hit per session.
+        deduped: dict[int, tuple[int, float, Any]] = {}
+        for session_id, similarity, metadata in collected_results:
+            current = deduped.get(session_id)
+            if current is None or similarity > current[1]:
+                deduped[session_id] = (session_id, similarity, metadata)
+        return list(deduped.values())
+
+    async def _recommend_with_semantic_search(
+        self,
+        db: Session,
+        query: str | None,
+        accepted_ids: list[int],
+        rejected_ids: list[int],
+        seen_ids: set[int],
+        candidate_limit: int,
+        event_id: int | None,
+        session_format: str | None,
+        tags: list[str] | None,
+        location: list[str] | None,
+        language: str | None,
+        duration_min: int | None,
+        duration_max: int | None,
+        time_windows: list[Any] | None,
+        liked_embedding_weight: float,
+        disliked_embedding_weight: float,
+        filter_mode: str,
+        filter_margin_weight: float,
+        soft_filter_limit_ratio: float,
+    ) -> tuple[list[tuple], dict[str, Any]]:
+        """Run semantic recommendation path (query/centroid + two-pass search + reranking)."""
+        query_embedding, semantic_similarity_enabled = await self._determine_query_embedding(
+            query=query,
+            accepted_ids=accepted_ids,
+            rejected_ids=rejected_ids,
+        )
+
+        metadata_conditions = self._build_chroma_conditions(
+            session_format=session_format,
+            tags=tags,
+            location=location,
+            language=language,
+            duration_min=duration_min,
+            duration_max=duration_max,
+        )
+        time_windows_condition = self._build_time_windows_chroma_condition(time_windows)
+        metadata_conditions = self._combine_conditions(metadata_conditions, time_windows_condition)
+
+        nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
+        chroma_where = self._combine_conditions(nin_condition, metadata_conditions)
+
+        try:
+            if chroma_where:
+                chroma_results_hard = await self.embedding_service.search_similar_sessions(
+                    query_embedding, limit=candidate_limit, where=chroma_where
+                )
+            else:
+                chroma_results_hard = await self.embedding_service.search_similar_sessions(
+                    query_embedding, limit=candidate_limit
+                )
+        except Exception as e:
+            logger.error("recommendation_chroma_search_failed", error=str(e))
+            raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
+
+        chroma_results_soft = []
+        soft_pass_triggered = False
+        soft_filter_threshold = candidate_limit * soft_filter_limit_ratio
+
+        if filter_mode == "soft" and len(chroma_results_hard) < soft_filter_threshold:
+            soft_pass_triggered = True
+            try:
+                soft_search_limit = max(
+                    candidate_limit * 2,
+                    int(candidate_limit / soft_filter_limit_ratio),
+                )
+                chroma_results_soft = await self._collect_soft_pass_candidates(
+                    query_embedding=query_embedding,
+                    soft_search_limit=soft_search_limit,
+                    nin_condition=nin_condition,
+                    time_windows=time_windows,
+                )
+                logger.info(
+                    "recommendation_soft_pass_enabled",
+                    hard_results=len(chroma_results_hard),
+                    soft_search_limit=soft_search_limit,
+                    soft_results_before_dedup=len(chroma_results_soft),
+                    soft_filter_threshold=soft_filter_threshold,
+                )
+            except Exception as e:
+                logger.warning("recommendation_soft_pass_search_failed", error=str(e))
+                chroma_results_soft = []
+
+        preference_embeddings = await self._prefetch_preference_embeddings(
+            accepted_ids=accepted_ids,
+            rejected_ids=rejected_ids,
+        )
+        recommendations = await self._process_chroma_recommendations(
+            chroma_results_hard=chroma_results_hard,
+            chroma_results_soft=chroma_results_soft,
+            db=db,
+            semantic_similarity_enabled=semantic_similarity_enabled,
+            liked_embeddings=preference_embeddings["liked"],
+            disliked_embeddings=preference_embeddings["disliked"],
+            liked_embedding_weight=liked_embedding_weight,
+            disliked_embedding_weight=disliked_embedding_weight,
+            event_id=event_id,
+            session_format=session_format,
+            tags=tags,
+            location=location,
+            language=language,
+            duration_min=duration_min,
+            duration_max=duration_max,
+            time_windows=time_windows,
+            filter_margin_weight=filter_margin_weight,
+            limit=candidate_limit,
+            soft_pass_triggered=soft_pass_triggered,
+        )
+
+        return recommendations, {
+            "hard_pass_results": len(chroma_results_hard),
+            "soft_pass_results": len(chroma_results_soft),
+            "soft_pass_triggered": soft_pass_triggered,
+        }
+
+    def _is_within_time_windows(
+        self,
+        session,
+        time_windows: list[Any] | None,
+    ) -> bool:
+        """Check if session fits entirely inside any configured time window."""
+        if not time_windows:
+            return True
+
+        for window in time_windows:
+            start, end = self._extract_window_bounds(window)
+            if start is None or end is None:
+                continue
+            if session.start_datetime >= start and session.end_datetime <= end:
+                return True
+        return False
+
+    def _has_required_break(
+        self,
+        session,
+        selected_session,
+        min_break_minutes: int,
+    ) -> bool:
+        """Check if candidate keeps minimum break distance from an already selected session."""
+        if min_break_minutes <= 0:
+            return True
+
+        if session.start_datetime >= selected_session.end_datetime:
+            gap_minutes = (
+                session.start_datetime - selected_session.end_datetime
+            ).total_seconds() / 60
+            return gap_minutes >= min_break_minutes
+
+        if selected_session.start_datetime >= session.end_datetime:
+            gap_minutes = (
+                selected_session.start_datetime - session.end_datetime
+            ).total_seconds() / 60
+            return gap_minutes >= min_break_minutes
+
+        return False
+
+    def _fits_non_overlap_constraints(
+        self,
+        session,
+        selected: list[tuple],
+        min_break_minutes: int,
+    ) -> bool:
+        """Ensure candidate doesn't overlap selected sessions and satisfies break constraints."""
+        for selected_session, _ in selected:
+            if DateTimeUtils.get_datetime_range_overlap(
+                session.start_datetime,
+                session.end_datetime,
+                selected_session.start_datetime,
+                selected_session.end_datetime,
+            ):
+                return False
+            if not self._has_required_break(session, selected_session, min_break_minutes):
+                return False
+        return True
+
+    def _fits_gap_constraint(
+        self,
+        session,
+        selected: list[tuple],
+        max_gap_minutes: int | None,
+    ) -> bool:
+        """Keep selected sessions reasonably connected when max gap is configured."""
+        if max_gap_minutes is None or not selected:
+            return True
+
+        min_gap_minutes = None
+        for selected_session, _ in selected:
+            if session.start_datetime >= selected_session.end_datetime:
+                gap = (session.start_datetime - selected_session.end_datetime).total_seconds() / 60
+            elif selected_session.start_datetime >= session.end_datetime:
+                gap = (selected_session.start_datetime - session.end_datetime).total_seconds() / 60
+            else:
+                continue
+
+            if min_gap_minutes is None or gap < min_gap_minutes:
+                min_gap_minutes = gap
+
+        if min_gap_minutes is None:
+            return True
+        return min_gap_minutes <= max_gap_minutes
+
+    def _optimize_session_plan(
+        self,
+        recommendations: list[tuple],
+        limit: int,
+        time_windows: list[Any] | None,
+        min_break_minutes: int,
+        max_gap_minutes: int | None,
+    ) -> list[tuple]:
+        """Select a non-overlapping recommendation plan using a deterministic greedy strategy."""
+        if not recommendations:
+            return []
+
+        ranked_candidates = sorted(
+            recommendations,
+            key=lambda item: (
+                -item[1]["overall_score"],
+                item[0].start_datetime,
+                item[0].end_datetime,
+                item[0].id,
+            ),
+        )
+
+        selected: list[tuple] = []
+        for session, scores in ranked_candidates:
+            if not self._is_within_time_windows(session, time_windows):
+                continue
+            if not self._fits_non_overlap_constraints(session, selected, min_break_minutes):
+                continue
+            if not self._fits_gap_constraint(session, selected, max_gap_minutes):
+                continue
+
+            plan_scores = dict(scores)
+            base_explanation = plan_scores.get("explanation") or ""
+            plan_scores["explanation"] = (
+                f"{base_explanation}, plan-mode: non-overlap selected".strip(", ")
+            )
+            selected.append((session, plan_scores))
+
+            if len(selected) >= limit:
+                break
+
+        selected.sort(key=lambda item: (item[0].start_datetime, item[0].id))
+        return selected
+
     async def _process_chroma_recommendations(
         self,
         chroma_results_hard: list,
@@ -653,10 +890,7 @@ class EmbeddingSearchService:
         language: str | None,
         duration_min: int | None,
         duration_max: int | None,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
+        time_windows: list[Any] | None,
         filter_margin_weight: float,
         limit: int,
         soft_pass_triggered: bool = False,
@@ -685,10 +919,7 @@ class EmbeddingSearchService:
             language: Optional language filter
             duration_min: Optional minimum duration
             duration_max: Optional maximum duration
-            start_after: Optional start datetime lower bound
-            start_before: Optional start datetime upper bound
-            end_after: Optional end datetime lower bound
-            end_before: Optional end datetime upper bound
+            time_windows: Optional list of window constraints
             filter_mode: "hard" (strict) or "soft" (margins)
             filter_margin_weight: Weight to blend compliance into score (Phase 3)
             limit: Max recommendations to return
@@ -733,10 +964,7 @@ class EmbeddingSearchService:
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
+                time_windows=time_windows,
                 chroma_id_to_embedding=chroma_id_to_embedding,
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 liked_embeddings=liked_embeddings,
@@ -821,10 +1049,7 @@ class EmbeddingSearchService:
         language: str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
-        start_after: Any | None = None,
-        start_before: Any | None = None,
-        end_after: Any | None = None,
-        end_before: Any | None = None,
+        time_windows: list[Any] | None = None,
         limit: int = 10,
     ) -> list[tuple]:
         """
@@ -849,10 +1074,7 @@ class EmbeddingSearchService:
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
+                time_windows=time_windows,
             )
 
             # Exclude rejected sessions and compute scores
@@ -1025,10 +1247,7 @@ class EmbeddingSearchService:
         language: str | None,
         duration_min: int | None,
         duration_max: int | None,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
+        time_windows: list[Any] | None,
         chroma_id_to_embedding: dict,
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
@@ -1069,10 +1288,7 @@ class EmbeddingSearchService:
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,
-                start_after=start_after,
-                start_before=start_before,
-                end_after=end_after,
-                end_before=end_before,
+                time_windows=time_windows,
             )
 
             scores = await self._compute_recommendation_scores(
@@ -1129,29 +1345,11 @@ class EmbeddingSearchService:
             return False
         return session.duration and session.duration <= duration_max
 
-    def _check_start_after(self, session, start_after: Any | None) -> bool:
-        """Check if session starts after datetime."""
-        if start_after is None:
+    def _check_time_windows(self, session, time_windows: list[Any] | None) -> bool:
+        """Check whether a session fits within any configured time window."""
+        if not time_windows:
             return False
-        return session.start_datetime >= start_after
-
-    def _check_start_before(self, session, start_before: Any | None) -> bool:
-        """Check if session starts before datetime."""
-        if start_before is None:
-            return False
-        return session.start_datetime <= start_before
-
-    def _check_end_after(self, session, end_after: Any | None) -> bool:
-        """Check if session ends after datetime."""
-        if end_after is None:
-            return False
-        return session.end_datetime >= end_after
-
-    def _check_end_before(self, session, end_before: Any | None) -> bool:
-        """Check if session ends before datetime."""
-        if end_before is None:
-            return False
-        return session.end_datetime <= end_before
+        return self._is_within_time_windows(session, time_windows)
 
     def _cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """
@@ -1193,10 +1391,7 @@ class EmbeddingSearchService:
         language: str | None,
         duration_min: int | None,
         duration_max: int | None,
-        start_after: Any | None,
-        start_before: Any | None,
-        end_after: Any | None,
-        end_before: Any | None,
+        time_windows: list[Any] | None,
     ) -> float:
         """
         Compute filter compliance score for a session (0-1).
@@ -1215,7 +1410,7 @@ class EmbeddingSearchService:
             location: Locations to check (matches if any location matches)
             language: Language to check
             duration_min/max: Duration bounds to check
-            start_after/before, end_after/before: Datetime bounds to check
+            time_windows: Time windows to check
 
         Returns:
             Compliance score (0-1), where 1.0 means all filters matched
@@ -1227,10 +1422,7 @@ class EmbeddingSearchService:
             (location is not None, self._check_location(session, location)),
             (duration_min is not None, self._check_duration_min(session, duration_min)),
             (duration_max is not None, self._check_duration_max(session, duration_max)),
-            (start_after is not None, self._check_start_after(session, start_after)),
-            (start_before is not None, self._check_start_before(session, start_before)),
-            (end_after is not None, self._check_end_after(session, end_after)),
-            (end_before is not None, self._check_end_before(session, end_before)),
+            (time_windows is not None, self._check_time_windows(session, time_windows)),
         ]
 
         matched = sum(check for is_active, check in filter_checks if is_active)

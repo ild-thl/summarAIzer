@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.database.models import EventStatus, SessionFormat, SessionStatus
 
@@ -242,6 +242,20 @@ class SessionWithEvent(SessionResponse):
     event: EventResponse | None = None
 
 
+class TimeWindow(BaseModel):
+    """Single time window with inclusive bounds."""
+
+    start: datetime = Field(..., description="Window start datetime (ISO 8601)")
+    end: datetime = Field(..., description="Window end datetime (ISO 8601)")
+
+    @model_validator(mode="after")
+    def validate_window_order(self):
+        """Ensure each window has valid ordering."""
+        if self.end <= self.start:
+            raise ValueError("time window end must be after start")
+        return self
+
+
 class RecommendRequest(BaseModel):
     """Request schema for session recommendations.
 
@@ -275,10 +289,6 @@ class RecommendRequest(BaseModel):
     language: str | None = Field(None, description="Filter by language (ISO 639-1 code)")
     duration_min: int | None = Field(None, ge=0, description="Minimum duration in minutes")
     duration_max: int | None = Field(None, ge=0, description="Maximum duration in minutes")
-    start_after: datetime | None = Field(None, description="Sessions starting after (ISO 8601)")
-    start_before: datetime | None = Field(None, description="Sessions starting before (ISO 8601)")
-    end_after: datetime | None = Field(None, description="Sessions ending after (ISO 8601)")
-    end_before: datetime | None = Field(None, description="Sessions ending before (ISO 8601)")
 
     # Phase 2: Tuning parameters for re-ranking
     liked_embedding_weight: float = Field(
@@ -319,6 +329,34 @@ class RecommendRequest(BaseModel):
         "require all filters to be met).",
     )
 
+    # Phase 4: Plan optimization mode (non-overlapping schedule curation)
+    goal_mode: Literal["similarity", "plan"] = Field(
+        default="similarity",
+        description="Recommendation goal: 'similarity' (default ranking) or 'plan' (non-overlapping schedule)",
+    )
+    time_windows: list[TimeWindow] | None = Field(
+        None,
+        description="Optional time windows used for filtering and plan mode. Sessions must fit entirely inside any window.",
+    )
+    min_break_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=240,
+        description="Minimum break in minutes required between sessions in plan mode",
+    )
+    max_gap_minutes: int | None = Field(
+        default=None,
+        ge=0,
+        le=720,
+        description="Optional maximum allowed gap in minutes between planned sessions",
+    )
+    plan_candidate_multiplier: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Multiplier for candidate pool size before plan optimization (limit * multiplier)",
+    )
+
     @field_validator("language", mode="before")
     @classmethod
     def normalize_language(cls, v: str | None) -> str | None:
@@ -326,6 +364,17 @@ class RecommendRequest(BaseModel):
         if v is None:
             return v
         return str(v).lower()
+
+    @model_validator(mode="after")
+    def validate_time_window(self):
+        """Validate plan-mode specific constraints."""
+        if (
+            self.goal_mode == "plan"
+            and self.time_windows is not None
+            and len(self.time_windows) == 0
+        ):
+            raise ValueError("time_windows must not be empty when provided")
+        return self
 
 
 class SessionWithScore(BaseModel):

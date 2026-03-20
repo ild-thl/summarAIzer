@@ -4,12 +4,13 @@ Tests the sophisticated recommendation engine with Phase 2 re-ranking,
 including centroid-based recommendations and embedding-driven scoring.
 """
 
+from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy.orm import Session
 
-from app.schemas.session import SessionStatus
+from app.schemas.session import RecommendRequest, SessionStatus
 from app.services.embedding_exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding_search_service import EmbeddingSearchService
 from app.services.embedding_service import EmbeddingService
@@ -519,6 +520,44 @@ class TestFullRecommendationPipeline:
             assert "where" in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_plan_mode_uses_plan_window_as_hard_filters(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Plan mode should apply time_windows as retrieval hard filters."""
+        mock_session = Mock(
+            id=1,
+            status=SessionStatus.PUBLISHED,
+            event_id=100,
+            start_datetime=datetime(2026, 3, 17, 10, 30, 0),
+            end_datetime=datetime(2026, 3, 17, 11, 0, 0),
+        )
+
+        with patch("app.services.embedding_search_service.session_crud") as mock_crud:
+            mock_crud.read.return_value = mock_session
+
+            await search_service.recommend_sessions(
+                query="machine learning",
+                db=mock_db_session,
+                accepted_ids=[],
+                rejected_ids=[],
+                goal_mode="plan",
+                time_windows=[
+                    {
+                        "start": datetime(2026, 3, 17, 10, 0, 0),
+                        "end": datetime(2026, 3, 17, 12, 0, 0),
+                    }
+                ],
+                limit=5,
+            )
+
+            call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+            where = call_kwargs.get("where")
+            assert where is not None
+            where_text = str(where)
+            assert "start_datetime" in where_text
+            assert "end_datetime" in where_text
+
+    @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
     async def test_full_pipeline_error_handling(self, search_service, mock_db_session):
         """Test that invalid query raises InvalidEmbeddingTextError."""
@@ -709,3 +748,116 @@ class TestDislikedSessionPenalty:
 
             # Should still work without errors
             assert isinstance(results, list)
+
+
+class TestPlanModeOptimization:
+    """Unit tests for Phase 4 plan-mode optimization."""
+
+    @pytest.fixture
+    def search_service(self):
+        service = AsyncMock(spec=EmbeddingService)
+        service.embedding_dimension = 768
+        return EmbeddingSearchService(service)
+
+    def _make_session(self, sid: int, start: datetime, end: datetime):
+        session = Mock()
+        session.id = sid
+        session.start_datetime = start
+        session.end_datetime = end
+        return session
+
+    def test_plan_mode_removes_overlaps(self, search_service):
+        """Plan mode should keep non-overlapping sessions only."""
+        base = datetime(2026, 3, 20, 10, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        s2 = self._make_session(2, base + timedelta(minutes=30), base + timedelta(minutes=90))
+        s3 = self._make_session(3, base + timedelta(minutes=95), base + timedelta(minutes=140))
+
+        recommendations = [
+            (s1, {"overall_score": 0.95, "explanation": "high"}),
+            (s2, {"overall_score": 0.94, "explanation": "overlap"}),
+            (s3, {"overall_score": 0.90, "explanation": "next"}),
+        ]
+
+        planned = search_service._optimize_session_plan(
+            recommendations=recommendations,
+            limit=3,
+            time_windows=None,
+            min_break_minutes=0,
+            max_gap_minutes=None,
+        )
+
+        ids = [session.id for session, _ in planned]
+        assert 1 in ids
+        assert 3 in ids
+        assert not ({1, 2}.issubset(set(ids)))
+
+    def test_plan_mode_respects_time_window(self, search_service):
+        """Plan mode should keep sessions inside configured planning windows."""
+        base = datetime(2026, 3, 20, 9, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=50))
+        s2 = self._make_session(2, base + timedelta(hours=1), base + timedelta(hours=2))
+        s3 = self._make_session(3, base + timedelta(hours=3), base + timedelta(hours=4))
+
+        recommendations = [
+            (s1, {"overall_score": 0.99, "explanation": "before window"}),
+            (s2, {"overall_score": 0.90, "explanation": "in window"}),
+            (s3, {"overall_score": 0.91, "explanation": "after window"}),
+        ]
+
+        planned = search_service._optimize_session_plan(
+            recommendations=recommendations,
+            limit=3,
+            time_windows=[
+                {
+                    "start": base + timedelta(minutes=55),
+                    "end": base + timedelta(hours=2, minutes=5),
+                }
+            ],
+            min_break_minutes=0,
+            max_gap_minutes=None,
+        )
+
+        ids = [session.id for session, _ in planned]
+        assert ids == [2]
+
+    def test_plan_mode_respects_min_break(self, search_service):
+        """Plan mode should enforce minimum break between sessions."""
+        base = datetime(2026, 3, 20, 10, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        s2 = self._make_session(2, base + timedelta(minutes=65), base + timedelta(minutes=120))
+        s3 = self._make_session(3, base + timedelta(minutes=80), base + timedelta(minutes=140))
+
+        recommendations = [
+            (s1, {"overall_score": 0.95, "explanation": "first"}),
+            (s2, {"overall_score": 0.94, "explanation": "short break"}),
+            (s3, {"overall_score": 0.93, "explanation": "enough break"}),
+        ]
+
+        planned = search_service._optimize_session_plan(
+            recommendations=recommendations,
+            limit=3,
+            time_windows=None,
+            min_break_minutes=15,
+            max_gap_minutes=None,
+        )
+
+        ids = [session.id for session, _ in planned]
+        assert 1 in ids
+        assert 2 not in ids
+
+
+class TestPlanRequestValidation:
+    """Validation tests for Phase 4 planning request fields."""
+
+    def test_plan_window_must_be_ordered(self):
+        with pytest.raises(ValueError, match="time window end must be after start"):
+            RecommendRequest(
+                goal_mode="plan",
+                time_windows=[
+                    {
+                        "start": datetime(2026, 3, 20, 12, 0, 0),
+                        "end": datetime(2026, 3, 20, 11, 0, 0),
+                    }
+                ],
+            )

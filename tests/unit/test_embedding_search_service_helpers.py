@@ -209,135 +209,59 @@ class TestFilterCheckMethods:
         result = EmbeddingSearchService._check_location(service, session, ["Room A", "Room B"])
         assert result is False
 
-    def test_check_start_after_passes(self):
-        """Test start_after check when session starts after the bound."""
+    def test_check_time_windows_passes(self):
+        """Test time window check when session fits within provided window."""
         from app.services.embedding_search_service import EmbeddingSearchService
 
-        service = MagicMock(spec=EmbeddingSearchService)
+        service = EmbeddingSearchService(MagicMock())
         now = datetime.utcnow()
-        session = MagicMock(start_datetime=now)
+        session = MagicMock(start_datetime=now, end_datetime=now + timedelta(minutes=30))
 
-        bound = now - timedelta(hours=1)
-        result = EmbeddingSearchService._check_start_after(service, session, bound)
+        window = {"start": now - timedelta(hours=1), "end": now + timedelta(hours=1)}
+        result = EmbeddingSearchService._check_time_windows(service, session, [window])
         assert result is True
 
-    def test_check_start_after_fails(self):
-        """Test start_after check when session starts before the bound."""
+    def test_check_time_windows_fails(self):
+        """Test time window check when session does not fit window."""
         from app.services.embedding_search_service import EmbeddingSearchService
 
-        service = MagicMock(spec=EmbeddingSearchService)
+        service = EmbeddingSearchService(MagicMock())
         now = datetime.utcnow()
-        session = MagicMock(start_datetime=now)
+        session = MagicMock(start_datetime=now, end_datetime=now + timedelta(minutes=30))
 
-        bound = now + timedelta(hours=1)
-        result = EmbeddingSearchService._check_start_after(service, session, bound)
-        assert result is False
-
-    def test_check_start_before_passes(self):
-        """Test start_before check when session starts before the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(start_datetime=now)
-
-        bound = now + timedelta(hours=1)
-        result = EmbeddingSearchService._check_start_before(service, session, bound)
-        assert result is True
-
-    def test_check_start_before_fails(self):
-        """Test start_before check when session starts after the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(start_datetime=now)
-
-        bound = now - timedelta(hours=1)
-        result = EmbeddingSearchService._check_start_before(service, session, bound)
-        assert result is False
-
-    def test_check_end_after_passes(self):
-        """Test end_after check when session ends after the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(end_datetime=now)
-
-        bound = now - timedelta(hours=1)
-        result = EmbeddingSearchService._check_end_after(service, session, bound)
-        assert result is True
-
-    def test_check_end_after_fails(self):
-        """Test end_after check when session ends before the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(end_datetime=now)
-
-        bound = now + timedelta(hours=1)
-        result = EmbeddingSearchService._check_end_after(service, session, bound)
-        assert result is False
-
-    def test_check_end_before_passes(self):
-        """Test end_before check when session ends before the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(end_datetime=now)
-
-        bound = now + timedelta(hours=1)
-        result = EmbeddingSearchService._check_end_before(service, session, bound)
-        assert result is True
-
-    def test_check_end_before_fails(self):
-        """Test end_before check when session ends after the bound."""
-        from app.services.embedding_search_service import EmbeddingSearchService
-
-        service = MagicMock(spec=EmbeddingSearchService)
-        now = datetime.utcnow()
-        session = MagicMock(end_datetime=now)
-
-        bound = now - timedelta(hours=1)
-        result = EmbeddingSearchService._check_end_before(service, session, bound)
+        window = {"start": now + timedelta(hours=1), "end": now + timedelta(hours=2)}
+        result = EmbeddingSearchService._check_time_windows(service, session, [window])
         assert result is False
 
 
-@pytest.mark.asyncio
 class TestComputeLikedSimilarity:
     """Test _compute_liked_similarity helper (Phase 2 re-ranking)."""
 
-    async def test_liked_similarity_empty_accepted(self):
-        """Test liked similarity with no accepted sessions."""
+    def test_liked_similarity_empty_embeddings(self):
+        """Test liked similarity with no liked embeddings."""
         from app.services.embedding_search_service import EmbeddingSearchService
 
         service = MagicMock(spec=EmbeddingSearchService)
         query_embedding = [0.1, 0.2, 0.3]
 
-        similarity = await EmbeddingSearchService._compute_liked_similarity(
-            service, query_embedding, []
-        )
+        similarity = EmbeddingSearchService._compute_liked_similarity(service, query_embedding, {})
 
         # Should return 0 or None when empty
         assert similarity == 0.0 or similarity is None
 
 
-@pytest.mark.asyncio
 class TestComputeDislikedSimilarity:
     """Test _compute_disliked_similarity helper (Phase 2 de-ranking)."""
 
-    async def test_disliked_similarity_empty_rejected(self):
-        """Test disliked similarity with no rejected sessions."""
+    def test_disliked_similarity_empty_embeddings(self):
+        """Test disliked similarity with no disliked embeddings."""
         from app.services.embedding_search_service import EmbeddingSearchService
 
         service = MagicMock(spec=EmbeddingSearchService)
         query_embedding = [0.1, 0.2, 0.3]
 
-        similarity = await EmbeddingSearchService._compute_disliked_similarity(
-            service, query_embedding, []
+        similarity = EmbeddingSearchService._compute_disliked_similarity(
+            service, query_embedding, {}
         )
 
         # Should return 0 or None when empty

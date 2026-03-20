@@ -82,10 +82,10 @@ async def search_similar_sessions(
     language: str | None = Query(None, description="Filter by language (ISO 639-1 code)"),
     duration_min: int | None = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int | None = Query(None, ge=0, description="Maximum duration in minutes"),
-    start_after: str | None = Query(None, description="Sessions starting after (ISO 8601)"),
-    start_before: str | None = Query(None, description="Sessions starting before (ISO 8601)"),
-    end_after: str | None = Query(None, description="Sessions ending after (ISO 8601)"),
-    end_before: str | None = Query(None, description="Sessions ending before (ISO 8601)"),
+    time_windows: str | None = Query(
+        None,
+        description='JSON array of time windows, e.g. [{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]',
+    ),
     db: Session = Depends(get_db),
 ):
     """
@@ -103,19 +103,16 @@ async def search_similar_sessions(
     - **language**: Optional filter by language code (applied via Chroma metadata)
     - **duration_min**: Optional minimum duration in minutes
     - **duration_max**: Optional maximum duration in minutes
-    - **start_after**: Optional sessions starting after date (ISO 8601, e.g., 2024-01-01T00:00:00)
-    - **start_before**: Optional sessions starting before date (ISO 8601)
-    - **end_after**: Optional sessions ending after date (ISO 8601)
-    - **end_before**: Optional sessions ending before date (ISO 8601)
+    - **time_windows**: Optional JSON array of windows; sessions must fit within at least one window
 
     **Examples:**
     - `/api/v2/sessions/search/similar?query=machine+learning`
     - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
     - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=talk`
     - `/api/v2/sessions/search/similar?query=keynote&location=Landing:Stage+Berlin,AI:Stage+TU+Graz`
-    - `/api/v2/sessions/search/similar?query=workshop&start_after=2024-06-01T10:00:00&end_before=2024-06-01T11:30:00` (timeframe)
+    - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (timeframe)
     - `/api/v2/sessions/search/similar?query=learning&duration_min=30&duration_max=90`
-    - `/api/v2/sessions/search/similar?query=workshop&start_after=2024-01-01&start_before=2024-12-31`
+    - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-01-01T00:00:00","end":"2024-12-31T23:59:59"}]`
     """
     from app.services.embedding_exceptions import (
         EmbeddingError,
@@ -131,10 +128,8 @@ async def search_similar_sessions(
         )
         normalized_language = language.lower() if language else None
 
-        # Parse datetime filters using helper
-        start_after_dt, start_before_dt, end_after_dt, end_before_dt = (
-            DateTimeUtils.parse_datetime_filters(start_after, start_before, end_after, end_before)
-        )
+        # Parse unified time windows
+        parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
 
         # Get search service and invoke
         search_service = get_search_service()
@@ -151,10 +146,7 @@ async def search_similar_sessions(
             language=normalized_language,
             duration_min=duration_min,
             duration_max=duration_max,
-            start_after=start_after_dt,
-            start_before=start_before_dt,
-            end_after=end_after_dt,
-            end_before=end_before_dt,
+            time_windows=parsed_time_windows,
         )
 
         logger.info(
@@ -170,10 +162,7 @@ async def search_similar_sessions(
                 or language
                 or duration_min
                 or duration_max
-                or start_after_dt
-                or start_before_dt
-                or end_after_dt
-                or end_before_dt
+                or parsed_time_windows
             ),
         )
 
@@ -227,7 +216,12 @@ async def recommend_sessions(
     - **accepted_ids**: List of session IDs the user has liked or want to get more like
     - **rejected_ids**: List of session IDs the user has disliked (excluded from results)
     - **limit**: Max recommendations (1-100)
-    - **Filters**: All standard session filters (format, language, duration, etc.) apply as hard constraints
+    - **Filters**: Format/language/tags/location/duration filters apply as hard constraints
+    - **goal_mode**: `similarity` (default) or `plan` (build non-overlapping session schedule)
+    - **time_windows**: Optional list of time windows used for filtering and in `plan` mode
+    - **min_break_minutes**: Minimum break between selected sessions in `plan` mode
+    - **max_gap_minutes**: Optional max allowed gap between selected sessions in `plan` mode
+    - **plan_candidate_multiplier**: Candidate pool expansion factor before plan optimization
 
     **Examples:**
     - Basic: User did not like sessions [1, 2] and liked session [5], give me more like [5]
@@ -254,11 +248,39 @@ async def recommend_sessions(
       {
         "accepted_ids": [42],
         "rejected_ids": [],
-        "start_after": "2024-06-01T10:00:00",
-        "end_before": "2024-06-01T11:30:00",
+                "goal_mode": "plan",
+                "time_windows": [{"start": "2024-06-01T10:00:00", "end": "2024-06-01T11:30:00"}],
         "limit": 5
       }
       ```
+        - Plan mode: Build a non-overlapping schedule for a multi-day event
+            ```json
+            {
+                "query": "machine learning",
+                "goal_mode": "plan",
+                "time_windows": [
+                    {"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"},
+                    {"start": "2024-06-02T09:00:00", "end": "2024-06-02T18:00:00"},
+                    {"start": "2024-06-03T09:00:00", "end": "2024-06-03T17:00:00"}
+                ],
+                "min_break_minutes": 15,
+                "max_gap_minutes": 90,
+                "plan_candidate_multiplier": 4,
+                "limit": 5
+            }
+            ```
+        - Plan mode without query: Build a schedule from liked sessions and filters
+            ```json
+            {
+                "accepted_ids": [10, 14],
+                "goal_mode": "plan",
+                "time_windows": [{"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"}],
+                "session_format": "workshop",
+                "language": "en",
+                "min_break_minutes": 10,
+                "limit": 4
+            }
+            ```
     """
     from app.services.embedding_exceptions import (
         EmbeddingError,
@@ -270,12 +292,6 @@ async def recommend_sessions(
     try:
         # Validate request
         recommend_req = request_body
-
-        # Parse datetime values from request body (may be datetime objects or strings)
-        start_after_dt = DateTimeUtils.parse_datetime_or_none(recommend_req.start_after)
-        start_before_dt = DateTimeUtils.parse_datetime_or_none(recommend_req.start_before)
-        end_after_dt = DateTimeUtils.parse_datetime_or_none(recommend_req.end_after)
-        end_before_dt = DateTimeUtils.parse_datetime_or_none(recommend_req.end_before)
 
         # Get search service
         search_service = get_search_service()
@@ -294,15 +310,16 @@ async def recommend_sessions(
             language=recommend_req.language,
             duration_min=recommend_req.duration_min,
             duration_max=recommend_req.duration_max,
-            start_after=start_after_dt,
-            start_before=start_before_dt,
-            end_after=end_after_dt,
-            end_before=end_before_dt,
             liked_embedding_weight=recommend_req.liked_embedding_weight,
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
             filter_mode=recommend_req.filter_mode,
             filter_margin_weight=recommend_req.filter_margin_weight,
             soft_filter_limit_ratio=recommend_req.soft_filter_limit_ratio,
+            goal_mode=recommend_req.goal_mode,
+            time_windows=recommend_req.time_windows,
+            min_break_minutes=recommend_req.min_break_minutes,
+            max_gap_minutes=recommend_req.max_gap_minutes,
+            plan_candidate_multiplier=recommend_req.plan_candidate_multiplier,
         )
 
         logger.info(
