@@ -285,10 +285,14 @@ class RecommendRequest(BaseModel):
 
     # Optional filters (same as search endpoint)
     event_id: int | None = Field(None, description="Filter by event ID")
-    session_format: str | None = Field(None, description="Filter by session format")
+    session_format: list[str] | None = Field(
+        None, description="Filter by session format (OR logic)"
+    )
     tags: list[str] | None = Field(None, description="Filter by tags (OR logic)")
     location: list[str] | None = Field(None, description="Filter by location (OR logic)")
-    language: str | None = Field(None, description="Filter by language (ISO 639-1 code)")
+    language: list[str] | None = Field(
+        None, description="Filter by language codes (OR logic, ISO 639-1)"
+    )
     duration_min: int | None = Field(None, ge=0, description="Minimum duration in minutes")
     duration_max: int | None = Field(None, ge=0, description="Maximum duration in minutes")
 
@@ -352,11 +356,13 @@ class RecommendRequest(BaseModel):
 
     @field_validator("language", mode="before")
     @classmethod
-    def normalize_language(cls, v: str | None) -> str | None:
-        """Normalize language code to lowercase for consistency."""
+    def normalize_language(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize language codes to lowercase for consistency."""
         if v is None:
             return v
-        return str(v).lower()
+        if isinstance(v, str):
+            return [v.lower()]
+        return [str(code).lower() for code in v] if v else None
 
     @model_validator(mode="after")
     def validate_time_window(self):

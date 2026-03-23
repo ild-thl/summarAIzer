@@ -12,16 +12,16 @@ class RecommendationFilterEvaluator:
         self.planner = planner
 
     @staticmethod
-    def check_format(session, session_format: str | None) -> bool:
-        if session_format is None:
+    def check_format(session, session_format: list[str] | None) -> bool:
+        if not session_format:
             return False
-        return bool(session.session_format and session.session_format.value == session_format)
+        return bool(session.session_format and session.session_format.value in session_format)
 
     @staticmethod
-    def check_language(session, language: str | None) -> bool:
-        if language is None:
+    def check_language(session, language: list[str] | None) -> bool:
+        if not language:
             return False
-        return session.language == language
+        return session.language in language
 
     @staticmethod
     def check_tags(session, tags: list[str] | None) -> bool:
@@ -56,10 +56,10 @@ class RecommendationFilterEvaluator:
     def compute_filter_compliance_score(
         self,
         session,
-        session_format: str | None,
+        session_format: list[str] | None,
         tags: list[str] | None,
         location: list[str] | None,
-        language: str | None,
+        language: list[str] | None,
         duration_min: int | None,
         duration_max: int | None,
         time_windows: list[Any] | None,

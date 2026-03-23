@@ -29,10 +29,10 @@ class RecommendationQueryParams:
     accepted_ids: list[int]
     rejected_ids: list[int]
     event_id: int | None = None
-    session_format: str | None = None
+    session_format: list[str] | None = None
     tags: list[str] | None = None
     location: list[str] | None = None
-    language: str | None = None
+    language: list[str] | None = None
     duration_min: int | None = None
     duration_max: int | None = None
     liked_embedding_weight: float = 0.3
@@ -110,16 +110,27 @@ class RecommendationService:
 
     @staticmethod
     def _build_simple_conditions(
-        session_format: str | None,
-        language: str | None,
+        session_format: list[str] | None,
+        language: list[str] | None,
         duration_min: int | None,
         duration_max: int | None,
     ) -> list[dict]:
         conditions = []
+
+        # Handle session_format as OR condition
         if session_format:
-            conditions.append({"session_format": session_format})
+            if len(session_format) == 1:
+                conditions.append({"session_format": session_format[0]})
+            else:
+                conditions.append({"$or": [{"session_format": fmt} for fmt in session_format]})
+
+        # Handle language as OR condition
         if language:
-            conditions.append({"language": language})
+            if len(language) == 1:
+                conditions.append({"language": language[0]})
+            else:
+                conditions.append({"$or": [{"language": lang} for lang in language]})
+
         if duration_min is not None:
             conditions.append({"duration": {"$gte": duration_min}})
         if duration_max is not None:
@@ -128,10 +139,10 @@ class RecommendationService:
 
     def _build_chroma_conditions(
         self,
-        session_format: str | None = None,
+        session_format: list[str] | None = None,
         tags: list[str] | None = None,
         location: list[str] | None = None,
-        language: str | None = None,
+        language: list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         time_windows: list[Any] | None = None,
@@ -424,10 +435,10 @@ class RecommendationService:
         query: str | None = None,
         limit: int = 10,
         event_id: int | None = None,
-        session_format: str | None = None,
+        session_format: list[str] | None = None,
         tags: list[str] | None = None,
         location: list[str] | None = None,
-        language: str | None = None,
+        language: list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         liked_embedding_weight: float = 0.3,
