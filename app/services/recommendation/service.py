@@ -13,7 +13,6 @@ from app.crud.session import session_crud
 from app.database.models import SessionStatus
 from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding.service import EmbeddingService
-from app.services.recommendation.candidates import RecommendationCandidateCollector
 from app.services.recommendation.filters import RecommendationFilterEvaluator
 from app.services.recommendation.planning import RecommendationPlanner
 from app.services.recommendation.scoring import RecommendationScoreEngine
@@ -29,11 +28,6 @@ class RecommendationService:
         self.recommendation_planner = RecommendationPlanner()
         self.filter_evaluator = RecommendationFilterEvaluator(self.recommendation_planner)
         self.score_engine = RecommendationScoreEngine()
-        self.candidate_collector = RecommendationCandidateCollector(
-            search_similar_sessions=self.embedding_service.search_similar_sessions,
-            combine_conditions=self._combine_conditions,
-            build_time_windows_condition=self._build_time_windows_chroma_condition,
-        )
 
     @staticmethod
     def _extract_window_bounds(window: Any) -> tuple[datetime | None, datetime | None]:
@@ -41,28 +35,6 @@ class RecommendationService:
         if isinstance(window, dict):
             return window.get("start"), window.get("end")
         return getattr(window, "start", None), getattr(window, "end", None)
-
-    @staticmethod
-    def _has_active_filters(
-        event_id: int | None,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        time_windows: list[Any] | None,
-    ) -> bool:
-        return bool(
-            event_id
-            or session_format
-            or tags
-            or location
-            or language
-            or duration_min
-            or duration_max
-            or time_windows
-        )
 
     @staticmethod
     def _combine_conditions(condition1: dict | None, condition2: dict | None) -> dict | None:
@@ -165,9 +137,6 @@ class RecommendationService:
             return all_conditions[0]
         return {"$and": all_conditions}
 
-    def _build_time_windows_chroma_condition(self, time_windows: list[Any] | None) -> dict | None:
-        return self._build_time_windows_conditions(time_windows)
-
     def _apply_plan_mode_if_needed(
         self,
         recommendations: list[tuple],
@@ -219,7 +188,7 @@ class RecommendationService:
         duration_max: int | None = None,
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
-        filter_mode: str = "soft",
+        filter_mode: str = "hard",
         filter_margin_weight: float = 0.1,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
@@ -354,7 +323,7 @@ class RecommendationService:
             duration_min=duration_min,
             duration_max=duration_max,
         )
-        time_windows_condition = self._build_time_windows_chroma_condition(time_windows)
+        time_windows_condition = self._build_time_windows_conditions(time_windows)
         metadata_conditions = self._combine_conditions(metadata_conditions, time_windows_condition)
 
         nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
@@ -435,12 +404,46 @@ class RecommendationService:
         nin_condition: dict | None,
         time_windows: list[Any] | None,
     ) -> list:
-        return await self.candidate_collector.collect_soft_pass_candidates(
-            query_embedding=query_embedding,
-            soft_search_limit=soft_search_limit,
-            nin_condition=nin_condition,
-            time_windows=time_windows,
-        )
+        if not time_windows:
+            chroma_where_soft = self._combine_conditions(nin_condition, None)
+            if chroma_where_soft:
+                return await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=soft_search_limit,
+                    where=chroma_where_soft,
+                )
+            return await self.embedding_service.search_similar_sessions(
+                query_embedding,
+                limit=soft_search_limit,
+            )
+
+        per_window_limit = max(1, soft_search_limit // len(time_windows))
+        collected_results = []
+        for window in time_windows:
+            window_condition = self._build_time_windows_conditions([window])
+            chroma_where_soft = self._combine_conditions(nin_condition, window_condition)
+            if chroma_where_soft:
+                results = await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=per_window_limit,
+                    where=chroma_where_soft,
+                )
+            else:
+                results = await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=per_window_limit,
+                )
+            collected_results.extend(results)
+
+        deduped: dict[int, tuple[int, float, Any]] = {}
+        for session_id, similarity, metadata in collected_results:
+            current = deduped.get(session_id)
+            if current is None or similarity > current[1]:
+                deduped[session_id] = (session_id, similarity, metadata)
+
+        deduped_results = list(deduped.values())
+        deduped_results.sort(key=lambda item: item[1], reverse=True)
+        return deduped_results[:soft_search_limit]
 
     async def _determine_query_embedding(
         self,
@@ -489,7 +492,7 @@ class RecommendationService:
         duration_min: int | None = None,
         duration_max: int | None = None,
         time_windows: list[Any] | None = None,
-        filter_mode: str = "soft",
+        filter_mode: str = "hard",
         filter_margin_weight: float = 0.1,
         limit: int = 10,
     ) -> list[tuple]:
@@ -832,27 +835,6 @@ class RecommendationService:
             recommendations.append((session, scores, "soft"))
             if len(recommendations) >= limit:
                 break
-
-    def _check_format(self, session, session_format: str | None) -> bool:
-        return self.filter_evaluator.check_format(session, session_format)
-
-    def _check_language(self, session, language: str | None) -> bool:
-        return self.filter_evaluator.check_language(session, language)
-
-    def _check_tags(self, session, tags: list[str] | None) -> bool:
-        return self.filter_evaluator.check_tags(session, tags)
-
-    def _check_location(self, session, location: list[str] | None) -> bool:
-        return self.filter_evaluator.check_location(session, location)
-
-    def _check_duration_min(self, session, duration_min: int | None) -> bool:
-        return self.filter_evaluator.check_duration_min(session, duration_min)
-
-    def _check_duration_max(self, session, duration_max: int | None) -> bool:
-        return self.filter_evaluator.check_duration_max(session, duration_max)
-
-    def _check_time_windows(self, session, time_windows: list[Any] | None) -> bool:
-        return self.filter_evaluator.check_time_windows(session, time_windows)
 
     def _compute_filter_compliance_score(
         self,

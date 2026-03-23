@@ -71,30 +71,36 @@ class TestFilterCheckMethods:
     def test_check_format_match(self, service):
         session = MagicMock()
         session.session_format = MagicMock(value="workshop")
-        assert service._check_format(session, "workshop") is True
+        assert service.filter_evaluator.check_format(session, "workshop") is True
 
     def test_check_format_mismatch(self, service):
         session = MagicMock()
         session.session_format = MagicMock(value="talk")
-        assert service._check_format(session, "workshop") is False
+        assert service.filter_evaluator.check_format(session, "workshop") is False
 
     def test_check_language_match(self, service):
-        assert service._check_language(MagicMock(language="en"), "en") is True
+        assert service.filter_evaluator.check_language(MagicMock(language="en"), "en") is True
 
     def test_check_duration_min_fails(self, service):
-        assert service._check_duration_min(MagicMock(duration=60), 90) is False
+        assert service.filter_evaluator.check_duration_min(MagicMock(duration=60), 90) is False
 
     def test_check_tags_with_match(self, service):
-        assert service._check_tags(MagicMock(tags=["python"]), ["python", "go"]) is True
+        assert (
+            service.filter_evaluator.check_tags(MagicMock(tags=["python"]), ["python", "go"])
+            is True
+        )
 
     def test_check_location_no_match(self, service):
-        assert service._check_location(MagicMock(location="Room C"), ["Room A"]) is False
+        assert (
+            service.filter_evaluator.check_location(MagicMock(location="Room C"), ["Room A"])
+            is False
+        )
 
     def test_check_time_windows_passes(self, service):
         now = datetime.utcnow()
         session = MagicMock(start_datetime=now, end_datetime=now + timedelta(minutes=30))
         window = {"start": now - timedelta(hours=1), "end": now + timedelta(hours=1)}
-        assert service._check_time_windows(session, [window]) is True
+        assert service.filter_evaluator.check_time_windows(session, [window]) is True
 
     def test_filter_compliance_handles_missing_optional_fields(self, service):
         now = datetime.utcnow()
