@@ -266,6 +266,8 @@ class RecommendRequest(BaseModel):
     - With rejected_ids only: Applies exclusion to basic filtered list
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     query: str | None = Field(
         None,
         max_length=8000,
@@ -292,14 +294,14 @@ class RecommendRequest(BaseModel):
 
     # Phase 2: Tuning parameters for re-ranking
     liked_embedding_weight: float = Field(
-        default=0.3,
+        default=0.2,
         ge=0.0,
         le=1.0,
         description="Weight (a) to boost sessions similar to liked sessions (0-1). "
         "Higher = more influence from liked session similarities. Default 0.3",
     )
     disliked_embedding_weight: float = Field(
-        default=0.2,
+        default=0.3,
         ge=0.0,
         le=1.0,
         description="Weight (b) to penalize sessions similar to disliked sessions (0-1). "
@@ -308,27 +310,18 @@ class RecommendRequest(BaseModel):
 
     # Phase 3: Soft filter margins
     filter_mode: Literal["hard", "soft"] = Field(
-        default="hard",
-        description="Filter enforcement mode: 'hard' = strictly match all filters (default), "
-        "'soft' = find exact matches first, then fill gaps with near-matches that partially match filters",
+        default="soft",
+        description="Filter enforcement mode: 'hard' = strictly match all filters, "
+        "'soft' = use soft candidate retrieval and score by filter compliance",
     )
     filter_margin_weight: float = Field(
         default=0.1,
         ge=0.0,
         le=1.0,
-        description="When filter_mode='soft', weight to blend filter_match_ratio into overall_score (0-1). "
+        description="When filter_mode='soft', weight to blend filter_compliance_score into overall_score (0-1). "
         "Default 0.1 means filter compliance contributes 10% to final score. Set to 0.0 if using soft "
         "mode only to expand candidate pool (compliance shown in response but not scored).",
     )
-    soft_filter_limit_ratio: float = Field(
-        default=0.5,
-        ge=0.1,
-        le=1.0,
-        description="When filter_mode='soft', if hard-filter results < limit * ratio, enable soft-filter pass. "
-        "Default 0.5: if limit=10 and hard results < 5, do soft pass. Set to 1.0 to always use soft (harder to "
-        "require all filters to be met).",
-    )
-
     # Phase 4: Plan optimization mode (non-overlapping schedule curation)
     goal_mode: Literal["similarity", "plan"] = Field(
         default="similarity",
@@ -397,18 +390,9 @@ class SessionWithScore(BaseModel):
         le=1,
         description="Similarity to disliked sessions (0-1, None if no disliked sessions)",
     )
-    filter_match_ratio: float = Field(
-        default=1.0,
-        ge=0,
-        le=1,
-        description="Ratio of matched filters (0-1, 1.0 = all filters matched)",
-    )
     filter_compliance_score: float | None = Field(
         None,
         ge=0,
         le=1,
         description="Phase 3 - Filter compliance for soft-filter margins (0-1, None if hard filter mode)",
-    )
-    explanation: str | None = Field(
-        None, description="Human-readable explanation of why this session was recommended"
     )

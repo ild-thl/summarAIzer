@@ -24,7 +24,7 @@ class RecommendationScoreEngine:
         if score_inputs.semantic_sim is None:
             return None
         semantic = score_inputs.semantic_sim
-        return semantic, 1.0, f"semantic: {semantic:.3f}"
+        return semantic, 1.0
 
     @staticmethod
     def _liked_component(score_inputs: _ScoreInputs, weights: dict[str, float]) -> tuple | None:
@@ -35,7 +35,6 @@ class RecommendationScoreEngine:
         return (
             liked_cluster_sim,
             weight,
-            f"liked-cluster: {liked_cluster_sim:.3f} (weight: {weight:.1f})",
         )
 
     @staticmethod
@@ -48,7 +47,6 @@ class RecommendationScoreEngine:
         return (
             inverted_disliked,
             weight,
-            f"disliked-penalty: {disliked_sim:.3f} (weight: {weight:.1f})",
         )
 
     @staticmethod
@@ -62,7 +60,6 @@ class RecommendationScoreEngine:
         return (
             filter_compliance_score,
             weight,
-            f"filter-compliance: {filter_compliance_score:.3f} (weight: {weight:.1f})",
         )
 
     @classmethod
@@ -83,10 +80,9 @@ class RecommendationScoreEngine:
         filter_compliance_score: float | None,
         weights: dict[str, float],
     ) -> tuple[list, list, list]:
-        """Build component vectors and explanation strings for weighted aggregation."""
+        """Build component vectors for weighted aggregation."""
         components: list[float] = []
         component_weights: list[float] = []
-        explanations: list[str] = []
 
         score_inputs = _ScoreInputs(
             semantic_sim=semantic_sim,
@@ -101,12 +97,11 @@ class RecommendationScoreEngine:
             component_result = strategy(score_inputs, weights)
             if component_result is None:
                 continue
-            component, component_weight, explanation = component_result
+            component, component_weight = component_result
             components.append(component)
             component_weights.append(component_weight)
-            explanations.append(explanation)
 
-        return components, component_weights, explanations
+        return components, component_weights
 
     @staticmethod
     def calculate_overall_score(components: list[float], weights: list[float]) -> float:

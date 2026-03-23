@@ -763,7 +763,6 @@ class TestRecommendationAPI:
                 assert "overall_score" in result
                 assert 0 <= result["overall_score"] <= 1
                 assert "semantic_similarity" in result
-                assert "explanation" in result
 
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_with_liked_sessions(self, client, recommendation_sessions):
@@ -834,7 +833,6 @@ class TestRecommendationAPI:
             for result in results:
                 assert result["overall_score"] == 1.0
                 assert result["semantic_similarity"] is None
-                assert "Matched all specified filters" in result["explanation"]
 
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_with_format_filter(self, client, recommendation_sessions):
@@ -1063,7 +1061,6 @@ class TestRecommendationAPI:
             for results in [results1, results2]:
                 for result in results:
                     assert 0 <= result["overall_score"] <= 1
-                    assert "explanation" in result
 
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_phase2_zero_weights(self, client, recommendation_sessions):
@@ -1085,7 +1082,6 @@ class TestRecommendationAPI:
             for result in results:
                 # With zero weights, overall_score should be base_score (semantic_similarity or 0.5)
                 assert 0 <= result["overall_score"] <= 1
-                assert result["explanation"] is not None
 
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_phase2_query_plus_reranking(self, client, recommendation_sessions):
@@ -1176,7 +1172,6 @@ class TestRecommendationAPI:
                 "limit": 5,
                 "filter_mode": "soft",
                 "filter_margin_weight": 0.15,
-                "soft_filter_limit_ratio": 0.5,
                 "language": "en",
             },
         )
@@ -1219,34 +1214,6 @@ class TestRecommendationAPI:
         assert response2.status_code in [200, 503]
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_soft_filter_limit_ratio_parameter_range(self, client):
-        """Test that soft_filter_limit_ratio parameter accepts valid range."""
-        # Test minimum ratio
-        response1 = client.post(
-            "/api/v2/sessions/recommend",
-            json={
-                "query": "advanced",
-                "limit": 10,
-                "filter_mode": "soft",
-                "filter_margin_weight": 0.1,
-                "soft_filter_limit_ratio": 0.1,
-            },
-        )
-        assert response1.status_code in [200, 503]
-
-        # Test maximum ratio
-        response2 = client.post(
-            "/api/v2/sessions/recommend",
-            json={
-                "query": "advanced",
-                "limit": 10,
-                "filter_mode": "soft",
-                "filter_margin_weight": 0.1,
-                "soft_filter_limit_ratio": 1.0,
-            },
-        )
-        assert response2.status_code in [200, 503]
-
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_phase3_phase2_plus_phase3_integration(self, client, recommendation_sessions):
         """Test that Phase 2 re-ranking and Phase 3 compliance work together."""
@@ -1264,7 +1231,6 @@ class TestRecommendationAPI:
                 # Phase 3 parameters
                 "filter_mode": "soft",
                 "filter_margin_weight": 0.1,
-                "soft_filter_limit_ratio": 0.5,
                 # Filters
                 "language": "en",
             },
@@ -1311,7 +1277,6 @@ class TestRecommendationAPI:
                 "limit": 10,
                 "filter_mode": "soft",
                 "filter_margin_weight": 0.2,
-                "soft_filter_limit_ratio": 0.5,
                 # Multiple filters
                 "session_format": "workshop",
                 "language": "en",
@@ -1329,17 +1294,8 @@ class TestRecommendationAPI:
                 assert "filter_compliance_score" in result
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_two_pass_logic_expansion(self, client):
-        """Test that soft mode expands results when hard filters return too few.
-
-        This test verifies the core two-pass logic:
-        1. Hard pass: Apply all filters strictly
-        2. Soft pass: If hard results < threshold, re-search without filters
-        3. Compliance: Compute filter_compliance_score for soft results
-        4. Re-ranking: Sort all results by overall_score, return top limit
-        """
-        # Search with very restrictive filters to trigger soft pass
-        # Using filters that few sessions will match
+    def test_phase3_soft_mode_direct_expansion(self, client):
+        """Test that soft mode retrieves candidates directly without hard-pass gating."""
         response_soft = client.post(
             "/api/v2/sessions/recommend",
             json={
@@ -1347,7 +1303,6 @@ class TestRecommendationAPI:
                 "limit": 10,
                 "filter_mode": "soft",
                 "filter_margin_weight": 0.15,
-                "soft_filter_limit_ratio": 0.3,  # Trigger soft pass if hard < 3
                 # Restrictive format filter
                 "session_format": "diskussion",  # Only "ai-ethics" has this
                 "language": "en",
@@ -1359,7 +1314,7 @@ class TestRecommendationAPI:
             soft_results = response_soft.json()
 
             # With soft mode, we expect to get some results
-            # (either from hard pass or soft pass expansion)
+            # from direct soft-pass retrieval
             if len(soft_results) > 0:
                 # Check that results are properly formatted
                 for result in soft_results:
@@ -1370,8 +1325,7 @@ class TestRecommendationAPI:
                         or result["filter_compliance_score"] is None
                     )
 
-                    # Hard pass results should have format=diskussion
-                    # Soft pass results may not match the format filter
+                    # Soft-mode results may not strictly match all filters.
                     if result["session"]["session_format"]:
                         assert isinstance(result["session"]["session_format"], str)
 
@@ -1418,7 +1372,6 @@ class TestRecommendationAPI:
                 "limit": 10,
                 "filter_mode": "soft",
                 "filter_margin_weight": 0.2,
-                "soft_filter_limit_ratio": 0.2,  # More likely to trigger soft pass
                 "session_format": "workshop",
                 "language": "en",
             },

@@ -174,8 +174,6 @@ async def search_similar_sessions(
                 semantic_similarity=scores["semantic_similarity"],
                 liked_cluster_similarity=scores["liked_cluster_similarity"],
                 disliked_similarity=scores["disliked_similarity"],
-                filter_match_ratio=scores["filter_match_ratio"],
-                explanation=scores["explanation"],
             )
             for session, scores in sessions
         ]
@@ -314,7 +312,6 @@ async def recommend_sessions(
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
             filter_mode=recommend_req.filter_mode,
             filter_margin_weight=recommend_req.filter_margin_weight,
-            soft_filter_limit_ratio=recommend_req.soft_filter_limit_ratio,
             goal_mode=recommend_req.goal_mode,
             time_windows=recommend_req.time_windows,
             min_break_minutes=recommend_req.min_break_minutes,
@@ -339,9 +336,7 @@ async def recommend_sessions(
                 semantic_similarity=scores["semantic_similarity"],
                 liked_cluster_similarity=scores["liked_cluster_similarity"],
                 disliked_similarity=scores["disliked_similarity"],
-                filter_match_ratio=scores["filter_match_ratio"],
                 filter_compliance_score=scores["filter_compliance_score"],
-                explanation=scores["explanation"],
             )
             for session, scores in sessions
         ]

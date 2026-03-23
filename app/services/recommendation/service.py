@@ -22,7 +22,7 @@ logger = structlog.get_logger()
 
 
 class RecommendationService:
-    """Coordinates recommendation execution paths and two-pass semantic search."""
+    """Coordinates recommendation execution paths and filter-mode semantic search."""
 
     def __init__(self, embedding_service: EmbeddingService):
         self.embedding_service = embedding_service
@@ -219,9 +219,8 @@ class RecommendationService:
         duration_max: int | None = None,
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
-        filter_mode: str = "hard",
+        filter_mode: str = "soft",
         filter_margin_weight: float = 0.1,
-        soft_filter_limit_ratio: float = 0.5,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
         min_break_minutes: int = 0,
@@ -236,20 +235,9 @@ class RecommendationService:
 
         try:
             if not query and not accepted_ids:
-                active_filters = self._has_active_filters(
-                    event_id=event_id,
-                    session_format=session_format,
-                    tags=tags,
-                    location=location,
-                    language=language,
-                    duration_min=duration_min,
-                    duration_max=duration_max,
-                    time_windows=time_windows,
-                )
                 logger.info(
                     "recommendation_crud_fallback",
                     rejected_ids_count=len(rejected_ids),
-                    has_filters=active_filters,
                     goal_mode=goal_mode,
                 )
                 recommendations = await self._recommend_fallback(
@@ -263,6 +251,8 @@ class RecommendationService:
                     duration_min=duration_min,
                     duration_max=duration_max,
                     time_windows=time_windows,
+                    filter_mode=filter_mode,
+                    filter_margin_weight=filter_margin_weight,
                     limit=candidate_limit,
                 )
                 return self._apply_plan_mode_if_needed(
@@ -293,7 +283,6 @@ class RecommendationService:
                 disliked_embedding_weight=disliked_embedding_weight,
                 filter_mode=filter_mode,
                 filter_margin_weight=filter_margin_weight,
-                soft_filter_limit_ratio=soft_filter_limit_ratio,
             )
             recommendations = self._apply_plan_mode_if_needed(
                 recommendations=recommendations,
@@ -350,7 +339,6 @@ class RecommendationService:
         disliked_embedding_weight: float,
         filter_mode: str,
         filter_margin_weight: float,
-        soft_filter_limit_ratio: float,
     ) -> tuple[list[tuple], dict[str, Any]]:
         query_embedding, semantic_similarity_enabled = await self._determine_query_embedding(
             query=query,
@@ -372,30 +360,14 @@ class RecommendationService:
         nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
         chroma_where = self._combine_conditions(nin_condition, metadata_conditions)
 
-        try:
-            if chroma_where:
-                chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                    query_embedding, limit=candidate_limit, where=chroma_where
-                )
-            else:
-                chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                    query_embedding, limit=candidate_limit
-                )
-        except Exception as e:
-            logger.error("recommendation_chroma_search_failed", error=str(e))
-            raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
-
         chroma_results_soft = []
         soft_pass_triggered = False
-        soft_filter_threshold = candidate_limit * soft_filter_limit_ratio
 
-        if filter_mode == "soft" and len(chroma_results_hard) < soft_filter_threshold:
+        if filter_mode == "soft":
             soft_pass_triggered = True
+            chroma_results_hard = []
             try:
-                soft_search_limit = max(
-                    candidate_limit * 2,
-                    int(candidate_limit / soft_filter_limit_ratio),
-                )
+                soft_search_limit = candidate_limit * 2
                 chroma_results_soft = await self._collect_soft_pass_candidates(
                     query_embedding=query_embedding,
                     soft_search_limit=soft_search_limit,
@@ -403,15 +375,26 @@ class RecommendationService:
                     time_windows=time_windows,
                 )
                 logger.info(
-                    "recommendation_soft_pass_enabled",
-                    hard_results=len(chroma_results_hard),
+                    "recommendation_soft_mode_direct_pass",
                     soft_search_limit=soft_search_limit,
                     soft_results_before_dedup=len(chroma_results_soft),
-                    soft_filter_threshold=soft_filter_threshold,
                 )
             except Exception as e:
                 logger.warning("recommendation_soft_pass_search_failed", error=str(e))
                 chroma_results_soft = []
+        else:
+            try:
+                if chroma_where:
+                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
+                        query_embedding, limit=candidate_limit, where=chroma_where
+                    )
+                else:
+                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
+                        query_embedding, limit=candidate_limit
+                    )
+            except Exception as e:
+                logger.error("recommendation_chroma_search_failed", error=str(e))
+                raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
 
         preference_embeddings = await self._prefetch_preference_embeddings(
             accepted_ids=accepted_ids,
@@ -506,46 +489,83 @@ class RecommendationService:
         duration_min: int | None = None,
         duration_max: int | None = None,
         time_windows: list[Any] | None = None,
+        filter_mode: str = "soft",
+        filter_margin_weight: float = 0.1,
         limit: int = 10,
     ) -> list[tuple]:
         try:
-            sessions = session_crud.list_with_filters(
-                db=db,
-                limit=limit + len(rejected_ids),
-                status=SessionStatus.PUBLISHED,
-                event_id=event_id,
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                time_windows=time_windows,
-            )
+            if filter_mode == "soft":
+                # In soft mode fallback we expand candidates first, then rank by compliance.
+                sessions = session_crud.list_with_filters(
+                    db=db,
+                    limit=(limit * 2) + len(rejected_ids),
+                    status=SessionStatus.PUBLISHED,
+                    event_id=event_id,
+                    time_windows=time_windows,
+                )
+            else:
+                sessions = session_crud.list_with_filters(
+                    db=db,
+                    limit=limit + len(rejected_ids),
+                    status=SessionStatus.PUBLISHED,
+                    event_id=event_id,
+                    session_format=session_format,
+                    tags=tags,
+                    location=location,
+                    language=language,
+                    duration_min=duration_min,
+                    duration_max=duration_max,
+                    time_windows=time_windows,
+                )
 
             recommendations = []
             for session in sessions:
                 if session.id in rejected_ids:
                     continue
 
-                scores = {
-                    "overall_score": 1.0,
-                    "semantic_similarity": None,
-                    "liked_cluster_similarity": None,
-                    "disliked_similarity": None,
-                    "filter_match_ratio": 1.0,
-                    "filter_compliance_score": None,
-                    "explanation": "Matched all specified filters (no semantic query provided)",
-                }
+                if filter_mode == "soft":
+                    filter_compliance_score = self._compute_filter_compliance_score(
+                        session=session,
+                        session_format=session_format,
+                        tags=tags,
+                        location=location,
+                        language=language,
+                        duration_min=duration_min,
+                        duration_max=duration_max,
+                        time_windows=time_windows,
+                    )
+                    scores = await self._compute_recommendation_scores(
+                        session_embedding=self._get_default_embedding(),
+                        chroma_similarity=0.0,
+                        semantic_similarity_enabled=False,
+                        liked_embeddings={},
+                        disliked_embeddings={},
+                        liked_embedding_weight=0.0,
+                        disliked_embedding_weight=0.0,
+                        filter_compliance_score=filter_compliance_score,
+                        filter_margin_weight=filter_margin_weight,
+                    )
+                else:
+                    scores = {
+                        "overall_score": 1.0,
+                        "semantic_similarity": None,
+                        "liked_cluster_similarity": None,
+                        "disliked_similarity": None,
+                        "filter_compliance_score": None,
+                    }
                 recommendations.append((session, scores))
-                if len(recommendations) >= limit:
-                    break
+
+            if filter_mode == "soft":
+                recommendations.sort(key=lambda item: item[1]["overall_score"], reverse=True)
+
+            recommendations = recommendations[:limit]
 
             logger.info(
                 "recommendation_crud_completed",
                 rejected_ids_count=len(rejected_ids),
                 recommendations=len(recommendations),
                 limit=limit,
+                filter_mode=filter_mode,
             )
             return recommendations
 
@@ -959,7 +979,7 @@ class RecommendationService:
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
         disliked_sim = self._compute_disliked_similarity(session_embedding, disliked_embeddings)
 
-        score_components, score_weights, explanation_parts = self._build_score_components(
+        score_components, score_weights = self._build_score_components(
             semantic_sim=semantic_sim,
             liked_cluster_sim=liked_cluster_sim,
             disliked_sim=disliked_sim,
@@ -970,8 +990,6 @@ class RecommendationService:
         )
         overall_score = self._calculate_overall_score(score_components, score_weights)
 
-        explanation = ", ".join(explanation_parts) if explanation_parts else "Matched filters"
-
         return {
             "overall_score": round(overall_score, 3),
             "semantic_similarity": round(semantic_sim, 3) if semantic_sim is not None else None,
@@ -979,9 +997,7 @@ class RecommendationService:
                 round(liked_cluster_sim, 3) if liked_cluster_sim is not None else None
             ),
             "disliked_similarity": round(disliked_sim, 3) if disliked_sim is not None else None,
-            "filter_match_ratio": 1.0,
             "filter_compliance_score": (
                 round(filter_compliance_score, 3) if filter_compliance_score is not None else None
             ),
-            "explanation": explanation,
         }

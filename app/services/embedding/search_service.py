@@ -227,8 +227,6 @@ class EmbeddingSearchService:
                     "semantic_similarity": round(chroma_similarity, 3),
                     "liked_cluster_similarity": None,
                     "disliked_similarity": None,
-                    "filter_match_ratio": 1.0,
-                    "explanation": f"semantic similarity: {chroma_similarity:.2f}",
                 }
                 results.append((session, scores))
                 if len(results) >= limit:

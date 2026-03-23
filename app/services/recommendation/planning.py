@@ -122,10 +122,6 @@ class RecommendationPlanner:
                 continue
 
             plan_scores = dict(scores)
-            base_explanation = plan_scores.get("explanation") or ""
-            plan_scores["explanation"] = (
-                f"{base_explanation}, plan-mode: non-overlap selected".strip(", ")
-            )
             selected.append((session, plan_scores))
 
             if len(selected) >= limit:

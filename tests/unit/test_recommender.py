@@ -5,6 +5,7 @@ including centroid-based recommendations and embedding-driven scoring.
 """
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -187,8 +188,6 @@ class TestRecommendationScoring:
         # All components should be 0-1
         assert 0 <= scores["overall_score"] <= 1
         assert scores["semantic_similarity"] == round(0.5, 3)
-        assert "explanation" in scores
-        assert "semantic:" in scores["explanation"]  # Check for new explanation format
 
     @pytest.mark.asyncio
     async def test_zero_weights_disables_adjustments(self, search_service):
@@ -285,7 +284,9 @@ class TestRecommendFallback:
     @pytest.fixture
     def mock_embedding_service(self):
         """Create mock EmbeddingService."""
-        return AsyncMock(spec=EmbeddingService)
+        service = AsyncMock(spec=EmbeddingService)
+        service.embedding_dimension = 768
+        return service
 
     @pytest.fixture
     def mock_db_session(self):
@@ -388,7 +389,64 @@ class TestRecommendFallback:
             assert session == mock_session
             assert isinstance(scores, dict)
             assert "overall_score" in scores
-            assert "explanation" in scores
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_fallback_soft_mode_uses_expanded_candidates_and_compliance_scoring(
+        self,
+        search_service,
+        mock_db_session,
+    ):
+        """Soft fallback should retrieve broad candidates and rank by compliance score."""
+        matching_session = Mock(
+            id=1,
+            status=SessionStatus.PUBLISHED,
+            session_format=SimpleNamespace(value="workshop"),
+            language="en",
+            tags=["ml"],
+            location="Berlin",
+            duration=60,
+        )
+        non_matching_session = Mock(
+            id=2,
+            status=SessionStatus.PUBLISHED,
+            session_format=SimpleNamespace(value="talk"),
+            language="de",
+            tags=["ethics"],
+            location="Graz",
+            duration=20,
+        )
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.list_with_filters.return_value = [non_matching_session, matching_session]
+
+            results = await search_service._recommend_fallback(
+                db=mock_db_session,
+                rejected_ids=[],
+                session_format="workshop",
+                language="en",
+                tags=["ml"],
+                location=["Berlin"],
+                duration_min=45,
+                duration_max=90,
+                filter_mode="soft",
+                filter_margin_weight=0.2,
+                limit=10,
+            )
+
+            call_kwargs = mock_crud.list_with_filters.call_args[1]
+            assert call_kwargs.get("session_format") is None
+            assert call_kwargs.get("language") is None
+            assert call_kwargs.get("tags") is None
+            assert call_kwargs.get("location") is None
+            assert call_kwargs.get("duration_min") is None
+            assert call_kwargs.get("duration_max") is None
+
+            assert len(results) == 2
+            assert results[0][0].id == 1
+            assert results[0][1]["filter_compliance_score"] is not None
+            assert results[1][1]["filter_compliance_score"] is not None
+            assert results[0][1]["overall_score"] >= results[1][1]["overall_score"]
 
 
 class TestFullRecommendationPipeline:
@@ -774,9 +832,9 @@ class TestPlanModeOptimization:
         s3 = self._make_session(3, base + timedelta(minutes=95), base + timedelta(minutes=140))
 
         recommendations = [
-            (s1, {"overall_score": 0.95, "explanation": "high"}),
-            (s2, {"overall_score": 0.94, "explanation": "overlap"}),
-            (s3, {"overall_score": 0.90, "explanation": "next"}),
+            (s1, {"overall_score": 0.95}),
+            (s2, {"overall_score": 0.94}),
+            (s3, {"overall_score": 0.90}),
         ]
 
         planned = search_service._optimize_session_plan(
@@ -800,9 +858,9 @@ class TestPlanModeOptimization:
         s3 = self._make_session(3, base + timedelta(hours=3), base + timedelta(hours=4))
 
         recommendations = [
-            (s1, {"overall_score": 0.99, "explanation": "before window"}),
-            (s2, {"overall_score": 0.90, "explanation": "in window"}),
-            (s3, {"overall_score": 0.91, "explanation": "after window"}),
+            (s1, {"overall_score": 0.99}),
+            (s2, {"overall_score": 0.90}),
+            (s3, {"overall_score": 0.91}),
         ]
 
         planned = search_service._optimize_session_plan(
@@ -829,9 +887,9 @@ class TestPlanModeOptimization:
         s3 = self._make_session(3, base + timedelta(minutes=80), base + timedelta(minutes=140))
 
         recommendations = [
-            (s1, {"overall_score": 0.95, "explanation": "first"}),
-            (s2, {"overall_score": 0.94, "explanation": "short break"}),
-            (s3, {"overall_score": 0.93, "explanation": "enough break"}),
+            (s1, {"overall_score": 0.95}),
+            (s2, {"overall_score": 0.94}),
+            (s3, {"overall_score": 0.93}),
         ]
 
         planned = search_service._optimize_session_plan(

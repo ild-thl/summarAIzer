@@ -8,16 +8,16 @@ from app.constants.embedding import (
 )
 from app.crud import generated_content as content_crud
 from app.database.connection import SessionLocal
-from app.services.embedding.providers.factory import create_embeddings_backend
 from app.services.embedding.metadata import EmbeddingMetadataBuilder
-from app.services.embedding.vector_db.chroma import ChromaInitializer
 from app.services.embedding.protocols import (
     ChromaClientProtocol,
     ChromaCollectionProtocol,
     EmbeddingsBackendProtocol,
     VectorStoreProtocol,
 )
+from app.services.embedding.providers.factory import create_embeddings_backend
 from app.services.embedding.text import EmbeddingTextHelper
+from app.services.embedding.vector_db.chroma import ChromaInitializer
 from app.services.embedding.vector_db.store import ChromaSessionVectorStore
 
 logger = structlog.get_logger()
