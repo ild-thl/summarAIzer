@@ -114,7 +114,7 @@ class TestFilterCheckMethods:
             end_datetime=now + timedelta(minutes=30),
         )
 
-        score = service._compute_filter_compliance_score(
+        score = service.filter_evaluator.compute_filter_compliance_score(
             session=session,
             session_format="workshop",
             tags=None,

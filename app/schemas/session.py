@@ -344,7 +344,7 @@ class RecommendRequest(BaseModel):
         description="Optional maximum allowed gap in minutes between planned sessions",
     )
     plan_candidate_multiplier: int = Field(
-        default=3,
+        default=2,
         ge=1,
         le=10,
         description="Multiplier for candidate pool size before plan optimization (limit * multiplier)",

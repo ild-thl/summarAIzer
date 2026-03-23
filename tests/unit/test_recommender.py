@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.schemas.session import RecommendRequest, SessionStatus
 from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding.service import EmbeddingService
-from app.services.recommendation.service import RecommendationService
+from app.services.recommendation.service import RecommendationQueryParams, RecommendationService
 
 
 class TestQueryEmbeddingDetermination:
@@ -313,7 +313,11 @@ class TestRecommendFallback:
 
             results = await search_service._recommend_fallback(
                 db=mock_db_session,
-                rejected_ids=[2],  # Exclude session 2
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[2],  # Exclude session 2
+                ),
                 limit=3,
             )
 
@@ -336,7 +340,11 @@ class TestRecommendFallback:
 
             results = await search_service._recommend_fallback(
                 db=mock_db_session,
-                rejected_ids=[],
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[],
+                ),
                 limit=5,
             )
 
@@ -354,11 +362,15 @@ class TestRecommendFallback:
 
             await search_service._recommend_fallback(
                 db=mock_db_session,
-                rejected_ids=[],
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[],
+                    event_id=100,
+                    session_format="workshop",
+                    language="en",
+                ),
                 limit=10,
-                event_id=100,
-                session_format="workshop",
-                language="en",
             )
 
             # Verify CRUD was called with filters
@@ -379,7 +391,11 @@ class TestRecommendFallback:
 
             results = await search_service._recommend_fallback(
                 db=mock_db_session,
-                rejected_ids=[],
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[],
+                ),
                 limit=10,
             )
 
@@ -422,15 +438,19 @@ class TestRecommendFallback:
 
             results = await search_service._recommend_fallback(
                 db=mock_db_session,
-                rejected_ids=[],
-                session_format="workshop",
-                language="en",
-                tags=["ml"],
-                location=["Berlin"],
-                duration_min=45,
-                duration_max=90,
-                filter_mode="soft",
-                filter_margin_weight=0.2,
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[],
+                    session_format="workshop",
+                    language="en",
+                    tags=["ml"],
+                    location=["Berlin"],
+                    duration_min=45,
+                    duration_max=90,
+                    filter_mode="soft",
+                    filter_margin_weight=0.2,
+                ),
                 limit=10,
             )
 
@@ -903,6 +923,103 @@ class TestPlanModeOptimization:
         ids = [session.id for session, _ in planned]
         assert 1 in ids
         assert 2 not in ids
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_uses_derived_gap_windows(self, search_service):
+        """Gap fill should query only in oversized plan gaps."""
+        base = datetime(2026, 3, 20, 10, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        recommendations = [(s1, {"overall_score": 0.99})]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=[])
+
+        params = RecommendationQueryParams(
+            query=None,
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(hours=5),
+                }
+            ],
+        )
+
+        result, _ = await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=3,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=30,
+        )
+
+        assert len(result) == 1
+        assert result[0][0].id == 1
+        search_service._recommend_fallback.assert_called_once()
+        gap_windows = search_service._recommend_fallback.call_args[1]["params"].time_windows
+        assert gap_windows == [
+            {
+                "start": base + timedelta(minutes=60),
+                "end": base + timedelta(hours=5),
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_skips_when_no_oversized_gap(self, search_service):
+        """Gap fill should be skipped when gaps do not exceed max_gap_minutes."""
+        base = datetime(2026, 3, 20, 10, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        recommendations = [(s1, {"overall_score": 0.99})]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=[])
+
+        params = RecommendationQueryParams(
+            query=None,
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(minutes=80),
+                }
+            ],
+        )
+
+        result, _ = await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=3,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=30,
+        )
+
+        assert len(result) == 1
+        assert result[0][0].id == 1
+        search_service._recommend_fallback.assert_not_called()
 
 
 class TestPlanRequestValidation:

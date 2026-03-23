@@ -3,7 +3,8 @@
 Keeps recommendation flow and ranking logic isolated from search-only services.
 """
 
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import Any
 
 import structlog
@@ -18,6 +19,27 @@ from app.services.recommendation.planning import RecommendationPlanner
 from app.services.recommendation.scoring import RecommendationScoreEngine
 
 logger = structlog.get_logger()
+
+
+@dataclass(slots=True)
+class RecommendationQueryParams:
+    """Shared recommendation query/filter parameters across recommendation modes."""
+
+    query: str | None
+    accepted_ids: list[int]
+    rejected_ids: list[int]
+    event_id: int | None = None
+    session_format: str | None = None
+    tags: list[str] | None = None
+    location: list[str] | None = None
+    language: str | None = None
+    duration_min: int | None = None
+    duration_max: int | None = None
+    liked_embedding_weight: float = 0.3
+    disliked_embedding_weight: float = 0.2
+    filter_mode: str = "hard"
+    filter_margin_weight: float = 0.1
+    time_windows: list[Any] | None = None
 
 
 class RecommendationService:
@@ -137,25 +159,6 @@ class RecommendationService:
             return all_conditions[0]
         return {"$and": all_conditions}
 
-    def _apply_plan_mode_if_needed(
-        self,
-        recommendations: list[tuple],
-        is_plan_mode: bool,
-        limit: int,
-        time_windows: list[Any] | None,
-        min_break_minutes: int,
-        max_gap_minutes: int | None,
-    ) -> list[tuple]:
-        if not is_plan_mode:
-            return recommendations
-        return self._optimize_session_plan(
-            recommendations=recommendations,
-            limit=limit,
-            time_windows=time_windows,
-            min_break_minutes=min_break_minutes,
-            max_gap_minutes=max_gap_minutes,
-        )
-
     def _optimize_session_plan(
         self,
         recommendations: list[tuple],
@@ -170,6 +173,247 @@ class RecommendationService:
             time_windows=time_windows,
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
+        )
+
+    @staticmethod
+    def _build_min_gap_delta(max_gap_minutes: int | None) -> timedelta | None:
+        return timedelta(minutes=max_gap_minutes) if max_gap_minutes is not None else None
+
+    @staticmethod
+    def _append_gap_window_if_allowed(
+        gap_windows: list[dict[str, datetime]],
+        start: datetime | None,
+        end: datetime | None,
+        min_gap_delta: timedelta | None,
+    ) -> None:
+        if start is None or end is None or end <= start:
+            return
+        gap_delta = end - start
+        if min_gap_delta is not None and gap_delta <= min_gap_delta:
+            return
+        gap_windows.append({"start": start, "end": end})
+
+    @staticmethod
+    def _sort_planned_sessions(planned: list[tuple]) -> list[Any]:
+        return sorted(
+            [session for session, _ in planned],
+            key=lambda session: (session.start_datetime, session.end_datetime, session.id),
+        )
+
+    @staticmethod
+    def _window_overlaps_for_sessions(
+        sorted_sessions: list[Any],
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[tuple[datetime, datetime]]:
+        overlaps: list[tuple[datetime, datetime]] = []
+        for session in sorted_sessions:
+            occupied_start = max(session.start_datetime, window_start)
+            occupied_end = min(session.end_datetime, window_end)
+            if occupied_end <= occupied_start:
+                continue
+            overlaps.append((occupied_start, occupied_end))
+
+        overlaps.sort(key=lambda item: (item[0], item[1]))
+        return overlaps
+
+    def _derive_gaps_from_time_windows(
+        self,
+        sorted_sessions: list[Any],
+        time_windows: list[Any],
+        min_gap_delta: timedelta | None,
+    ) -> list[dict[str, datetime]]:
+        gap_windows: list[dict[str, datetime]] = []
+        for window in time_windows:
+            window_start, window_end = self._extract_window_bounds(window)
+            if window_start is None or window_end is None or window_end <= window_start:
+                continue
+
+            cursor = window_start
+            overlaps = self._window_overlaps_for_sessions(
+                sorted_sessions=sorted_sessions,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            for occupied_start, occupied_end in overlaps:
+                self._append_gap_window_if_allowed(
+                    gap_windows=gap_windows,
+                    start=cursor,
+                    end=occupied_start,
+                    min_gap_delta=min_gap_delta,
+                )
+                if occupied_end > cursor:
+                    cursor = occupied_end
+                if cursor >= window_end:
+                    break
+
+            self._append_gap_window_if_allowed(
+                gap_windows=gap_windows,
+                start=cursor,
+                end=window_end,
+                min_gap_delta=min_gap_delta,
+            )
+
+        return gap_windows
+
+    def _derive_internal_gaps(
+        self,
+        sorted_sessions: list[Any],
+        min_gap_delta: timedelta | None,
+    ) -> list[dict[str, datetime]]:
+        if len(sorted_sessions) < 2:
+            return []
+
+        gap_windows: list[dict[str, datetime]] = []
+        for index in range(len(sorted_sessions) - 1):
+            self._append_gap_window_if_allowed(
+                gap_windows=gap_windows,
+                start=sorted_sessions[index].end_datetime,
+                end=sorted_sessions[index + 1].start_datetime,
+                min_gap_delta=min_gap_delta,
+            )
+        return gap_windows
+
+    def _derive_gap_fill_windows(
+        self,
+        planned: list[tuple],
+        time_windows: list[Any] | None,
+        max_gap_minutes: int | None,
+    ) -> list[dict[str, datetime]]:
+        min_gap_delta = self._build_min_gap_delta(max_gap_minutes)
+        sorted_sessions = self._sort_planned_sessions(planned)
+
+        if time_windows:
+            return self._derive_gaps_from_time_windows(
+                sorted_sessions=sorted_sessions,
+                time_windows=time_windows,
+                min_gap_delta=min_gap_delta,
+            )
+
+        return self._derive_internal_gaps(
+            sorted_sessions=sorted_sessions,
+            min_gap_delta=min_gap_delta,
+        )
+
+    async def _collect_base_recommendations(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        seen_ids: set[int],
+        candidate_limit: int,
+    ) -> tuple[list[tuple], dict[str, Any]]:
+        if not params.query and not params.accepted_ids:
+            recommendations = await self._recommend_fallback(
+                db,
+                params=params,
+                limit=candidate_limit,
+            )
+            return recommendations, {
+                "hard_pass_results": 0,
+                "soft_pass_results": 0,
+                "soft_pass_triggered": False,
+            }
+
+        return await self._recommend_with_semantic_search(
+            db=db,
+            params=params,
+            seen_ids=seen_ids,
+            candidate_limit=candidate_limit,
+        )
+
+    async def _recommend_plan_mode(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        seen_ids: set[int],
+        limit: int,
+        plan_candidate_multiplier: int,
+        min_break_minutes: int,
+        max_gap_minutes: int | None,
+    ) -> tuple[list[tuple], dict[str, Any]]:
+        candidate_limit = limit * plan_candidate_multiplier
+        recommendations, search_debug = await self._collect_base_recommendations(
+            db=db,
+            params=params,
+            seen_ids=seen_ids,
+            candidate_limit=candidate_limit,
+        )
+
+        planned = self._optimize_session_plan(
+            recommendations=recommendations,
+            limit=limit,
+            time_windows=params.time_windows,
+            min_break_minutes=min_break_minutes,
+            max_gap_minutes=max_gap_minutes,
+        )
+
+        gap_fill_windows = self._derive_gap_fill_windows(
+            planned=planned,
+            time_windows=params.time_windows,
+            max_gap_minutes=max_gap_minutes,
+        )
+        if not gap_fill_windows:
+            logger.info(
+                "recommendation_plan_gap_fill_skipped_no_oversized_gaps",
+                planned_size=len(planned),
+                requested_limit=limit,
+                max_gap_minutes=max_gap_minutes,
+            )
+            return planned, search_debug
+
+        existing_ids = [session.id for session, _ in recommendations]
+        planned_ids = [session.id for session, _ in planned]
+        gap_fill_rejected = list(dict.fromkeys(params.rejected_ids + existing_ids + planned_ids))
+        gap_fill_limit = max(limit * plan_candidate_multiplier, limit)
+
+        gap_fill_params = replace(
+            params,
+            rejected_ids=gap_fill_rejected,
+            time_windows=gap_fill_windows,
+        )
+        gap_fill_candidates = await self._recommend_fallback(
+            db=db,
+            params=gap_fill_params,
+            limit=gap_fill_limit,
+        )
+        if not gap_fill_candidates:
+            return planned, search_debug
+
+        merged_by_session_id: dict[int, tuple] = {}
+        for session, scores in recommendations + gap_fill_candidates:
+            current = merged_by_session_id.get(session.id)
+            if current is None or scores["overall_score"] > current[1]["overall_score"]:
+                merged_by_session_id[session.id] = (session, scores)
+
+        replanned = self._optimize_session_plan(
+            recommendations=list(merged_by_session_id.values()),
+            limit=limit,
+            time_windows=params.time_windows,
+            min_break_minutes=min_break_minutes,
+            max_gap_minutes=max_gap_minutes,
+        )
+
+        logger.info(
+            "recommendation_plan_gap_fill_completed",
+            initial_plan_size=len(planned),
+            gap_fill_candidates=len(gap_fill_candidates),
+            final_plan_size=len(replanned),
+            requested_limit=limit,
+        )
+        return replanned, search_debug
+
+    async def _recommend_default_mode(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        seen_ids: set[int],
+        limit: int,
+    ) -> tuple[list[tuple], dict[str, Any]]:
+        return await self._collect_base_recommendations(
+            db=db,
+            params=params,
+            seen_ids=seen_ids,
+            candidate_limit=limit,
         )
 
     async def recommend_sessions(
@@ -198,69 +442,43 @@ class RecommendationService:
     ) -> list[tuple]:
         accepted_ids = accepted_ids or []
         rejected_ids = rejected_ids or []
-        seen_ids = set(accepted_ids + rejected_ids)
-        is_plan_mode = goal_mode == "plan"
-        candidate_limit = limit * plan_candidate_multiplier if is_plan_mode else limit
+        params = RecommendationQueryParams(
+            query=query,
+            accepted_ids=accepted_ids,
+            rejected_ids=rejected_ids,
+            event_id=event_id,
+            session_format=session_format,
+            tags=tags,
+            location=location,
+            language=language,
+            duration_min=duration_min,
+            duration_max=duration_max,
+            liked_embedding_weight=liked_embedding_weight,
+            disliked_embedding_weight=disliked_embedding_weight,
+            filter_mode=filter_mode,
+            filter_margin_weight=filter_margin_weight,
+            time_windows=time_windows,
+        )
+        seen_ids = set(params.accepted_ids + params.rejected_ids)
 
         try:
-            if not query and not accepted_ids:
-                logger.info(
-                    "recommendation_crud_fallback",
-                    rejected_ids_count=len(rejected_ids),
-                    goal_mode=goal_mode,
-                )
-                recommendations = await self._recommend_fallback(
-                    db,
-                    rejected_ids=rejected_ids,
-                    event_id=event_id,
-                    session_format=session_format,
-                    tags=tags,
-                    location=location,
-                    language=language,
-                    duration_min=duration_min,
-                    duration_max=duration_max,
-                    time_windows=time_windows,
-                    filter_mode=filter_mode,
-                    filter_margin_weight=filter_margin_weight,
-                    limit=candidate_limit,
-                )
-                return self._apply_plan_mode_if_needed(
-                    recommendations=recommendations,
-                    is_plan_mode=is_plan_mode,
+            if goal_mode == "plan":
+                recommendations, search_debug = await self._recommend_plan_mode(
+                    db=db,
+                    params=params,
+                    seen_ids=seen_ids,
                     limit=limit,
-                    time_windows=time_windows,
+                    plan_candidate_multiplier=plan_candidate_multiplier,
                     min_break_minutes=min_break_minutes,
                     max_gap_minutes=max_gap_minutes,
                 )
-
-            recommendations, search_debug = await self._recommend_with_semantic_search(
-                db=db,
-                query=query,
-                accepted_ids=accepted_ids,
-                rejected_ids=rejected_ids,
-                seen_ids=seen_ids,
-                candidate_limit=candidate_limit,
-                event_id=event_id,
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                time_windows=time_windows,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
-                filter_mode=filter_mode,
-                filter_margin_weight=filter_margin_weight,
-            )
-            recommendations = self._apply_plan_mode_if_needed(
-                recommendations=recommendations,
-                is_plan_mode=is_plan_mode,
-                limit=limit,
-                time_windows=time_windows,
-                min_break_minutes=min_break_minutes,
-                max_gap_minutes=max_gap_minutes,
-            )
+            else:
+                recommendations, search_debug = await self._recommend_default_mode(
+                    db=db,
+                    params=params,
+                    seen_ids=seen_ids,
+                    limit=limit,
+                )
 
             logger.info(
                 "recommendation_completed",
@@ -291,39 +509,25 @@ class RecommendationService:
     async def _recommend_with_semantic_search(
         self,
         db: Session,
-        query: str | None,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
+        params: RecommendationQueryParams,
         seen_ids: set[int],
         candidate_limit: int,
-        event_id: int | None,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        time_windows: list[Any] | None,
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_mode: str,
-        filter_margin_weight: float,
     ) -> tuple[list[tuple], dict[str, Any]]:
         query_embedding, semantic_similarity_enabled = await self._determine_query_embedding(
-            query=query,
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
+            query=params.query,
+            accepted_ids=params.accepted_ids,
+            rejected_ids=params.rejected_ids,
         )
 
         metadata_conditions = self._build_chroma_conditions(
-            session_format=session_format,
-            tags=tags,
-            location=location,
-            language=language,
-            duration_min=duration_min,
-            duration_max=duration_max,
+            session_format=params.session_format,
+            tags=params.tags,
+            location=params.location,
+            language=params.language,
+            duration_min=params.duration_min,
+            duration_max=params.duration_max,
         )
-        time_windows_condition = self._build_time_windows_conditions(time_windows)
+        time_windows_condition = self._build_time_windows_conditions(params.time_windows)
         metadata_conditions = self._combine_conditions(metadata_conditions, time_windows_condition)
 
         nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
@@ -332,7 +536,7 @@ class RecommendationService:
         chroma_results_soft = []
         soft_pass_triggered = False
 
-        if filter_mode == "soft":
+        if params.filter_mode == "soft":
             soft_pass_triggered = True
             chroma_results_hard = []
             try:
@@ -341,7 +545,7 @@ class RecommendationService:
                     query_embedding=query_embedding,
                     soft_search_limit=soft_search_limit,
                     nin_condition=nin_condition,
-                    time_windows=time_windows,
+                    time_windows=params.time_windows,
                 )
                 logger.info(
                     "recommendation_soft_mode_direct_pass",
@@ -366,8 +570,8 @@ class RecommendationService:
                 raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
 
         preference_embeddings = await self._prefetch_preference_embeddings(
-            accepted_ids=accepted_ids,
-            rejected_ids=rejected_ids,
+            accepted_ids=params.accepted_ids,
+            rejected_ids=params.rejected_ids,
         )
         recommendations = await self._process_chroma_recommendations(
             chroma_results_hard=chroma_results_hard,
@@ -376,17 +580,7 @@ class RecommendationService:
             semantic_similarity_enabled=semantic_similarity_enabled,
             liked_embeddings=preference_embeddings["liked"],
             disliked_embeddings=preference_embeddings["disliked"],
-            liked_embedding_weight=liked_embedding_weight,
-            disliked_embedding_weight=disliked_embedding_weight,
-            event_id=event_id,
-            session_format=session_format,
-            tags=tags,
-            location=location,
-            language=language,
-            duration_min=duration_min,
-            duration_max=duration_max,
-            time_windows=time_windows,
-            filter_margin_weight=filter_margin_weight,
+            params=params,
             limit=candidate_limit,
             soft_pass_triggered=soft_pass_triggered,
         )
@@ -483,72 +677,57 @@ class RecommendationService:
     async def _recommend_fallback(
         self,
         db: Session,
-        rejected_ids: list[int],
-        event_id: int | None = None,
-        session_format: str | None = None,
-        tags: list[str] | None = None,
-        location: list[str] | None = None,
-        language: str | None = None,
-        duration_min: int | None = None,
-        duration_max: int | None = None,
-        time_windows: list[Any] | None = None,
-        filter_mode: str = "hard",
-        filter_margin_weight: float = 0.1,
+        params: RecommendationQueryParams,
         limit: int = 10,
     ) -> list[tuple]:
         try:
-            if filter_mode == "soft":
+            if params.filter_mode == "soft":
                 # In soft mode fallback we expand candidates first, then rank by compliance.
                 sessions = session_crud.list_with_filters(
                     db=db,
-                    limit=(limit * 2) + len(rejected_ids),
+                    limit=(limit * 2) + len(params.rejected_ids),
                     status=SessionStatus.PUBLISHED,
-                    event_id=event_id,
-                    time_windows=time_windows,
+                    event_id=params.event_id,
+                    time_windows=params.time_windows,
                 )
             else:
                 sessions = session_crud.list_with_filters(
                     db=db,
-                    limit=limit + len(rejected_ids),
+                    limit=limit + len(params.rejected_ids),
                     status=SessionStatus.PUBLISHED,
-                    event_id=event_id,
-                    session_format=session_format,
-                    tags=tags,
-                    location=location,
-                    language=language,
-                    duration_min=duration_min,
-                    duration_max=duration_max,
-                    time_windows=time_windows,
+                    event_id=params.event_id,
+                    session_format=params.session_format,
+                    tags=params.tags,
+                    location=params.location,
+                    language=params.language,
+                    duration_min=params.duration_min,
+                    duration_max=params.duration_max,
+                    time_windows=params.time_windows,
                 )
 
             recommendations = []
-            for session in sessions:
-                if session.id in rejected_ids:
-                    continue
-
-                if filter_mode == "soft":
-                    filter_compliance_score = self._compute_filter_compliance_score(
-                        session=session,
-                        session_format=session_format,
-                        tags=tags,
-                        location=location,
-                        language=language,
-                        duration_min=duration_min,
-                        duration_max=duration_max,
-                        time_windows=time_windows,
-                    )
-                    scores = await self._compute_recommendation_scores(
-                        session_embedding=self._get_default_embedding(),
-                        chroma_similarity=0.0,
-                        semantic_similarity_enabled=False,
-                        liked_embeddings={},
-                        disliked_embeddings={},
+            if params.filter_mode == "soft":
+                soft_candidates = [
+                    (session, 0.0, None, "soft")
+                    for session in sessions
+                    if session.id not in params.rejected_ids
+                ]
+                ranked_soft = await self._rank_soft_candidates(
+                    candidates=soft_candidates,
+                    semantic_similarity_enabled=False,
+                    liked_embeddings={},
+                    disliked_embeddings={},
+                    params=replace(
+                        params,
                         liked_embedding_weight=0.0,
                         disliked_embedding_weight=0.0,
-                        filter_compliance_score=filter_compliance_score,
-                        filter_margin_weight=filter_margin_weight,
-                    )
-                else:
+                    ),
+                )
+                recommendations = [(session, scores) for session, scores, _ in ranked_soft[:limit]]
+            else:
+                for session in sessions:
+                    if session.id in params.rejected_ids:
+                        continue
                     scores = {
                         "overall_score": 1.0,
                         "semantic_similarity": None,
@@ -556,19 +735,15 @@ class RecommendationService:
                         "disliked_similarity": None,
                         "filter_compliance_score": None,
                     }
-                recommendations.append((session, scores))
-
-            if filter_mode == "soft":
-                recommendations.sort(key=lambda item: item[1]["overall_score"], reverse=True)
-
-            recommendations = recommendations[:limit]
+                    recommendations.append((session, scores))
+                recommendations = recommendations[:limit]
 
             logger.info(
                 "recommendation_crud_completed",
-                rejected_ids_count=len(rejected_ids),
+                rejected_ids_count=len(params.rejected_ids),
                 recommendations=len(recommendations),
                 limit=limit,
-                filter_mode=filter_mode,
+                filter_mode=params.filter_mode,
             )
             return recommendations
 
@@ -652,17 +827,7 @@ class RecommendationService:
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        event_id: int | None,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        time_windows: list[Any] | None,
-        filter_margin_weight: float,
+        params: RecommendationQueryParams,
         limit: int,
         soft_pass_triggered: bool = False,
     ) -> list[tuple]:
@@ -675,14 +840,11 @@ class RecommendationService:
         await self._process_hard_pass_results(
             chroma_results_hard=chroma_results_hard,
             db=db,
-            event_id=event_id,
+            params=params,
             chroma_id_to_embedding=chroma_id_to_embedding,
             semantic_similarity_enabled=semantic_similarity_enabled,
             liked_embeddings=liked_embeddings,
             disliked_embeddings=disliked_embeddings,
-            liked_embedding_weight=liked_embedding_weight,
-            disliked_embedding_weight=disliked_embedding_weight,
-            filter_margin_weight=filter_margin_weight,
             limit=limit,
             recommendations=recommendations,
         )
@@ -692,21 +854,11 @@ class RecommendationService:
                 chroma_results_soft=chroma_results_soft,
                 hard_pass_session_ids=hard_pass_session_ids,
                 db=db,
-                event_id=event_id,
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                time_windows=time_windows,
+                params=params,
                 chroma_id_to_embedding=chroma_id_to_embedding,
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
-                filter_margin_weight=filter_margin_weight,
                 limit=limit,
                 recommendations=recommendations,
             )
@@ -730,14 +882,11 @@ class RecommendationService:
         self,
         chroma_results_hard: list,
         db: Session,
-        event_id: int | None,
+        params: RecommendationQueryParams,
         chroma_id_to_embedding: dict,
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_margin_weight: float,
         limit: int,
         recommendations: list,
     ) -> None:
@@ -745,7 +894,7 @@ class RecommendationService:
             session = session_crud.read(db, session_id)
             if not session or session.status != SessionStatus.PUBLISHED:
                 continue
-            if event_id and session.event_id != event_id:
+            if params.event_id and session.event_id != params.event_id:
                 continue
 
             session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
@@ -759,10 +908,10 @@ class RecommendationService:
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
+                liked_embedding_weight=params.liked_embedding_weight,
+                disliked_embedding_weight=params.disliked_embedding_weight,
                 filter_compliance_score=1.0,
-                filter_margin_weight=filter_margin_weight,
+                filter_margin_weight=params.filter_margin_weight,
             )
 
             recommendations.append((session, scores, "hard"))
@@ -774,24 +923,15 @@ class RecommendationService:
         chroma_results_soft: list,
         hard_pass_session_ids: set,
         db: Session,
-        event_id: int | None,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        time_windows: list[Any] | None,
+        params: RecommendationQueryParams,
         chroma_id_to_embedding: dict,
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_margin_weight: float,
         limit: int,
         recommendations: list,
     ) -> None:
+        soft_candidates: list[tuple[Any, float, list[float] | None, str]] = []
         for session_id, chroma_similarity, _ in chroma_results_soft:
             if session_id in hard_pass_session_ids:
                 continue
@@ -799,25 +939,51 @@ class RecommendationService:
             session = session_crud.read(db, session_id)
             if not session or session.status != SessionStatus.PUBLISHED:
                 continue
-            if event_id and session.event_id != event_id:
+            if params.event_id and session.event_id != params.event_id:
                 continue
             if any(rec[0].id == session_id for rec in recommendations):
                 continue
 
             session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
+            soft_candidates.append((session, chroma_similarity, session_embedding, "soft"))
+
+        ranked_soft_candidates = await self._rank_soft_candidates(
+            candidates=soft_candidates,
+            semantic_similarity_enabled=semantic_similarity_enabled,
+            liked_embeddings=liked_embeddings,
+            disliked_embeddings=disliked_embeddings,
+            params=params,
+        )
+
+        for session, scores, source in ranked_soft_candidates:
+            recommendations.append((session, scores, source))
+            if len(recommendations) >= limit:
+                break
+
+    async def _rank_soft_candidates(
+        self,
+        candidates: list[tuple[Any, float, list[float] | None, str]],
+        semantic_similarity_enabled: bool,
+        liked_embeddings: dict[int, list[float]],
+        disliked_embeddings: dict[int, list[float]],
+        params: RecommendationQueryParams,
+    ) -> list[tuple[Any, dict[str, float | None], str]]:
+        ranked: list[tuple[Any, dict[str, float | None], str]] = []
+
+        for session, chroma_similarity, session_embedding, source in candidates:
             if session_embedding is None:
-                logger.warning("session_embedding_not_found_soft_pass", session_id=session_id)
+                logger.warning("session_embedding_not_found_soft_pass", session_id=session.id)
                 session_embedding = self._get_default_embedding()
 
-            filter_compliance_score = self._compute_filter_compliance_score(
+            filter_compliance_score = self.filter_evaluator.compute_filter_compliance_score(
                 session=session,
-                session_format=session_format,
-                tags=tags,
-                location=location,
-                language=language,
-                duration_min=duration_min,
-                duration_max=duration_max,
-                time_windows=time_windows,
+                session_format=params.session_format,
+                tags=params.tags,
+                location=params.location,
+                language=params.language,
+                duration_min=params.duration_min,
+                duration_max=params.duration_max,
+                time_windows=params.time_windows,
             )
 
             scores = await self._compute_recommendation_scores(
@@ -826,37 +992,15 @@ class RecommendationService:
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
-                liked_embedding_weight=liked_embedding_weight,
-                disliked_embedding_weight=disliked_embedding_weight,
+                liked_embedding_weight=params.liked_embedding_weight,
+                disliked_embedding_weight=params.disliked_embedding_weight,
                 filter_compliance_score=filter_compliance_score,
-                filter_margin_weight=filter_margin_weight,
+                filter_margin_weight=params.filter_margin_weight,
             )
+            ranked.append((session, scores, source))
 
-            recommendations.append((session, scores, "soft"))
-            if len(recommendations) >= limit:
-                break
-
-    def _compute_filter_compliance_score(
-        self,
-        session,
-        session_format: str | None,
-        tags: list[str] | None,
-        location: list[str] | None,
-        language: str | None,
-        duration_min: int | None,
-        duration_max: int | None,
-        time_windows: list[Any] | None,
-    ) -> float:
-        return self.filter_evaluator.compute_filter_compliance_score(
-            session=session,
-            session_format=session_format,
-            tags=tags,
-            location=location,
-            language=language,
-            duration_min=duration_min,
-            duration_max=duration_max,
-            time_windows=time_windows,
-        )
+        ranked.sort(key=lambda item: item[1]["overall_score"], reverse=True)
+        return ranked
 
     @staticmethod
     def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
