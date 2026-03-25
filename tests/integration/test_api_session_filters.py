@@ -1,6 +1,8 @@
 """Integration tests for Session API filtering endpoints."""
 
+import json
 from datetime import datetime, timedelta
+from itertools import pairwise
 
 import pytest
 from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
@@ -11,6 +13,11 @@ def _hash_api_key(key: str) -> str:
     import hashlib
 
     return hashlib.sha256(key.encode()).hexdigest()
+
+
+def _time_windows_query(windows: list[dict[str, str]]) -> str:
+    """Encode window list for time_windows query parameter."""
+    return json.dumps(windows, separators=(",", ":"))
 
 
 @pytest.mark.integration
@@ -277,67 +284,88 @@ class TestSessionFilteringAPI:
         data = response.json()
         assert len(data) <= 2
 
-    def test_invalid_date_format_start_after(self, client):
-        """Test invalid date format in start_after parameter."""
-        response = client.get("/api/v2/sessions?start_after=invalid-date")
+    def test_invalid_time_windows_json(self, client):
+        """Test invalid JSON in time_windows parameter."""
+        response = client.get("/api/v2/sessions?time_windows=not-json")
         assert response.status_code == HTTP_400_BAD_REQUEST
         data = response.json()
-        assert "Invalid start_after" in data["detail"]
+        assert "Invalid time_windows format" in data["detail"]
 
-    def test_invalid_date_format_start_before(self, client):
-        """Test invalid date format in start_before parameter."""
-        response = client.get("/api/v2/sessions?start_before=2024-13-45")
+    def test_invalid_time_windows_datetime(self, client):
+        """Test invalid datetime value in time_windows parameter."""
+        payload = _time_windows_query([{"start": "2024-13-45", "end": "2024-12-31T23:59:59"}])
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_400_BAD_REQUEST
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_valid_iso_datetime_start_after(self, client):
-        """Test valid ISO 8601 datetime in start_after."""
+    def test_valid_iso_datetime_time_windows(self, client):
+        """Test valid ISO 8601 datetimes in time_windows."""
         now = datetime.utcnow()
-        iso_datetime = (now + timedelta(hours=2)).isoformat()
-        response = client.get(f"/api/v2/sessions?start_after={iso_datetime}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now + timedelta(hours=2)).isoformat(),
+                    "end": (now + timedelta(hours=5)).isoformat(),
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_iso_datetime_with_z_suffix(self, client):
-        """Test ISO datetime with Z suffix is handled correctly."""
+    def test_time_windows_with_z_suffix(self, client):
+        """Test ISO datetimes with Z suffix are handled correctly."""
         now = datetime.utcnow()
-        iso_datetime = (now + timedelta(hours=2)).isoformat() + "Z"
-        response = client.get(f"/api/v2/sessions?start_after={iso_datetime}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now + timedelta(hours=2)).isoformat() + "Z",
+                    "end": (now + timedelta(hours=5)).isoformat() + "Z",
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_end_before(self, client):
-        """Test filtering by sessions ending before a specific time."""
+    def test_filter_by_time_window(self, client):
+        """Test filtering by sessions within one specific time window."""
         now = datetime.utcnow()
-        end_before_time = (now + timedelta(hours=3)).isoformat()
-        response = client.get(f"/api/v2/sessions?end_before={end_before_time}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": (now - timedelta(minutes=10)).isoformat(),
+                    "end": (now + timedelta(hours=4, minutes=10)).isoformat(),
+                }
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        # Should find sessions that end before the specified time
+        # Should find sessions that fit within the specified window
         assert len(data) >= 1
 
     @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_end_after(self, client):
-        """Test filtering by sessions ending after a specific time."""
+    def test_filter_by_multiple_time_windows(self, client):
+        """Test filtering by sessions in multiple separate windows."""
         now = datetime.utcnow()
-        end_after_time = (now + timedelta(hours=1)).isoformat()
-        response = client.get(f"/api/v2/sessions?end_after={end_after_time}")
+        payload = _time_windows_query(
+            [
+                {
+                    "start": now.isoformat(),
+                    "end": (now + timedelta(hours=1)).isoformat(),
+                },
+                {
+                    "start": (now + timedelta(hours=4)).isoformat(),
+                    "end": (now + timedelta(hours=5)).isoformat(),
+                },
+            ]
+        )
+        response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_200_OK
         data = response.json()
-        # Sessions ending after the time should be returned
+        # Sessions in either window should be returned
         assert len(data) >= 0
-
-    @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_timeframe(self, client):
-        """Test filtering for sessions within a specific timeframe using start and end times."""
-        now = datetime.utcnow()
-        start_time = (now + timedelta(hours=1)).isoformat()
-        end_time = (now + timedelta(hours=4)).isoformat()
-        response = client.get(f"/api/v2/sessions?start_after={start_time}&end_before={end_time}")
-        assert response.status_code == HTTP_200_OK
-        data = response.json()
-        # Should return sessions that fit within the timeframe
-        assert isinstance(data, list)
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_sql_injection_in_search_param(self, client):
@@ -492,12 +520,23 @@ class TestSemanticSearchWithFilters:
         response = client.get("/api/v2/sessions/search/similar?query=machine+learning")
         # May not have embeddings enabled, so check for 200 or 503
         assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                assert "session" in result
+                assert "overall_score" in result
+                assert 0 <= result["overall_score"] <= 1
+                assert "semantic_similarity" in result
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
     def test_semantic_search_with_language_filter(self, client):
         """Test semantic search with language filter."""
         response = client.get("/api/v2/sessions/search/similar?query=AI&language=en")
         assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                assert result["session"].get("language").lower() == "en"
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
     def test_semantic_search_with_tags_filter(self, client):
@@ -512,6 +551,10 @@ class TestSemanticSearchWithFilters:
             "/api/v2/sessions/search/similar?query=learning&session_format=workshop"
         )
         assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                assert result["session"].get("session_format") == "workshop"
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
     def test_semantic_search_with_duration_min_filter(self, client):
@@ -526,54 +569,44 @@ class TestSemanticSearchWithFilters:
             "/api/v2/sessions/search/similar?query=learning&duration_min=20&duration_max=90"
         )
         assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                duration = result["session"].get("duration", 0)
+                assert 20 <= duration <= 90
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_start_after_filter(self, client):
-        """Test semantic search with start_after date filter."""
+    def test_semantic_search_with_time_window_filter(self, client):
+        """Test semantic search with a single time window filter."""
+        payload = _time_windows_query(
+            [{"start": "2024-01-01T00:00:00", "end": "2025-12-31T23:59:59"}]
+        )
         response = client.get(
-            "/api/v2/sessions/search/similar?query=workshop&start_after=2024-01-01T00:00:00"
+            f"/api/v2/sessions/search/similar?query=workshop&time_windows={payload}"
         )
         assert response.status_code in [200, 503]
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_date_range_filter(self, client):
-        """Test semantic search with date range filter."""
+    def test_semantic_search_with_multiple_time_windows(self, client):
+        """Test semantic search with multiple time windows."""
+        payload = _time_windows_query(
+            [
+                {"start": "2024-01-01T00:00:00", "end": "2024-06-30T23:59:59"},
+                {"start": "2024-09-01T00:00:00", "end": "2025-12-31T23:59:59"},
+            ]
+        )
         response = client.get(
-            "/api/v2/sessions/search/similar?query=machine+learning&start_after=2024-01-01T00:00:00&start_before=2025-12-31T23:59:59"
+            f"/api/v2/sessions/search/similar?query=machine+learning&time_windows={payload}"
         )
         assert response.status_code in [200, 503]
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_invalid_date_format(self, client):
-        """Test semantic search with invalid date format."""
+    def test_semantic_search_with_invalid_time_windows_format(self, client):
+        """Test semantic search with invalid time_windows format."""
         response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&start_after=invalid-date"
+            "/api/v2/sessions/search/similar?query=learning&time_windows=not-json"
         )
         assert response.status_code in [400, 422]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_end_before_filter(self, client):
-        """Test semantic search with end_before date filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&end_before=2025-12-31T23:59:59"
-        )
-        assert response.status_code in [200, 503]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_end_after_filter(self, client):
-        """Test semantic search with end_after date filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=workshop&end_after=2024-01-01T00:00:00"
-        )
-        assert response.status_code in [200, 503]
-
-    @pytest.mark.usefixtures("sessions_with_embeddings")
-    def test_semantic_search_with_timeframe_filter(self, client):
-        """Test semantic search with timeframe (start and end times) filter."""
-        response = client.get(
-            "/api/v2/sessions/search/similar?query=learning&start_after=2024-01-01T00:00:00&end_before=2025-12-31T23:59:59"
-        )
-        assert response.status_code in [200, 503]
 
     def test_semantic_search_query_required(self, client):
         """Test that query parameter is required."""
@@ -591,3 +624,894 @@ class TestSemanticSearchWithFilters:
         response = client.get(f"/api/v2/sessions/search/similar?query={long_query}")
         # Should reject or handle gracefully
         assert response.status_code in [400, 403, 422, 503]
+
+
+@pytest.mark.integration
+class TestRecommendationAPI:
+    """Integration tests for session recommendation endpoint."""
+
+    @pytest.fixture
+    def api_headers(self, sample_api_key):
+        """Generate API headers for authenticated requests."""
+        api_key, plain_key = sample_api_key
+        return {"Authorization": f"Bearer {plain_key}"}
+
+    @pytest.fixture
+    def recommendation_sessions(self, client, sample_event, api_headers):
+        """Create sessions with diverse characteristics for recommendations."""
+        now = datetime.utcnow()
+
+        sessions_data = [
+            {
+                "title": "Introduction to Machine Learning",
+                "start_datetime": now.isoformat(),
+                "end_datetime": (now + timedelta(minutes=60)).isoformat(),
+                "language": "en",
+                "uri": "intro-ml",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "workshop",
+                "location": "Stage Berlin",
+                "speakers": ["Alice ML"],
+                "tags": ["ML", "Intro"],
+                "duration": 60,
+            },
+            {
+                "title": "Advanced Machine Learning Techniques",
+                "start_datetime": (now + timedelta(hours=2)).isoformat(),
+                "end_datetime": (now + timedelta(hours=4)).isoformat(),
+                "language": "en",
+                "uri": "advanced-ml",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "training",
+                "location": "Stage Berlin",
+                "speakers": ["Bob Expert"],
+                "tags": ["ML", "Advanced"],
+                "duration": 120,
+            },
+            {
+                "title": "AI Ethics and Responsibility",
+                "start_datetime": (now + timedelta(hours=5)).isoformat(),
+                "end_datetime": (now + timedelta(hours=5, minutes=30)).isoformat(),
+                "language": "en",
+                "uri": "ai-ethics",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "diskussion",
+                "location": "AI Stage",
+                "speakers": ["Carol Ethics"],
+                "tags": ["Ethics", "AI"],
+                "duration": 30,
+            },
+            {
+                "title": "Deep Learning Fundamentals",
+                "start_datetime": (now + timedelta(hours=6)).isoformat(),
+                "end_datetime": (now + timedelta(hours=7, minutes=30)).isoformat(),
+                "language": "en",
+                "uri": "deep-learning",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "training",
+                "location": "Stage Berlin",
+                "speakers": ["Dave DL"],
+                "tags": ["Deep Learning", "Neural Networks"],
+                "duration": 90,
+            },
+            {
+                "title": "Natural Language Processing",
+                "start_datetime": (now + timedelta(hours=8)).isoformat(),
+                "end_datetime": (now + timedelta(hours=9, minutes=15)).isoformat(),
+                "language": "en",
+                "uri": "nlp-intro",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "input",
+                "location": "AI Stage",
+                "speakers": ["Eve NLP"],
+                "tags": ["NLP", "AI"],
+                "duration": 75,
+            },
+            {
+                "title": "Data Visualization Best Practices",
+                "start_datetime": (now + timedelta(hours=10)).isoformat(),
+                "end_datetime": (now + timedelta(hours=11)).isoformat(),
+                "language": "en",
+                "uri": "data-viz",
+                "event_id": sample_event.id,
+                "status": "published",
+                "session_format": "workshop",
+                "location": "Training Room",
+                "speakers": ["Frank Viz"],
+                "tags": ["Visualization", "Data"],
+                "duration": 60,
+            },
+        ]
+
+        created_sessions = []
+        for session_data in sessions_data:
+            response = client.post(
+                "/api/v2/sessions",
+                headers=api_headers,
+                json=session_data,
+            )
+            assert response.status_code == 201
+            created_sessions.append(response.json())
+
+        return created_sessions
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_query_only(self, client):
+        """Test recommendations with text query only (no accepted_ids)."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning techniques",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            assert isinstance(results, list)
+            assert len(results) <= 5
+            # Verify SessionWithScore structure
+            for result in results:
+                assert "session" in result
+                assert "overall_score" in result
+                assert 0 <= result["overall_score"] <= 1
+                assert "semantic_similarity" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_liked_sessions(self, client, recommendation_sessions):
+        """Test recommendations based on liked sessions (without query)."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            assert isinstance(results, list)
+            # Should not include the liked session itself
+            result_ids = [s["session"]["id"] for s in results]
+            assert liked_session_id not in result_ids
+            # Verify scores
+            for result in results:
+                assert 0 <= result["overall_score"] <= 1
+                assert result["liked_cluster_similarity"] is not None
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_seen_session_exclusion(self, client, recommendation_sessions):
+        """Test that accepted and rejected sessions are excluded from results."""
+        session1_id = recommendation_sessions[0]["id"]
+        session2_id = recommendation_sessions[1]["id"]
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "accepted_ids": [session1_id],
+                "rejected_ids": [session2_id],
+                "limit": 10,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            result_ids = [s["session"]["id"] for s in results]
+            # Both accepted and rejected should be excluded
+            assert session1_id not in result_ids
+            assert session2_id not in result_ids
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_filters_only_crud_fallback(self, client):
+        """Test CRUD fallback when no query and no accepted_ids provided (filters-only mode)."""
+        # This should succeed with CRUD fallback, not fail
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            assert isinstance(results, list)
+            # CRUD fallback returns all sessions with default score of 1.0
+            for result in results:
+                assert result["overall_score"] == 1.0
+                assert result["semantic_similarity"] is None
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_format_filter(self, client, recommendation_sessions):
+        """Test recommendations with session format filter."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "session_format": "training",
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All results should match the format filter
+            for result in results:
+                assert result["session"].get("session_format") == "training"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_language_filter(self, client, recommendation_sessions):
+        """Test recommendations with language filter."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "language": "en",
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                assert result["session"].get("language").lower() == "en"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_duration_range(self, client, recommendation_sessions):
+        """Test recommendations with duration range filter."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "duration_min": 50,
+                "duration_max": 100,
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                duration = result["session"].get("duration", 0)
+                assert 50 <= duration <= 100
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_with_timeframe_filter(self, client, recommendation_sessions):
+        """Test recommendations with plan window filters (find sessions in timeslot)."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        now = datetime.utcnow()
+        start_time = (now + timedelta(hours=3)).isoformat()
+        end_time = (now + timedelta(hours=8)).isoformat()
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "goal_mode": "plan",
+                "time_windows": [{"start": start_time, "end": end_time}],
+                "limit": 5,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All results should fall within the timeframe
+            for result in results:
+                session = result["session"]
+                session_start = datetime.fromisoformat(
+                    session["start_datetime"].replace("Z", "+00:00")
+                )
+                session_end = datetime.fromisoformat(session["end_datetime"].replace("Z", "+00:00"))
+                start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                assert session_start >= start_dt
+                assert session_end <= end_dt
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_limit_constraint(self, client):
+        """Test that recommendations respects limit parameter."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 3,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            assert len(results) <= 3
+            # All results should have scores
+            for result in results:
+                assert "overall_score" in result
+                assert 0 <= result["overall_score"] <= 1
+
+    def test_recommend_invalid_limit(self, client):
+        """Test that invalid limit is rejected."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 101,  # Exceeds max
+            },
+        )
+        assert response.status_code in [400, 422]
+
+    # ========================================================================
+    # Phase 2: Similarity-based re-ranking tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_liked_cluster_similarity(self, client, recommendation_sessions):
+        """Test Phase 2: liked_cluster_similarity is computed and non-zero."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 5,
+                # Phase 2 parameters
+                "liked_embedding_weight": 0.5,
+                "disliked_embedding_weight": 0.2,
+            },
+        )
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # Phase 2: liked_cluster_similarity should be computed (not None)
+                assert result["liked_cluster_similarity"] is not None
+                assert 0 <= result["liked_cluster_similarity"] <= 1
+                # Overall score should include the boost from liked similarity
+                assert result["overall_score"] > 0
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_disliked_penalty(self, client):
+        """Test Phase 2: disliked_embedding_weight parameter works (doesn't error).
+
+        Note: This is a simplified integration test that just verifies the API
+        accepts disliked_embedding_weight and returns valid responses.
+        Detailed penalty behavior is tested in unit tests (test_recommender.py).
+        """
+        # Test that the API accepts disliked weight parameter without errors
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.3,
+                "disliked_embedding_weight": 0.2,  # Parameter is accepted
+            },
+        )
+
+        # Should return 200 or 503 (if service unavailable)
+        assert response.status_code in [200, 503]
+
+        if response.status_code == 200:
+            results = response.json()
+            assert isinstance(results, list)
+            # If results exist, verify score structure
+            for result in results:
+                assert "overall_score" in result
+                assert "disliked_similarity" in result
+                assert 0 <= result["overall_score"] <= 1
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_weight_tuning(self, client, recommendation_sessions):
+        """Test Phase 2: Weight parameters affect overall scores."""
+        liked_session_id = recommendation_sessions[0]["id"]
+
+        response_low_weight = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.1,  # Low boost
+                "disliked_embedding_weight": 0.1,
+            },
+        )
+        response_high_weight = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.9,  # High boost
+                "disliked_embedding_weight": 0.9,
+            },
+        )
+
+        if response_low_weight.status_code == 200 and response_high_weight.status_code == 200:
+            results1 = response_low_weight.json()
+            results2 = response_high_weight.json()
+
+            # Verify scores are valid
+            for results in [results1, results2]:
+                for result in results:
+                    assert 0 <= result["overall_score"] <= 1
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_zero_weights(self, client, recommendation_sessions):
+        """Test Phase 2: Zero weights disable re-ranking adjustments."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 3,
+                "liked_embedding_weight": 0.0,  # No boost
+                "disliked_embedding_weight": 0.0,  # No penalty
+            },
+        )
+
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # With zero weights, overall_score should be base_score (semantic_similarity or 0.5)
+                assert 0 <= result["overall_score"] <= 1
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_recommend_phase2_query_plus_reranking(self, client, recommendation_sessions):
+        """Test Phase 2: Query + re-ranking with liked/disliked sessions."""
+        liked_session_id = recommendation_sessions[0]["id"]
+        disliked_session_id = (
+            recommendation_sessions[1]["id"] if len(recommendation_sessions) > 1 else None
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning workshop",
+                "accepted_ids": [liked_session_id] if liked_session_id else [],
+                "rejected_ids": [disliked_session_id] if disliked_session_id else [],
+                "limit": 5,
+                "liked_embedding_weight": 0.4,
+                "disliked_embedding_weight": 0.3,
+            },
+        )
+
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # With query, semantic_similarity should be present and non-None
+                assert result["semantic_similarity"] is not None
+                assert 0 <= result["semantic_similarity"] <= 1
+                # Re-ranking should still apply
+                assert result["overall_score"] is not None
+                assert 0 <= result["overall_score"] <= 1
+                if liked_session_id:
+                    assert result["liked_cluster_similarity"] is not None
+
+    # ========================================================================
+    # Phase 3: Soft filter margins tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_filter_compliance_score_in_response(self, client):
+        """Test that filter_compliance_score is included in recommendation response."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "limit": 5,
+                # Phase 3 parameters
+                "filter_mode": "hard",
+                "filter_margin_weight": 0.1,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # filter_compliance_score should be present in response
+            for result in results:
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_hard_mode_with_filters(self, client):
+        """Test that hard filter mode applies filters strictly."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "session_format": "workshop",
+                "language": "en",
+                "limit": 10,
+                "filter_mode": "hard",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All returned sessions must match ALL filters
+            for result in results:
+                session = result["session"]
+                assert session["session_format"] == "workshop"
+                assert session["language"].lower() == "en"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_soft_mode_parameter_accepted(self, client):
+        """Test that soft mode parameters are accepted without errors."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 5,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.15,
+                "language": "en",
+            },
+        )
+
+        # Should accept soft mode without error
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # Response structure should be valid
+            assert isinstance(results, list)
+            for result in results:
+                assert "overall_score" in result
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_filter_margin_weight_parameter_range(self, client):
+        """Test that filter_margin_weight parameter accepts 0.0-1.0 range."""
+        # Test minimum weight
+        response1 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.0,
+                "limit": 5,
+            },
+        )
+        assert response1.status_code in [200, 503]
+
+        # Test maximum weight
+        response2 = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "filter_mode": "soft",
+                "filter_margin_weight": 1.0,
+                "limit": 5,
+            },
+        )
+        assert response2.status_code in [200, 503]
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_phase2_plus_phase3_integration(self, client, recommendation_sessions):
+        """Test that Phase 2 re-ranking and Phase 3 compliance work together."""
+        liked_session_id = recommendation_sessions[0]["id"]
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "accepted_ids": [liked_session_id],
+                "rejected_ids": [],
+                "limit": 5,
+                # Phase 2 parameters
+                "liked_embedding_weight": 0.3,
+                "disliked_embedding_weight": 0.2,
+                # Phase 3 parameters
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.1,
+                # Filters
+                "language": "en",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            for result in results:
+                # Phase 2: liked_cluster_similarity should be computed
+                assert result["liked_cluster_similarity"] is not None
+                # Phase 3: filter_compliance_score in response
+                assert "filter_compliance_score" in result
+                # Overall score should exist
+                assert result["overall_score"] > 0
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_default_filter_mode_is_hard(self, client):
+        """Test that default filter mode is 'hard' when not specified."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "session_format": "workshop",
+                "limit": 5,
+                # No filter_mode specified - should default to 'hard'
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # All results should match the session_format filter
+            for result in results:
+                assert result["session"]["session_format"] == "workshop"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_multiple_filters_with_soft_mode(self, client):
+        """Test soft mode with multiple active filters."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": None,
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.2,
+                # Multiple filters
+                "session_format": "workshop",
+                "language": "en",
+                "duration_min": 45,
+                "duration_max": 120,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            # Session data should be valid
+            for result in results:
+                assert "overall_score" in result
+                assert "filter_compliance_score" in result
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_soft_mode_direct_expansion(self, client):
+        """Test that soft mode retrieves candidates directly without hard-pass gating."""
+        response_soft = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.15,
+                # Restrictive format filter
+                "session_format": "diskussion",  # Only "ai-ethics" has this
+                "language": "en",
+            },
+        )
+
+        assert response_soft.status_code in [200, 503]
+        if response_soft.status_code == 200:
+            soft_results = response_soft.json()
+
+            # With soft mode, we expect to get some results
+            # from direct soft-pass retrieval
+            if len(soft_results) > 0:
+                # Check that results are properly formatted
+                for result in soft_results:
+                    assert "overall_score" in result
+                    assert result["overall_score"] >= 0 and result["overall_score"] <= 1
+                    assert (
+                        "filter_compliance_score" in result
+                        or result["filter_compliance_score"] is None
+                    )
+
+                    # Soft-mode results may not strictly match all filters.
+                    if result["session"]["session_format"]:
+                        assert isinstance(result["session"]["session_format"], str)
+
+                # Results should be sorted by overall_score (descending)
+                scores = [r["overall_score"] for r in soft_results]
+                assert scores == sorted(scores, reverse=True)
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_hard_mode_no_expansion(self, client):
+        """Test that hard mode does NOT expand with soft results.
+
+        Hard mode should strictly apply all filters and not use soft pass expansion.
+        """
+        # Same restrictive filters as soft mode test, but with hard mode
+        response_hard = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "limit": 10,
+                "filter_mode": "hard",  # Strict mode
+                "session_format": "diskussion",  # Very restrictive
+                "language": "en",
+            },
+        )
+
+        assert response_hard.status_code in [200, 503]
+        if response_hard.status_code == 200:
+            hard_results = response_hard.json()
+
+            # All hard results MUST match the session_format filter
+            for result in hard_results:
+                if result["session"]["session_format"]:
+                    assert result["session"]["session_format"] == "diskussion"
+                assert result["session"]["language"].lower() == "en"
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase3_compliance_score_reflects_filter_matches(self, client):
+        """Test that compliance_score correctly reflects how many filters matched."""
+        # Use soft mode with query to trigger semantic search path (not CRUD fallback)
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning workshop",  # Provide query to trigger semantic path
+                "limit": 10,
+                "filter_mode": "soft",
+                "filter_margin_weight": 0.2,
+                "session_format": "workshop",
+                "language": "en",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+
+            if len(results) > 0:
+                # Results should be properly formatted
+                for result in results:
+                    assert "overall_score" in result
+                    # compliance_score may be None in hard pass, or a float in soft pass
+                    compliance = result.get("filter_compliance_score")
+                    if compliance is not None:
+                        assert 0.0 <= compliance <= 1.0
+
+    # ========================================================================
+    # Phase 4: Plan mode tests
+    # ========================================================================
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_non_overlapping(self, client):
+        """Plan mode should return a non-overlapping session schedule."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "machine learning",
+                "limit": 10,
+                "goal_mode": "plan",
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+
+            # Validate all session pairs are non-overlapping.
+            for i, left in enumerate(results):
+                left_start = datetime.fromisoformat(
+                    left["session"]["start_datetime"].replace("Z", "+00:00")
+                )
+                left_end = datetime.fromisoformat(
+                    left["session"]["end_datetime"].replace("Z", "+00:00")
+                )
+                for right in results[i + 1 :]:
+                    right_start = datetime.fromisoformat(
+                        right["session"]["start_datetime"].replace("Z", "+00:00")
+                    )
+                    right_end = datetime.fromisoformat(
+                        right["session"]["end_datetime"].replace("Z", "+00:00")
+                    )
+                    overlaps = left_start < right_end and right_start < left_end
+                    assert not overlaps
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_respects_time_window(self, client):
+        """Plan mode should keep sessions inside time_windows bounds."""
+        now = datetime.utcnow()
+        plan_start = (now + timedelta(hours=1)).isoformat()
+        plan_end = (now + timedelta(hours=8)).isoformat()
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "goal_mode": "plan",
+                "time_windows": [{"start": plan_start, "end": plan_end}],
+                "limit": 10,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            plan_start_dt = datetime.fromisoformat(plan_start.replace("Z", "+00:00"))
+            plan_end_dt = datetime.fromisoformat(plan_end.replace("Z", "+00:00"))
+
+            for result in results:
+                session_start = datetime.fromisoformat(
+                    result["session"]["start_datetime"].replace("Z", "+00:00")
+                )
+                session_end = datetime.fromisoformat(
+                    result["session"]["end_datetime"].replace("Z", "+00:00")
+                )
+                assert session_start >= plan_start_dt
+                assert session_end <= plan_end_dt
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_respects_min_break(self, client):
+        """Plan mode should enforce configured minimum break between selected sessions."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "learning",
+                "goal_mode": "plan",
+                "min_break_minutes": 20,
+                "limit": 10,
+            },
+        )
+
+        assert response.status_code in [200, 503]
+        if response.status_code == 200:
+            results = response.json()
+            sessions = sorted(
+                [
+                    {
+                        "start": datetime.fromisoformat(
+                            r["session"]["start_datetime"].replace("Z", "+00:00")
+                        ),
+                        "end": datetime.fromisoformat(
+                            r["session"]["end_datetime"].replace("Z", "+00:00")
+                        ),
+                    }
+                    for r in results
+                ],
+                key=lambda x: x["start"],
+            )
+
+            for prev, nxt in pairwise(sessions):
+                break_minutes = (nxt["start"] - prev["end"]).total_seconds() / 60
+                assert break_minutes >= 20
+
+    @pytest.mark.usefixtures("recommendation_sessions")
+    def test_phase4_plan_mode_invalid_window_rejected(self, client):
+        """Invalid planning window should be rejected by request validation."""
+        now = datetime.utcnow()
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "goal_mode": "plan",
+                "time_windows": [
+                    {
+                        "start": (now + timedelta(hours=2)).isoformat(),
+                        "end": (now + timedelta(hours=1)).isoformat(),
+                    }
+                ],
+                "query": "learning",
+            },
+        )
+
+        assert response.status_code in [400, 422]

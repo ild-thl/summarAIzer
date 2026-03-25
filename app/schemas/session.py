@@ -1,8 +1,9 @@
 """Pydantic schemas for request/response validation."""
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.database.models import EventStatus, SessionFormat, SessionStatus
 
@@ -239,3 +240,165 @@ class SessionWithEvent(SessionResponse):
     """Schema for Session response with associated event."""
 
     event: EventResponse | None = None
+
+
+class TimeWindow(BaseModel):
+    """Single time window with inclusive bounds."""
+
+    start: datetime = Field(..., description="Window start datetime (ISO 8601)")
+    end: datetime = Field(..., description="Window end datetime (ISO 8601)")
+
+    @model_validator(mode="after")
+    def validate_window_order(self):
+        """Ensure each window has valid ordering."""
+        if self.end <= self.start:
+            raise ValueError("time window end must be after start")
+        return self
+
+
+class RecommendRequest(BaseModel):
+    """Request schema for session recommendations.
+
+    All parameters are optional. Behavior depends on inputs:
+    - With query: Semantic search + optional liked/disliked refinement
+    - With accepted_ids: Centroid-based recommendations from liked sessions
+    - With only filters: Falls back to CRUD list_with_filters (efficient basic filtering)
+    - With rejected_ids only: Applies exclusion to basic filtered list
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str | None = Field(
+        None,
+        max_length=8000,
+        description="Optional text query for semantic search",
+    )
+    accepted_ids: list[int] = Field(
+        default_factory=list,
+        description="Session IDs the user has liked (for centroid-based or query refinement)",
+    )
+    rejected_ids: list[int] = Field(
+        default_factory=list,
+        description="Session IDs to exclude from results",
+    )
+    limit: int = Field(10, ge=1, le=100, description="Maximum number of recommendations to return")
+
+    # Optional filters (same as search endpoint)
+    event_id: int | None = Field(None, description="Filter by event ID")
+    session_format: list[str] | None = Field(
+        None, description="Filter by session format (OR logic)"
+    )
+    tags: list[str] | None = Field(None, description="Filter by tags (OR logic)")
+    location: list[str] | None = Field(None, description="Filter by location (OR logic)")
+    language: list[str] | None = Field(
+        None, description="Filter by language codes (OR logic, ISO 639-1)"
+    )
+    duration_min: int | None = Field(None, ge=0, description="Minimum duration in minutes")
+    duration_max: int | None = Field(None, ge=0, description="Maximum duration in minutes")
+
+    # Phase 2: Tuning parameters for re-ranking
+    liked_embedding_weight: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Weight (a) to boost sessions similar to liked sessions (0-1). "
+        "Higher = more influence from liked session similarities. Default 0.3",
+    )
+    disliked_embedding_weight: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Weight (b) to penalize sessions similar to disliked sessions (0-1). "
+        "Higher = stronger penalty from disliked similarities. Default 0.2",
+    )
+
+    # Phase 3: Soft filter margins
+    filter_mode: Literal["hard", "soft"] = Field(
+        default="soft",
+        description="Filter enforcement mode: 'hard' = strictly match all filters, "
+        "'soft' = use soft candidate retrieval and score by filter compliance",
+    )
+    filter_margin_weight: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="When filter_mode='soft', weight to blend filter_compliance_score into overall_score (0-1). "
+        "Default 0.1 means filter compliance contributes 10% to final score. Set to 0.0 if using soft "
+        "mode only to expand candidate pool (compliance shown in response but not scored).",
+    )
+    # Phase 4: Plan optimization mode (non-overlapping schedule curation)
+    goal_mode: Literal["similarity", "plan"] = Field(
+        default="similarity",
+        description="Recommendation goal: 'similarity' (default ranking) or 'plan' (non-overlapping schedule)",
+    )
+    time_windows: list[TimeWindow] | None = Field(
+        None,
+        description="Optional time windows used for filtering and plan mode. Sessions must fit entirely inside any window.",
+    )
+    min_break_minutes: int = Field(
+        default=0,
+        ge=0,
+        le=240,
+        description="Minimum break in minutes required between sessions in plan mode",
+    )
+    max_gap_minutes: int | None = Field(
+        default=None,
+        ge=0,
+        le=720,
+        description="Optional maximum allowed gap in minutes between planned sessions",
+    )
+    plan_candidate_multiplier: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="Multiplier for candidate pool size before plan optimization (limit * multiplier)",
+    )
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def normalize_language(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize language codes to lowercase for consistency."""
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return [v.lower()]
+        return [str(code).lower() for code in v] if v else None
+
+    @model_validator(mode="after")
+    def validate_time_window(self):
+        """Validate plan-mode specific constraints."""
+        if (
+            self.goal_mode == "plan"
+            and self.time_windows is not None
+            and len(self.time_windows) == 0
+        ):
+            raise ValueError("time_windows must not be empty when provided")
+        return self
+
+
+class SessionWithScore(BaseModel):
+    """Session response with recommendation/search metrics."""
+
+    session: SessionResponse
+    overall_score: float = Field(..., ge=0, le=1, description="Overall recommendation score (0-1)")
+    semantic_similarity: float | None = Field(
+        None, ge=0, le=1, description="Semantic similarity to query (0-1, None if no query)"
+    )
+    liked_cluster_similarity: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Similarity to liked sessions cluster (0-1, None if no liked sessions)",
+    )
+    disliked_similarity: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Similarity to disliked sessions (0-1, None if no disliked sessions)",
+    )
+    filter_compliance_score: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Phase 3 - Filter compliance for soft-filter margins (0-1, None if hard filter mode)",
+    )

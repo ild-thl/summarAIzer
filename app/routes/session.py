@@ -27,6 +27,7 @@ from app.security.auth import (
     get_current_user_optional,
     require_session_owner,
 )
+from app.utils.helpers import DateTimeUtils
 
 logger = structlog.get_logger()
 
@@ -179,10 +180,10 @@ async def list_sessions(
     duration_min: int = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int = Query(None, ge=0, description="Maximum duration in minutes"),
     speaker: str = Query(None, description="Search for speaker name"),
-    start_after: str = Query(None, description="Sessions starting after (ISO 8601)"),
-    start_before: str = Query(None, description="Sessions starting before (ISO 8601)"),
-    end_after: str = Query(None, description="Sessions ending after (ISO 8601)"),
-    end_before: str = Query(None, description="Sessions ending before (ISO 8601)"),
+    time_windows: str | None = Query(
+        None,
+        description='JSON array of time windows, e.g. [{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]',
+    ),
     search: str = Query(None, description="Full-text search on title, description, and speakers"),
     current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -204,10 +205,7 @@ async def list_sessions(
     - **duration_min**: Minimum duration in minutes
     - **duration_max**: Maximum duration in minutes
     - **speaker**: Search for speaker name (case-insensitive)
-    - **start_after**: Sessions starting after date (ISO 8601, e.g., 2024-01-01T00:00:00)
-    - **start_before**: Sessions starting before date (ISO 8601)
-    - **end_after**: Sessions ending after date (ISO 8601)
-    - **end_before**: Sessions ending before date (ISO 8601)
+    - **time_windows**: JSON array of windows; sessions must fit completely inside at least one window
     - **search**: Full-text search on title, description, and speakers (case-insensitive)
 
     **Examples:**
@@ -218,10 +216,8 @@ async def list_sessions(
     - `/api/v2/sessions?tags=AI%26Technology,FutureSkills` (tags with ampersand - URL-encoded)
     - `/api/v2/sessions?search=machine+learning&status=published`
     - `/api/v2/sessions?session_format=input,workshop`
-    - `/api/v2/sessions?start_after=2024-06-01T10:00:00&end_before=2024-06-01T11:30:00` (sessions in timeframe)
+    - `/api/v2/sessions?time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (sessions in timeframe)
     """
-    from datetime import datetime
-
     from app.database.models import SessionFormat, SessionStatus
 
     # Validate and parse enum values using helper
@@ -242,39 +238,8 @@ async def list_sessions(
     if location:
         location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
 
-    # Parse datetime strings if provided
-    start_after_dt = None
-    start_before_dt = None
-    end_after_dt = None
-    end_before_dt = None
-    if start_after:
-        try:
-            start_after_dt = datetime.fromisoformat(start_after.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid start_after format (use ISO 8601)"
-            ) from e
-    if start_before:
-        try:
-            start_before_dt = datetime.fromisoformat(start_before.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid start_before format (use ISO 8601)"
-            ) from e
-    if end_after:
-        try:
-            end_after_dt = datetime.fromisoformat(end_after.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid end_after format (use ISO 8601)"
-            ) from e
-    if end_before:
-        try:
-            end_before_dt = datetime.fromisoformat(end_before.replace("Z", "+00:00"))
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400, detail="Invalid end_before format (use ISO 8601)"
-            ) from e
+    # Parse time windows JSON if provided
+    parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
 
     # Parse tags (comma-separated)
     tags_list = None
@@ -295,10 +260,7 @@ async def list_sessions(
         duration_min=duration_min,
         duration_max=duration_max,
         speaker=speaker,
-        start_after=start_after_dt,
-        start_before=start_before_dt,
-        end_after=end_after_dt,
-        end_before=end_before_dt,
+        time_windows=parsed_time_windows,
         search=search,
     )
 

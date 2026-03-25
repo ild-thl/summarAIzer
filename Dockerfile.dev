@@ -38,7 +38,9 @@ COPY . /app
 
 # Create app user for non-root execution
 RUN useradd --create-home --shell /bin/bash app || true && \
-    chown -R app:app /app
+    chown -R app:app /app && \
+    mkdir -p /app/.pytest_cache && \
+    chmod -R 755 /app/.pytest_cache
 
 USER app
 

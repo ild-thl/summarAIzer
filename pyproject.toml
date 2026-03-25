@@ -113,6 +113,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers"
+cache_dir = "/tmp/.pytest_cache"
 markers = [
     "integration: integration tests (skip with: -m 'not integration')",
     "unit: unit tests",
