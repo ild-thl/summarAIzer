@@ -74,12 +74,18 @@ async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     event_id: int | None = Query(None, description="Filter by event ID"),
-    session_format: str | None = Query(None, description="Filter by session format"),
+    session_format: str | None = Query(
+        None,
+        description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
+    ),
     tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
     location: str | None = Query(
         None, description="Filter by location (comma-separated, OR logic)"
     ),
-    language: str | None = Query(None, description="Filter by language (ISO 639-1 code)"),
+    language: str | None = Query(
+        None,
+        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+    ),
     duration_min: int | None = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int | None = Query(None, ge=0, description="Maximum duration in minutes"),
     time_windows: str | None = Query(
@@ -97,10 +103,10 @@ async def search_similar_sessions(
     - **query**: Text to search (will be embedded and matched semantically)
     - **limit**: Maximum number of results (1-100)
     - **event_id**: Optional filter by event ID (applied at DB level)
-    - **session_format**: Optional filter by format (applied via Chroma metadata)
+    - **session_format**: Optional filter by format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
     - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
     - **location**: Optional filter by location (comma-separated, OR logic - matches any location)
-    - **language**: Optional filter by language code (applied via Chroma metadata)
+    - **language**: Optional filter by language code - comma-separated (e.g., en, de, fr) - OR logic
     - **duration_min**: Optional minimum duration in minutes
     - **duration_max**: Optional maximum duration in minutes
     - **time_windows**: Optional JSON array of windows; sessions must fit within at least one window
@@ -108,7 +114,8 @@ async def search_similar_sessions(
     **Examples:**
     - `/api/v2/sessions/search/similar?query=machine+learning`
     - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
-    - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=talk`
+    - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en,de`
+    - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=workshop,input`
     - `/api/v2/sessions/search/similar?query=keynote&location=Landing:Stage+Berlin,AI:Stage+TU+Graz`
     - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (timeframe)
     - `/api/v2/sessions/search/similar?query=learning&duration_min=30&duration_max=90`
@@ -121,12 +128,27 @@ async def search_similar_sessions(
     from app.services.embedding.factory import get_search_service
 
     try:
+        from app.database.models import SessionFormat
+
+        # Validate and parse session_format (comma-separated enum values)
+        session_format_list = None
+        if session_format:
+            from app.routes.session import _validate_and_parse_enum_list
+
+            session_format_list = _validate_and_parse_enum_list(
+                session_format, SessionFormat, "session_format"
+            )
+
+        # Parse language (comma-separated, normalize to lowercase for consistency)
+        language_list = None
+        if language:
+            language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
+
         # Parse tags and location (comma-separated)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
         location_list = (
             [loc.strip() for loc in location.split(",") if loc.strip()] if location else None
         )
-        normalized_language = language.lower() if language else None
 
         # Parse unified time windows
         parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
@@ -140,10 +162,10 @@ async def search_similar_sessions(
             db=db,
             limit=limit,
             event_id=event_id,
-            session_format=session_format,
+            session_format=session_format_list,
             tags=tags_list,
             location=location_list,
-            language=normalized_language,
+            language=language_list,
             duration_min=duration_min,
             duration_max=duration_max,
             time_windows=parsed_time_windows,
@@ -156,10 +178,10 @@ async def search_similar_sessions(
             limit=limit,
             event_id=event_id,
             filters_applied=bool(
-                session_format
+                session_format_list
                 or tags_list
                 or location_list
-                or language
+                or language_list
                 or duration_min
                 or duration_max
                 or parsed_time_windows

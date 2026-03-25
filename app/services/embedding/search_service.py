@@ -70,16 +70,30 @@ class EmbeddingSearchService:
 
     @staticmethod
     def _build_simple_conditions(
-        session_format: str | None,
-        language: str | None,
+        session_format: list[str] | str | None,
+        language: list[str] | str | None,
         duration_min: int | None,
         duration_max: int | None,
     ) -> list[dict]:
         conditions = []
         if session_format:
-            conditions.append({"session_format": session_format})
+            if isinstance(session_format, list):
+                if len(session_format) == 1:
+                    conditions.append({"session_format": session_format[0]})
+                else:
+                    conditions.append(
+                        {"$or": [{"session_format": fmt} for fmt in session_format]}
+                    )
+            else:
+                conditions.append({"session_format": session_format})
         if language:
-            conditions.append({"language": language})
+            if isinstance(language, list):
+                if len(language) == 1:
+                    conditions.append({"language": language[0]})
+                else:
+                    conditions.append({"$or": [{"language": lang} for lang in language]})
+            else:
+                conditions.append({"language": language})
         if duration_min is not None:
             conditions.append({"duration": {"$gte": duration_min}})
         if duration_max is not None:
@@ -88,10 +102,10 @@ class EmbeddingSearchService:
 
     def _build_chroma_conditions(
         self,
-        session_format: str | None = None,
+        session_format: list[str] | str | None = None,
         tags: list[str] | None = None,
         location: list[str] | None = None,
-        language: str | None = None,
+        language: list[str] | str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         time_windows: list[Any] | None = None,
@@ -181,10 +195,10 @@ class EmbeddingSearchService:
         db: Session,
         limit: int = 10,
         event_id: int | None = None,
-        session_format: str | None = None,
+        session_format: list[str] | str | None = None,
         tags: list[str] | None = None,
         location: list[str] | None = None,
-        language: str | None = None,
+        language: list[str] | str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
         time_windows: list[Any] | None = None,
