@@ -1,23 +1,16 @@
-"""Embeddings manager supporting multiple embedding backends."""
+"""Embeddings provider factory and backend implementations."""
 
-from abc import ABC, abstractmethod
+import asyncio
 
 import requests
 import structlog
 
+from app.services.embedding.protocols import EmbeddingsBackendProtocol
+
 logger = structlog.get_logger()
 
 
-class EmbeddingsBackend(ABC):
-    """Abstract base class for embedding backends."""
-
-    @abstractmethod
-    async def aembed_query(self, text: str) -> list[float]:
-        """Asynchronously embed a query text."""
-        pass
-
-
-class OpenAIEmbeddingsBackend(EmbeddingsBackend):
+class OpenAIEmbeddingsBackend:
     """OpenAI embeddings backend using langchain."""
 
     def __init__(self, api_key: str, api_base_url: str, model: str):
@@ -41,7 +34,7 @@ class OpenAIEmbeddingsBackend(EmbeddingsBackend):
         return await self.embeddings.aembed_query(text)
 
 
-class HuggingFaceInferenceEmbeddingsBackend(EmbeddingsBackend):
+class HuggingFaceInferenceEmbeddingsBackend:
     """HuggingFace Inference API embeddings backend."""
 
     def __init__(self, api_key: str, api_base_url: str):
@@ -54,8 +47,8 @@ class HuggingFaceInferenceEmbeddingsBackend(EmbeddingsBackend):
         )
 
     async def aembed_query(self, text: str) -> list[float]:
-        """Embed query using HuggingFace Inference API."""
-        return self.embed_query(text)
+        """Embed query using HuggingFace Inference API without blocking the event loop."""
+        return await asyncio.to_thread(self.embed_query, text)
 
     def embed_query(self, text: str) -> list[float]:
         """Embed query text synchronously."""
@@ -66,6 +59,7 @@ class HuggingFaceInferenceEmbeddingsBackend(EmbeddingsBackend):
             self.api_base_url,
             json={"inputs": [text]},
             headers=headers,
+            timeout=30,
         )
         response.raise_for_status()
         result = response.json()
@@ -80,7 +74,7 @@ class HuggingFaceInferenceEmbeddingsBackend(EmbeddingsBackend):
         raise ValueError(f"Unexpected response format from HuggingFace API: {result}")
 
 
-def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackend:
+def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackendProtocol:
     """
     Factory function to create embeddings backend.
 

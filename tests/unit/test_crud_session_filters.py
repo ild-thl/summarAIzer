@@ -261,29 +261,43 @@ class TestSessionCRUDFilters:
         assert len(results) >= 4
 
     @pytest.mark.usefixtures("sessions_dataset")
-    def test_filter_by_start_after_date(self, test_db_class):
-        """Test filtering sessions starting after a date."""
-        cutoff = datetime.utcnow() + timedelta(hours=5)
-        results = session_crud.list_with_filters(test_db_class, start_after=cutoff)
-        # Flexible - just check filtering works correctly
-        assert all(s.start_datetime >= cutoff for s in results)
-
-    @pytest.mark.usefixtures("sessions_dataset")
-    def test_filter_by_start_before_date(self, test_db_class):
-        """Test filtering sessions starting before a date."""
-        cutoff = datetime.utcnow() + timedelta(hours=1, minutes=30)
-        results = session_crud.list_with_filters(test_db_class, start_before=cutoff)
-        assert len(results) == 2  # ML intro and DL workshop part of it
-        assert all(s.start_datetime <= cutoff for s in results)
-
-    @pytest.mark.usefixtures("sessions_dataset")
-    def test_filter_by_date_range(self, test_db_class):
-        """Test filtering by date range."""
+    def test_filter_by_single_time_window(self, test_db_class):
+        """Test filtering sessions inside one time window."""
         start = datetime.utcnow() + timedelta(hours=3)
         end = datetime.utcnow() + timedelta(hours=7)
-        results = session_crud.list_with_filters(test_db_class, start_after=start, start_before=end)
-        assert len(results) == 2  # Ethics and Q&A
-        assert all(start <= s.start_datetime <= end for s in results)
+        results = session_crud.list_with_filters(
+            test_db_class,
+            time_windows=[{"start": start, "end": end}],
+        )
+        assert all(start <= s.start_datetime and s.end_datetime <= end for s in results)
+
+    @pytest.mark.usefixtures("sessions_dataset")
+    def test_filter_by_early_time_window(self, test_db_class):
+        """Test filtering sessions inside early time window."""
+        start = datetime.utcnow()
+        end = datetime.utcnow() + timedelta(hours=1, minutes=30)
+        results = session_crud.list_with_filters(
+            test_db_class,
+            time_windows=[{"start": start, "end": end}],
+        )
+        assert all(start <= s.start_datetime and s.end_datetime <= end for s in results)
+
+    @pytest.mark.usefixtures("sessions_dataset")
+    def test_filter_by_multiple_time_windows(self, test_db_class):
+        """Test filtering across multiple date ranges."""
+        start = datetime.utcnow() + timedelta(hours=3)
+        end = datetime.utcnow() + timedelta(hours=7)
+        start2 = datetime.utcnow() + timedelta(days=1)
+        end2 = datetime.utcnow() + timedelta(days=1, hours=2)
+        results = session_crud.list_with_filters(
+            test_db_class,
+            time_windows=[{"start": start, "end": end}, {"start": start2, "end": end2}],
+        )
+        assert all(
+            (start <= s.start_datetime and s.end_datetime <= end)
+            or (start2 <= s.start_datetime and s.end_datetime <= end2)
+            for s in results
+        )
 
     @pytest.mark.usefixtures("sessions_dataset")
     def test_search_by_title(self, test_db_class):

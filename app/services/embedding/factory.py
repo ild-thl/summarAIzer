@@ -10,15 +10,16 @@ from functools import lru_cache
 import structlog
 
 from app.config.settings import get_settings
-from app.services.embedding_exceptions import ChromaConnectionError
-from app.services.embedding_search_service import EmbeddingSearchService
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.exceptions import ChromaConnectionError
+from app.services.embedding.search_service import EmbeddingSearchService
+from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.service import RecommendationService
 
 logger = structlog.get_logger()
 
 
 @lru_cache(maxsize=1)
-def get_embedding_service() -> EmbeddingService:
+def get_embedding_service() -> EmbeddingService | None:
     """
     Factory function for EmbeddingService with dependency injection.
 
@@ -69,6 +70,7 @@ def get_embedding_service() -> EmbeddingService:
         raise ChromaConnectionError(f"Failed to initialize embedding service: {e!s}") from e
 
 
+@lru_cache(maxsize=1)
 def get_search_service() -> EmbeddingSearchService:
     """
     Factory for EmbeddingSearchService.
@@ -87,6 +89,17 @@ def get_search_service() -> EmbeddingSearchService:
     return EmbeddingSearchService(embedding_service)
 
 
+@lru_cache(maxsize=1)
+def get_recommendation_service() -> RecommendationService:
+    """Factory for RecommendationService."""
+    embedding_service = get_embedding_service()
+
+    if embedding_service is None:
+        raise ChromaConnectionError("Embeddings are disabled")
+
+    return RecommendationService(embedding_service)
+
+
 def reset_services():
     """
     Reset cached services (useful for testing).
@@ -94,4 +107,6 @@ def reset_services():
     Clears the lru_cache to force re-initialization on next call.
     """
     get_embedding_service.cache_clear()
+    get_search_service.cache_clear()
+    get_recommendation_service.cache_clear()
     logger.debug("embedding_services_cache_cleared")

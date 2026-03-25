@@ -10,9 +10,9 @@ from app.async_jobs.celery_app import app
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
 from app.database.connection import SessionLocal
-from app.services.embedding_exceptions import ChromaConnectionError
-from app.services.embedding_factory import get_embedding_service
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding.exceptions import ChromaConnectionError
+from app.services.embedding.factory import get_embedding_service
+from app.services.embedding.service import EmbeddingService
 from app.workflows.execution_context import (
     GenerationState,
     WorkflowRegistry,
