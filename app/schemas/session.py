@@ -354,6 +354,16 @@ class RecommendRequest(BaseModel):
         description="Multiplier for candidate pool size before plan optimization (limit * multiplier)",
     )
 
+    # Phase 3.5: Diversity optimization
+    diversity_weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Weight for diversity re-ranking (0-1). 0 = pure relevance (default), "
+        "higher values promote variety in tags, session formats, languages, and embedding space. "
+        "Useful when filtering for multiple tags/formats to ensure balanced coverage.",
+    )
+
     @field_validator("language", mode="before")
     @classmethod
     def normalize_language(cls, v: list[str] | str | None) -> list[str] | None:
@@ -401,4 +411,10 @@ class SessionWithScore(BaseModel):
         ge=0,
         le=1,
         description="Phase 3 - Filter compliance for soft-filter margins (0-1, None if hard filter mode)",
+    )
+    diversity_score: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Phase 3.5 - Diversity contribution score (0-1, None if diversity_weight=0)",
     )

@@ -14,6 +14,7 @@ from app.crud.session import session_crud
 from app.database.models import SessionStatus
 from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.diversity import RecommendationDiversityOptimizer
 from app.services.recommendation.filters import RecommendationFilterEvaluator
 from app.services.recommendation.planning import RecommendationPlanner
 from app.services.recommendation.scoring import RecommendationScoreEngine
@@ -39,6 +40,7 @@ class RecommendationQueryParams:
     disliked_embedding_weight: float = 0.2
     filter_mode: str = "hard"
     filter_margin_weight: float = 0.1
+    diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
 
 
@@ -50,6 +52,7 @@ class RecommendationService:
         self.recommendation_planner = RecommendationPlanner()
         self.filter_evaluator = RecommendationFilterEvaluator(self.recommendation_planner)
         self.score_engine = RecommendationScoreEngine()
+        self.diversity_optimizer = RecommendationDiversityOptimizer()
 
     @staticmethod
     def _extract_window_bounds(window: Any) -> tuple[datetime | None, datetime | None]:
@@ -323,6 +326,7 @@ class RecommendationService:
                 "hard_pass_results": 0,
                 "soft_pass_results": 0,
                 "soft_pass_triggered": False,
+                "embeddings_map": {},
             }
 
         return await self._recommend_with_semantic_search(
@@ -349,6 +353,17 @@ class RecommendationService:
             seen_ids=seen_ids,
             candidate_limit=candidate_limit,
         )
+
+        if params.diversity_weight > 0:
+            recommendations = self.diversity_optimizer.diversify_results(
+                candidates=recommendations,
+                limit=len(recommendations),
+                diversity_weight=params.diversity_weight,
+                embeddings_map=search_debug.get("embeddings_map"),
+                session_format=params.session_format,
+                tags=params.tags,
+                language=params.language,
+            )
 
         planned = self._optimize_session_plan(
             recommendations=recommendations,
@@ -445,6 +460,7 @@ class RecommendationService:
         disliked_embedding_weight: float = 0.2,
         filter_mode: str = "hard",
         filter_margin_weight: float = 0.1,
+        diversity_weight: float = 0.0,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
         min_break_minutes: int = 0,
@@ -468,6 +484,7 @@ class RecommendationService:
             disliked_embedding_weight=disliked_embedding_weight,
             filter_mode=filter_mode,
             filter_margin_weight=filter_margin_weight,
+            diversity_weight=diversity_weight,
             time_windows=time_windows,
         )
         seen_ids = set(params.accepted_ids + params.rejected_ids)
@@ -584,7 +601,7 @@ class RecommendationService:
             accepted_ids=params.accepted_ids,
             rejected_ids=params.rejected_ids,
         )
-        recommendations = await self._process_chroma_recommendations(
+        recommendations, chroma_id_to_embedding = await self._process_chroma_recommendations(
             chroma_results_hard=chroma_results_hard,
             chroma_results_soft=chroma_results_soft,
             db=db,
@@ -600,6 +617,7 @@ class RecommendationService:
             "hard_pass_results": len(chroma_results_hard),
             "soft_pass_results": len(chroma_results_soft),
             "soft_pass_triggered": soft_pass_triggered,
+            "embeddings_map": chroma_id_to_embedding,
         }
 
     async def _collect_soft_pass_candidates(
@@ -745,6 +763,7 @@ class RecommendationService:
                         "liked_cluster_similarity": None,
                         "disliked_similarity": None,
                         "filter_compliance_score": None,
+                        "diversity_score": None,
                     }
                     recommendations.append((session, scores))
                 recommendations = recommendations[:limit]
@@ -841,7 +860,7 @@ class RecommendationService:
         params: RecommendationQueryParams,
         limit: int,
         soft_pass_triggered: bool = False,
-    ) -> list[tuple]:
+    ) -> tuple[list[tuple], dict]:
         chroma_id_to_embedding = await self._batch_fetch_embeddings(
             chroma_results_hard, chroma_results_soft
         )
@@ -876,7 +895,21 @@ class RecommendationService:
 
         recommendations_final = [(session, scores) for session, scores, _ in recommendations]
         recommendations_final.sort(key=lambda x: x[1]["overall_score"], reverse=True)
-        recommendations_final = recommendations_final[:limit]
+
+        if params.diversity_weight > 0:
+            recommendations_final = self.diversity_optimizer.diversify_results(
+                candidates=recommendations_final,
+                limit=limit,
+                diversity_weight=params.diversity_weight,
+                embeddings_map=chroma_id_to_embedding,
+                session_format=params.session_format,
+                tags=params.tags,
+                language=params.language,
+            )
+        else:
+            recommendations_final = recommendations_final[:limit]
+            for _, scores in recommendations_final:
+                scores["diversity_score"] = None
 
         logger.info(
             "recommendation_completed",
@@ -887,7 +920,7 @@ class RecommendationService:
             soft_pass_triggered=soft_pass_triggered,
         )
 
-        return recommendations_final
+        return recommendations_final, chroma_id_to_embedding
 
     async def _process_hard_pass_results(
         self,
@@ -1137,4 +1170,5 @@ class RecommendationService:
             "filter_compliance_score": (
                 round(filter_compliance_score, 3) if filter_compliance_score is not None else None
             ),
+            "diversity_score": None,
         }

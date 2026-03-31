@@ -334,6 +334,7 @@ async def recommend_sessions(
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
             filter_mode=recommend_req.filter_mode,
             filter_margin_weight=recommend_req.filter_margin_weight,
+            diversity_weight=recommend_req.diversity_weight,
             goal_mode=recommend_req.goal_mode,
             time_windows=recommend_req.time_windows,
             min_break_minutes=recommend_req.min_break_minutes,
@@ -359,6 +360,7 @@ async def recommend_sessions(
                 liked_cluster_similarity=scores["liked_cluster_similarity"],
                 disliked_similarity=scores["disliked_similarity"],
                 filter_compliance_score=scores["filter_compliance_score"],
+                diversity_score=scores.get("diversity_score"),
             )
             for session, scores in sessions
         ]
