@@ -4,13 +4,13 @@ from collections.abc import Iterable
 from typing import Any
 
 import structlog
-from sqlalchemy import String, and_, cast, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
-from app.database.models import SessionStatus
+from app.database.models import SessionLocation, SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
 
 logger = structlog.get_logger()
@@ -48,7 +48,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 speakers=obj_in.speakers,
                 tags=obj_in.tags,
                 short_description=obj_in.short_description,
-                location=obj_in.location,
                 start_datetime=obj_in.start_datetime,
                 end_datetime=obj_in.end_datetime,
                 recording_url=(str(obj_in.recording_url) if obj_in.recording_url else None),
@@ -61,6 +60,14 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 owner_id=owner_id,
                 available_content_identifiers=[],
             )
+            if obj_in.location is not None:
+                db_obj.location_rel = SessionLocation(
+                    city=obj_in.location.city,
+                    name=obj_in.location.name,
+                    country=obj_in.location.country,
+                    address=obj_in.location.address,
+                    postal_code=obj_in.location.postal_code,
+                )
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
@@ -123,9 +130,10 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         event_id: int,
         status: SessionStatus = SessionStatus.PUBLISHED,
     ) -> tuple[list[str], list[str]]:
-        """Return unique tags and locations available for an event."""
+        """Return unique tags and city/name pairs available for an event."""
         rows = (
-            db.query(self.model.tags, self.model.location)
+            db.query(self.model.tags, SessionLocation.city, SessionLocation.name)
+            .outerjoin(SessionLocation, SessionLocation.session_id == self.model.id)
             .filter(self.model.event_id == event_id, self.model.status == status)
             .all()
         )
@@ -133,17 +141,15 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         unique_tags: set[str] = set()
         unique_locations: set[str] = set()
 
-        for tags, location in rows:
+        for tags, city, _loc_name in rows:
             if isinstance(tags, Iterable) and not isinstance(tags, str):
                 for tag in tags:
                     tag_text = str(tag).strip()
                     if tag_text:
                         unique_tags.add(tag_text)
 
-            if location:
-                location_text = str(location).strip()
-                if location_text:
-                    unique_locations.add(location_text)
+            if city:
+                unique_locations.add(str(city).strip())
 
         return sorted(unique_tags), sorted(unique_locations)
 
@@ -203,13 +209,14 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if window_conditions:
             filters.append(or_(*window_conditions))
 
-    def _build_session_filters(
+    def _build_session_filters(  # noqa: C901
         self,
         status: str | list[str] | None = None,
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -239,14 +246,24 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if language_condition is not None:
             filters.append(language_condition)
 
-        # Location filter: match any location (OR logic)
-        if location:
-            location_conditions = [self.model.location == loc for loc in location]
+        # Location filters via join on session_locations table
+        if location_cities or location_names:
+            location_conditions = []
+            if location_cities:
+                location_conditions.extend(
+                    [SessionLocation.city == city for city in location_cities]
+                )
+            if location_names:
+                location_conditions.extend(
+                    [SessionLocation.name == name for name in location_names]
+                )
             filters.append(or_(*location_conditions))
 
         # Tag filter: Check if session tags array contains any of the provided tags (OR logic)
         if tags:
             tag_conditions = []
+            from sqlalchemy import String, cast
+
             for tag in tags:
                 quoted_tag = f'"{tag}"'
                 tag_conditions.append(cast(self.model.tags, String).ilike(f"%{quoted_tag}%"))
@@ -257,6 +274,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         # Speaker search (cast JSON to string for searching)
         if speaker:
+            from sqlalchemy import String, cast
+
             filters.append(cast(self.model.speakers, String).ilike(f"%{speaker}%"))
 
         # Time windows filter
@@ -264,6 +283,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         # Full-text search on title, description, and speakers
         if search:
+            from sqlalchemy import String, cast
+
             search_term = f"%{search}%"
             filters.append(
                 or_(
@@ -284,7 +305,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -292,38 +314,20 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         time_windows: list[Any] | None = None,
         search: str | None = None,
     ) -> list[SessionModel]:
-        """
-        List sessions with advanced filtering and full-text search.
-
-        Args:
-            db: Database session
-            skip: Offset for pagination
-            limit: Max results (capped at 1000)
-            status: Filter by status - single value or list (published, draft) - OR logic
-            event_id: Filter by event ID
-            session_format: Filter by session format - single value or list (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
-            tags: Any of these tags (OR logic)
-            location: Any of these locations (OR logic)
-            language: Filter by language code - single value or list (e.g. en, de) - OR logic
-            duration_min: Minimum duration in minutes
-            duration_max: Maximum duration in minutes
-            speaker: Search for speaker name
-            time_windows: Sessions must fit within any provided time window
-            search: Full-text search on title, description, and speakers
-
-        Returns:
-            List of matching sessions
-        """
+        """List sessions with advanced filtering and full-text search."""
         limit = min(limit, 1000)
         query = db.query(self.model)
 
-        # Build and apply filters
+        if location_cities or location_names:
+            query = query.outerjoin(SessionLocation, SessionLocation.session_id == self.model.id)
+
         filters = self._build_session_filters(
             status=status,
             event_id=event_id,
             session_format=session_format,
             tags=tags,
-            location=location,
+            location_cities=location_cities,
+            location_names=location_names,
             language=language,
             duration_min=duration_min,
             duration_max=duration_max,
@@ -336,6 +340,50 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             query = query.filter(filter_condition)
 
         return query.offset(skip).limit(limit).all()
+
+    def _apply_location_update(
+        self,
+        db_obj: SessionModel,
+        location_data: dict[str, Any] | None,
+        location_was_provided: bool,
+    ) -> None:
+        """Apply structured location updates to the related location row."""
+        if location_data is not None:
+            if db_obj.location_rel is None:
+                db_obj.location_rel = SessionLocation()
+            for field, value in location_data.items():
+                setattr(db_obj.location_rel, field, value)
+            return
+
+        if location_was_provided:
+            db_obj.location_rel = None
+
+    def _emit_status_transition_event(
+        self,
+        db_obj: SessionModel,
+        previous_status: str,
+    ) -> None:
+        """Emit lifecycle events when a session changes publication state."""
+        from app.events import SessionEventBus
+
+        if previous_status != "published" and db_obj.status == "published":
+            SessionEventBus.emit(
+                "session_published",
+                session_id=db_obj.id,
+                uri=db_obj.uri,
+                event_id=db_obj.event_id,
+                previous_status=previous_status,
+            )
+            return
+
+        if previous_status == "published" and db_obj.status == "draft":
+            SessionEventBus.emit(
+                "session_unpublished",
+                session_id=db_obj.id,
+                uri=db_obj.uri,
+                event_id=db_obj.event_id,
+                previous_status=previous_status,
+            )
 
     def update(self, db: Session, id: int, obj_in: SessionUpdate) -> SessionModel | None:
         """Update a session."""
@@ -354,8 +402,17 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             if update_data.get("recording_url"):
                 update_data["recording_url"] = str(update_data["recording_url"])
 
+            # Handle structured location separately — never set as scalar column
+            location_data = update_data.pop("location", None)
+
             for field, value in update_data.items():
                 setattr(db_obj, field, value)
+
+            self._apply_location_update(
+                db_obj=db_obj,
+                location_data=location_data,
+                location_was_provided="location" in obj_in.model_fields_set,
+            )
 
             db.add(db_obj)
             db.commit()
@@ -364,27 +421,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
             _invalidate_query_refinement_cache({previous_event_id, db_obj.event_id})
 
-            from app.events import SessionEventBus
-
-            # Emit event if status changed to published
-            if previous_status != "published" and db_obj.status == "published":
-                SessionEventBus.emit(
-                    "session_published",
-                    session_id=db_obj.id,
-                    uri=db_obj.uri,
-                    event_id=db_obj.event_id,
-                    previous_status=previous_status,
-                )
-
-            # Emit event if status changed from published to draft (unpublished)
-            elif previous_status == "published" and db_obj.status == "draft":
-                SessionEventBus.emit(
-                    "session_unpublished",
-                    session_id=db_obj.id,
-                    uri=db_obj.uri,
-                    event_id=db_obj.event_id,
-                    previous_status=previous_status,
-                )
+            self._emit_status_transition_event(db_obj=db_obj, previous_status=previous_status)
 
             return db_obj
         except SQLAlchemyError as e:

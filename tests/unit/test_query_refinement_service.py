@@ -19,7 +19,7 @@ class TestQueryRefinementService:
             refined_queries=["ethischer Einsatz von KI im Unterricht"],
             recommended_session_format=[MagicMock(value="diskussion"), MagicMock(value="workshop")],
             recommended_tags=["Ethik", "Nicht vorhanden", "Bildung"],
-            recommended_location=["Raum A", "Nicht vorhanden"],
+            recommended_location_cities=["Raum A", "Nicht vorhanden"],
             rationale="The query expresses a discussion-oriented collaborative learning intent.",
         )
         service = QueryRefinementService(model=MagicMock())
@@ -41,14 +41,14 @@ class TestQueryRefinementService:
         assert result.refined_queries == ["ethischer Einsatz von KI im Unterricht"]
         assert result.session_format == ["diskussion", "workshop"]
         assert result.tags == ["Ethik", "Bildung"]
-        assert result.location == ["Raum A"]
+        assert result.location_cities == ["Raum A"]
 
     async def test_preserves_explicit_user_filters(self):
         response = MagicMock(
             refined_queries=["ethischer Einsatz von KI im Unterricht"],
             recommended_session_format=[MagicMock(value="diskussion")],
             recommended_tags=["Ethik", "Bildung"],
-            recommended_location=["Raum B"],
+            recommended_location_cities=["Raum B"],
             rationale="The topical intent can be expressed more directly for retrieval.",
         )
         service = QueryRefinementService(model=MagicMock())
@@ -61,13 +61,13 @@ class TestQueryRefinementService:
                 event_id=5,
                 session_format=["input"],
                 tags=["Bereits gesetzt"],
-                location=["Raum C"],
+                location_cities=["Raum C"],
             ),
         )
 
         assert result.session_format == ["input"]
         assert result.tags == ["Bereits gesetzt"]
-        assert result.location == ["Raum C"]
+        assert result.location_cities == ["Raum C"]
 
     async def test_multiple_refined_queries_are_returned(self):
         response = MagicMock(
@@ -77,7 +77,7 @@ class TestQueryRefinementService:
             ],
             recommended_session_format=[],
             recommended_tags=[],
-            recommended_location=[],
+            recommended_location_cities=[],
             rationale="Two independent topical interests are present.",
         )
         service = QueryRefinementService(model=MagicMock())

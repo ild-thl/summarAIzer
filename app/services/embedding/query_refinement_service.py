@@ -30,7 +30,7 @@ class EventFilterInventory:
     """Cached event-specific filter inventory."""
 
     tags: list[str]
-    locations: list[str]
+    cities: list[str]
     expires_at: datetime
 
 
@@ -64,7 +64,7 @@ class QueryRefinementService:
         cls,
         params: SearchIntentRefinementRequest,
         available_tags: list[str] | None,
-        available_locations: list[str] | None,
+        available_cities: list[str] | None,
     ) -> dict[str, Any]:
         """Serialize the current frontend state for the LLM prompt."""
         return {
@@ -73,11 +73,12 @@ class QueryRefinementService:
             "existing_filters": {
                 "session_format": params.session_format,
                 "tags": params.tags,
-                "location": params.location,
+                "location_cities": params.location_cities,
+                "location_names": params.location_names,
             },
             "allowed_session_formats": cls._get_allowed_session_formats(),
             "available_tags": available_tags,
-            "available_locations": available_locations,
+            "available_cities": available_cities,
         }
 
     @staticmethod
@@ -100,10 +101,10 @@ class QueryRefinementService:
         """Build the tag/location instruction block."""
         return (
             "Recommend tags only when the query contains strong topical cues that are better "
-            "represented as hard filters. Recommend locations only when the query clearly expresses "
-            "a concrete place preference. For tags and locations, you may only choose values from "
-            "the provided available lists. If no valid available value fits, return an empty "
-            "recommendation. "
+            "represented as hard filters. Recommend location cities only when the query clearly "
+            "expresses a concrete city or place preference. For tags and location cities, you may "
+            "only choose values from the provided available lists. If no valid available value "
+            "fits, return an empty recommendation. "
         )
 
     @classmethod
@@ -128,19 +129,19 @@ class QueryRefinementService:
         params: SearchIntentRefinementRequest,
         llm_result: SearchIntentRefinementLLMResponse,
         available_tags: list[str] | None,
-        available_locations: list[str] | None,
+        available_cities: list[str] | None,
     ) -> tuple[list[str] | None, list[str] | None, list[str] | None]:
         """Keep explicit user filters intact and only fill missing fields safely."""
         session_format = params.session_format or [
             item.value for item in llm_result.recommended_session_format
         ]
         allowed_tags = set(available_tags or [])
-        allowed_locations = set(available_locations or [])
+        allowed_cities = set(available_cities or [])
         tags = params.tags or [tag for tag in llm_result.recommended_tags if tag in allowed_tags]
-        location = params.location or [
-            item for item in llm_result.recommended_location if item in allowed_locations
+        location_cities = params.location_cities or [
+            item for item in llm_result.recommended_location_cities if item in allowed_cities
         ]
-        return session_format or None, tags or None, location or None
+        return session_format or None, tags or None, location_cities or None
 
     def clear_inventory_cache(self) -> None:
         """Clear cached event metadata used for tag/location constraints."""
@@ -161,15 +162,15 @@ class QueryRefinementService:
         cached = self._event_filter_inventory_cache.get(event_id)
         now = datetime.utcnow()
         if cached and cached.expires_at > now:
-            return cached.tags, cached.locations
+            return cached.tags, cached.cities
 
-        tags, locations = session_crud.get_available_tags_and_locations(db, event_id)
+        tags, cities = session_crud.get_available_tags_and_locations(db, event_id)
         self._event_filter_inventory_cache[event_id] = EventFilterInventory(
             tags=tags,
-            locations=locations,
+            cities=cities,
             expires_at=now + self.FILTER_INVENTORY_TTL,
         )
-        return tags, locations
+        return tags, cities
 
     async def refine_search_intent(
         self,
@@ -177,21 +178,21 @@ class QueryRefinementService:
         params: SearchIntentRefinementRequest,
     ) -> SearchIntentRefinementResponse:
         """Refine the free-text query and optionally recommend missing hard filters."""
-        available_tags, available_locations = self._get_event_filter_inventory(db, params.event_id)
+        available_tags, available_cities = self._get_event_filter_inventory(db, params.event_id)
         messages = [
             HumanMessage(
-                content=str(self._build_human_payload(params, available_tags, available_locations))
+                content=str(self._build_human_payload(params, available_tags, available_cities))
             ),
         ]
 
         try:
             result = await self.agent.ainvoke({"messages": messages})
             llm_result = result["structured_response"]
-            session_format, tags, location = self._merge_recommended_filters(
+            session_format, tags, location_cities = self._merge_recommended_filters(
                 params,
                 llm_result,
                 available_tags,
-                available_locations,
+                available_cities,
             )
 
             response = SearchIntentRefinementResponse(
@@ -199,7 +200,7 @@ class QueryRefinementService:
                 event_id=params.event_id,
                 session_format=session_format,
                 tags=tags,
-                location=location,
+                location_cities=location_cities,
                 rationale=llm_result.rationale,
             )
 
@@ -208,7 +209,7 @@ class QueryRefinementService:
                 query_count=len(params.queries),
                 session_format_recommended=bool(llm_result.recommended_session_format),
                 tags_recommended=bool(tags),
-                location_recommended=bool(location),
+                location_cities_recommended=bool(location_cities),
                 event_id=params.event_id,
             )
             return response

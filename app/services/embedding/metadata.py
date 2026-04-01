@@ -18,7 +18,8 @@ class EmbeddingMetadataBuilder:
             "session_format": session.session_format.value if session.session_format else None,
             "tags": session.tags or None,
             "language": session.language or None,
-            "location": session.location or None,
+            "location_city": (session.location_rel.city if session.location_rel else None),
+            "location_name": (session.location_rel.name if session.location_rel else None),
             "duration": session.duration if session.duration else None,
             "speakers": session.speakers or None,
             "start_datetime": (

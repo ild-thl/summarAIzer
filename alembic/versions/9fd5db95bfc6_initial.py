@@ -1,8 +1,8 @@
 """initial
 
-Revision ID: afc348e0074b
+Revision ID: 9fd5db95bfc6
 Revises: 
-Create Date: 2026-03-09 22:22:43.149351
+Create Date: 2026-04-01 18:46:43.176788
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'afc348e0074b'
+revision: str = '9fd5db95bfc6'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -73,9 +73,8 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('title', sa.String(length=255), nullable=False),
     sa.Column('speakers', sa.JSON(), nullable=True),
-    sa.Column('categories', sa.JSON(), nullable=True),
+    sa.Column('tags', sa.JSON(), nullable=True),
     sa.Column('short_description', sa.Text(), nullable=True),
-    sa.Column('location', sa.String(length=255), nullable=True),
     sa.Column('start_datetime', sa.DateTime(), nullable=False),
     sa.Column('end_datetime', sa.DateTime(), nullable=False),
     sa.Column('recording_url', sa.String(length=500), nullable=True),
@@ -101,6 +100,23 @@ def upgrade() -> None:
     op.create_index(op.f('ix_sessions_status'), 'sessions', ['status'], unique=False)
     op.create_index(op.f('ix_sessions_title'), 'sessions', ['title'], unique=False)
     op.create_index(op.f('ix_sessions_uri'), 'sessions', ['uri'], unique=False)
+    op.create_table('session_locations',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('session_id', sa.Integer(), nullable=False),
+    sa.Column('city', sa.String(length=255), nullable=True),
+    sa.Column('name', sa.String(length=255), nullable=True),
+    sa.Column('country', sa.String(length=100), nullable=True),
+    sa.Column('address', sa.Text(), nullable=True),
+    sa.Column('postal_code', sa.String(length=20), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['session_id'], ['sessions.id'], ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_index(op.f('ix_session_locations_city'), 'session_locations', ['city'], unique=False)
+    op.create_index(op.f('ix_session_locations_id'), 'session_locations', ['id'], unique=False)
+    op.create_index(op.f('ix_session_locations_name'), 'session_locations', ['name'], unique=False)
+    op.create_index(op.f('ix_session_locations_session_id'), 'session_locations', ['session_id'], unique=True)
     op.create_table('workflow_executions',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('session_id', sa.Integer(), nullable=False),
@@ -162,6 +178,11 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_workflow_executions_created_by_user_id'), table_name='workflow_executions')
     op.drop_index(op.f('ix_workflow_executions_celery_task_id'), table_name='workflow_executions')
     op.drop_table('workflow_executions')
+    op.drop_index(op.f('ix_session_locations_session_id'), table_name='session_locations')
+    op.drop_index(op.f('ix_session_locations_name'), table_name='session_locations')
+    op.drop_index(op.f('ix_session_locations_id'), table_name='session_locations')
+    op.drop_index(op.f('ix_session_locations_city'), table_name='session_locations')
+    op.drop_table('session_locations')
     op.drop_index(op.f('ix_sessions_uri'), table_name='sessions')
     op.drop_index(op.f('ix_sessions_title'), table_name='sessions')
     op.drop_index(op.f('ix_sessions_status'), table_name='sessions')

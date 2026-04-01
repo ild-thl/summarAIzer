@@ -1,6 +1,7 @@
 """Unit tests for recommendation helper methods and internal logic."""
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -92,7 +93,11 @@ class TestFilterCheckMethods:
 
     def test_check_location_no_match(self, service):
         assert (
-            service.filter_evaluator.check_location(MagicMock(location="Room C"), ["Room A"])
+            service.filter_evaluator.check_location(
+                MagicMock(location_rel=SimpleNamespace(city=None, name="Room C")),
+                ["Room A"],
+                ["Room A"],
+            )
             is False
         )
 
@@ -108,7 +113,7 @@ class TestFilterCheckMethods:
             session_format=None,
             language="en",
             tags=None,
-            location=None,
+            location_rel=None,
             duration=None,
             start_datetime=now,
             end_datetime=now + timedelta(minutes=30),
@@ -118,7 +123,8 @@ class TestFilterCheckMethods:
             session=session,
             session_format="workshop",
             tags=None,
-            location=None,
+            location_cities=None,
+            location_names=None,
             language="en",
             duration_min=None,
             duration_max=None,

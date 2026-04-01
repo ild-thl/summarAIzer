@@ -435,7 +435,7 @@ class TestRecommendFallback:
             session_format=SimpleNamespace(value="workshop"),
             language="en",
             tags=["ml"],
-            location="Berlin",
+            location_rel=SimpleNamespace(city="Berlin", name="Stage Berlin"),
             duration=60,
         )
         non_matching_session = Mock(
@@ -444,7 +444,7 @@ class TestRecommendFallback:
             session_format=SimpleNamespace(value="talk"),
             language="de",
             tags=["ethics"],
-            location="Graz",
+            location_rel=SimpleNamespace(city="Graz", name="Stage Graz"),
             duration=20,
         )
 
@@ -460,7 +460,8 @@ class TestRecommendFallback:
                     session_format="workshop",
                     language="en",
                     tags=["ml"],
-                    location=["Berlin"],
+                    location_cities=["Berlin"],
+                    location_names=None,
                     duration_min=45,
                     duration_max=90,
                     filter_mode="soft",
@@ -473,7 +474,8 @@ class TestRecommendFallback:
             assert call_kwargs.get("session_format") is None
             assert call_kwargs.get("language") is None
             assert call_kwargs.get("tags") is None
-            assert call_kwargs.get("location") is None
+            assert call_kwargs.get("location_cities") is None
+            assert call_kwargs.get("location_names") is None
             assert call_kwargs.get("duration_min") is None
             assert call_kwargs.get("duration_max") is None
 

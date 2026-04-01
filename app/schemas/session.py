@@ -7,6 +7,34 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 
 from app.database.models import EventStatus, SessionFormat, SessionStatus
 
+# ============================================================================
+# Location Schemas
+# ============================================================================
+
+
+class SessionLocationCreate(BaseModel):
+    """Schema for creating or updating a session location."""
+
+    city: str | None = Field(None, max_length=255, description="City name (primary filter key)")
+    name: str | None = Field(
+        None, max_length=255, description="Display name (stage, room, venue, etc.)"
+    )
+    country: str | None = Field(None, max_length=100, description="Country")
+    address: str | None = Field(None, description="Street address")
+    postal_code: str | None = Field(None, max_length=20, description="Postal code")
+
+
+class SessionLocationResponse(BaseModel):
+    """Schema for location in session responses."""
+
+    city: str | None = None
+    name: str | None = None
+    country: str | None = None
+    address: str | None = None
+    postal_code: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
 
 def _normalize_session_format_list(
     value: list[str] | str | list[SessionFormat] | SessionFormat | None,
@@ -135,7 +163,7 @@ class SessionBase(BaseModel):
     speakers: list[str] | None = Field(default=None, description="List of speaker names")
     tags: list[str] | None = Field(default=None, description="Session tags")
     short_description: str | None = Field(None, description="Short description")
-    location: str | None = Field(None, max_length=255, description="Session location")
+    location: SessionLocationCreate | None = Field(None, description="Structured session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
     end_datetime: datetime = Field(..., description="Session end datetime")
     recording_url: HttpUrl | None = Field(None, description="Recording URL")
@@ -154,6 +182,19 @@ class SessionBase(BaseModel):
         """Normalize session_format to lowercase for case-insensitive matching."""
         normalized = _normalize_session_format_list(v)
         return normalized[0] if normalized else None
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def normalize_location(
+        cls, v: SessionLocationCreate | dict | str | None
+    ) -> SessionLocationCreate | dict | None:
+        """Allow legacy string locations by mapping them to the structured location name."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            text = v.strip()
+            return {"name": text} if text else None
+        return v
 
     @field_validator("language", mode="before")
     @classmethod
@@ -207,7 +248,7 @@ class SessionUpdate(BaseModel):
     speakers: list[str] | None = None
     tags: list[str] | None = None
     short_description: str | None = Field(None)
-    location: str | None = Field(None, max_length=255)
+    location: SessionLocationCreate | None = None
     start_datetime: datetime | None = None
     end_datetime: datetime | None = None
     recording_url: HttpUrl | None = None
@@ -224,6 +265,19 @@ class SessionUpdate(BaseModel):
         """Normalize session_format to lowercase for case-insensitive matching."""
         normalized = _normalize_session_format_list(v)
         return normalized[0] if normalized else None
+
+    @field_validator("location", mode="before")
+    @classmethod
+    def normalize_location(
+        cls, v: SessionLocationCreate | dict | str | None
+    ) -> SessionLocationCreate | dict | None:
+        """Allow legacy string locations by mapping them to the structured location name."""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            text = v.strip()
+            return {"name": text} if text else None
+        return v
 
     @field_validator("language", mode="before")
     @classmethod
@@ -247,6 +301,9 @@ class SessionResponse(SessionBase):
 
     id: int = Field(..., description="Session ID")
     owner_id: int | None = Field(None, description="Session owner ID")
+    location: SessionLocationResponse | None = Field(
+        None, description="Structured session location"
+    )
     available_content: list[str] = Field(
         default_factory=list,
         alias="available_content_identifiers",
@@ -256,6 +313,16 @@ class SessionResponse(SessionBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_location_rel(cls, data: object) -> object:
+        """Map ORM location_rel -> location for serialization."""
+        if hasattr(data, "location_rel"):
+            obj = dict(data.__dict__) if hasattr(data, "__dict__") else data
+            obj["location"] = data.location_rel
+            return obj
+        return data
 
 
 class SessionWithEvent(SessionResponse):
@@ -318,7 +385,10 @@ class RecommendRequest(BaseModel):
         None, description="Filter by session format (OR logic)"
     )
     tags: list[str] | None = Field(None, description="Filter by tags (OR logic)")
-    location: list[str] | None = Field(None, description="Filter by location (OR logic)")
+    location_cities: list[str] | None = Field(None, description="Filter by city (OR logic)")
+    location_names: list[str] | None = Field(
+        None, description="Filter by location name such as stage or room (OR logic)"
+    )
     language: list[str] | None = Field(
         None, description="Filter by language codes (OR logic, ISO 639-1)"
     )
@@ -405,7 +475,7 @@ class RecommendRequest(BaseModel):
         """Normalize session format filter as validated list."""
         return _normalize_session_format_list(v)
 
-    @field_validator("tags", "location", mode="before")
+    @field_validator("tags", "location_cities", "location_names", mode="before")
     @classmethod
     def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
         """Normalize optional string-list filters."""
@@ -463,9 +533,13 @@ class SearchIntentRefinementRequest(BaseModel):
         None,
         description="Existing tag filters that must be preserved",
     )
-    location: list[str] | None = Field(
+    location_cities: list[str] | None = Field(
         None,
-        description="Existing location filters",
+        description="Filter by city (OR logic)",
+    )
+    location_names: list[str] | None = Field(
+        None,
+        description="Filter by location name such as stage or room (OR logic)",
     )
 
     @field_validator("queries", mode="before")
@@ -483,7 +557,7 @@ class SearchIntentRefinementRequest(BaseModel):
         """Normalize existing session format filters."""
         return _normalize_session_format_list(v)
 
-    @field_validator("tags", "location", mode="before")
+    @field_validator("tags", "location_cities", "location_names", mode="before")
     @classmethod
     def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
         """Normalize optional string-list filters."""
@@ -510,9 +584,9 @@ class SearchIntentRefinementLLMResponse(BaseModel):
         default_factory=list,
         description="Recommended tags inferred from the query when missing in user filters",
     )
-    recommended_location: list[str] = Field(
+    recommended_location_cities: list[str] = Field(
         default_factory=list,
-        description="Recommended locations inferred from the query when missing in user filters",
+        description="Recommended city filters inferred from the query when missing in user filters",
     )
     rationale: str = Field(
         ...,
@@ -539,10 +613,10 @@ class SearchIntentRefinementLLMResponse(BaseModel):
             return []
         return normalized[:8]
 
-    @field_validator("recommended_location", mode="before")
+    @field_validator("recommended_location_cities", mode="before")
     @classmethod
     def normalize_recommended_location(cls, v: list[str] | str | None) -> list[str]:
-        """Normalize recommended locations and remove empty items."""
+        """Normalize recommended city filters and remove empty items."""
         normalized = _normalize_string_list(v)
         if normalized is None:
             return []
@@ -576,7 +650,9 @@ class SearchIntentRefinementResponse(BaseModel):
         None,
         description="Final tag filters after preserving user input and applying safe recommendations",
     )
-    location: list[str] | None = Field(None, description="Unchanged location filters")
+    location_cities: list[str] | None = Field(
+        None, description="Unchanged or recommended city filters"
+    )
     rationale: str = Field(..., description="Short explanation of the refinement choices")
 
     @field_validator("session_format", mode="before")
@@ -585,7 +661,7 @@ class SearchIntentRefinementResponse(BaseModel):
         """Normalize response session format filters."""
         return _normalize_session_format_list(v)
 
-    @field_validator("tags", "location", mode="before")
+    @field_validator("tags", "location_cities", mode="before")
     @classmethod
     def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
         """Normalize response string-list filters."""

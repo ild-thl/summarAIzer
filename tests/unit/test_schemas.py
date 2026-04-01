@@ -170,7 +170,7 @@ class TestSearchIntentRefinementSchemas:
                 refined_queries=["ethischer Einsatz von KI im Unterricht"],
                 recommended_session_format=["panel"],
                 recommended_tags=["Ethik"],
-                recommended_location=[],
+                recommended_location_cities=[],
                 rationale="Discussion intent implies a format preference.",
             )
 

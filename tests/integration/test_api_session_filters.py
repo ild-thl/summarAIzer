@@ -224,22 +224,22 @@ class TestSessionFilteringAPI:
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_single(self, client):
         """Test filtering by single location."""
-        response = client.get("/api/v2/sessions?location=Stage+Berlin")
+        response = client.get("/api/v2/sessions?location_names=Stage+Berlin")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         assert len(data) >= 2
         # All published results should have this location
-        assert all(s.get("location") == "Stage Berlin" for s in data)
+        assert all((s.get("location") or {}).get("name") == "Stage Berlin" for s in data)
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_multiple_or_logic(self, client):
         """Test filtering by multiple locations uses OR logic."""
-        response = client.get("/api/v2/sessions?location=Stage+Berlin,AI+Stage+TU+Graz")
+        response = client.get("/api/v2/sessions?location_names=Stage+Berlin,AI+Stage+TU+Graz")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include sessions from both locations (OR logic)
         assert len(data) >= 3
-        locations = {s.get("location") for s in data}
+        locations = {(s.get("location") or {}).get("name") for s in data}
         assert "Stage Berlin" in locations or "AI Stage TU Graz" in locations
 
     @pytest.mark.usefixtures("sessions_for_filtering")
@@ -309,7 +309,7 @@ class TestSessionFilteringAPI:
             event_id=9,
             session_format=["diskussion", "workshop"],
             tags=["Ethik", "Bildung"],
-            location=["Raum A"],
+            location_cities=["Raum A"],
             rationale="The query implies collaborative discussion and education-related topics.",
         )
         monkeypatch.setattr(
@@ -334,7 +334,7 @@ class TestSessionFilteringAPI:
         assert "original_query" not in data
         assert data["session_format"] == ["diskussion", "workshop"]
         assert data["tags"] == ["Ethik", "Bildung"]
-        assert data["location"] == ["Raum A"]
+        assert data["location_cities"] == ["Raum A"]
 
     def test_query_refinement_route_rejects_blank_query(self, client):
         """Test the query refinement route rejects blank queries at schema level."""
@@ -881,7 +881,7 @@ class TestRecommendationAPI:
             event_id=9,
             session_format=["workshop"],
             tags=["Didaktik"],
-            location=["Berlin"],
+            location_cities=["Berlin"],
             rationale="Single clear intent",
         )
 
@@ -915,7 +915,7 @@ class TestRecommendationAPI:
         assert call_kwargs["query"] == ["kuenstliche intelligenz praktisch in der lehre einsetzen"]
         assert call_kwargs["session_format"] == ["workshop"]
         assert call_kwargs["tags"] == ["Didaktik"]
-        assert call_kwargs["location"] == ["Berlin"]
+        assert call_kwargs["location_cities"] == ["Berlin"]
 
     def test_recommend_route_refine_query_requires_event_id(self, client):
         """Recommend endpoint should reject refine_query without event_id when query exists."""

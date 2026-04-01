@@ -32,7 +32,8 @@ class RecommendationQueryParams:
     event_id: int | None = None
     session_format: list[str] | None = None
     tags: list[str] | None = None
-    location: list[str] | None = None
+    location_cities: list[str] | None = None
+    location_names: list[str] | None = None
     language: list[str] | None = None
     duration_min: int | None = None
     duration_max: int | None = None
@@ -99,13 +100,19 @@ class RecommendationService:
             return condition1
         return {"$and": [condition1, condition2]}
 
-    def _build_location_condition(self, location: list[str] | None) -> dict | None:
-        if not location:
+    def _build_location_condition(
+        self, location_cities: list[str] | None, location_names: list[str] | None
+    ) -> dict | None:
+        conditions = []
+        if location_cities:
+            conditions.extend([{"location_city": city} for city in location_cities])
+        if location_names:
+            conditions.extend([{"location_name": name} for name in location_names])
+        if not conditions:
             return None
-        location_conditions = [{"location": loc} for loc in location]
-        if len(location_conditions) == 1:
-            return location_conditions[0]
-        return {"$or": location_conditions}
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$or": conditions}
 
     def _build_tags_condition(self, tags: list[str] | None) -> dict | None:
         if not tags:
@@ -172,7 +179,8 @@ class RecommendationService:
         self,
         session_format: list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -183,7 +191,7 @@ class RecommendationService:
             self._build_simple_conditions(session_format, language, duration_min, duration_max)
         )
 
-        location_condition = self._build_location_condition(location)
+        location_condition = self._build_location_condition(location_cities, location_names)
         if location_condition:
             all_conditions.append(location_condition)
 
@@ -480,7 +488,8 @@ class RecommendationService:
         event_id: int | None = None,
         session_format: list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -504,7 +513,8 @@ class RecommendationService:
             event_id=event_id,
             session_format=session_format,
             tags=tags,
-            location=location,
+            location_cities=location_cities,
+            location_names=location_names,
             language=language,
             duration_min=duration_min,
             duration_max=duration_max,
@@ -578,7 +588,8 @@ class RecommendationService:
         metadata_conditions = self._build_chroma_conditions(
             session_format=params.session_format,
             tags=params.tags,
-            location=params.location,
+            location_cities=params.location_cities,
+            location_names=params.location_names,
             language=params.language,
             duration_min=params.duration_min,
             duration_max=params.duration_max,
@@ -784,7 +795,8 @@ class RecommendationService:
                     event_id=params.event_id,
                     session_format=params.session_format,
                     tags=params.tags,
-                    location=params.location,
+                    location_cities=params.location_cities,
+                    location_names=params.location_names,
                     language=params.language,
                     duration_min=params.duration_min,
                     duration_max=params.duration_max,
@@ -1080,7 +1092,8 @@ class RecommendationService:
                 session=session,
                 session_format=params.session_format,
                 tags=params.tags,
-                location=params.location,
+                location_cities=params.location_cities,
+                location_names=params.location_names,
                 language=params.language,
                 duration_min=params.duration_min,
                 duration_max=params.duration_max,

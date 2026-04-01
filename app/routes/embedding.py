@@ -47,7 +47,9 @@ def _is_refinement_worthy(query_values: list[str]) -> bool:
 async def _apply_optional_query_refinement(
     recommend_req: "RecommendRequest",
     db: Session,
-) -> tuple[list[str] | None, list[str] | None, list[str] | None, list[str] | None, bool]:
+) -> tuple[
+    list[str] | None, list[str] | None, list[str] | None, list[str] | None, list[str] | None, bool
+]:
     """Apply query refinement when requested and return effective recommendation inputs."""
     from app.services.embedding.factory import get_query_refinement_service
 
@@ -56,14 +58,16 @@ async def _apply_optional_query_refinement(
 
     effective_session_format = recommend_req.session_format
     effective_tags = recommend_req.tags
-    effective_location = recommend_req.location
+    effective_location_cities = recommend_req.location_cities
+    effective_location_names = recommend_req.location_names
 
     if not (recommend_req.refine_query and query_values):
         return (
             effective_query,
             effective_session_format,
             effective_tags,
-            effective_location,
+            effective_location_cities,
+            effective_location_names,
             False,
         )
 
@@ -77,7 +81,8 @@ async def _apply_optional_query_refinement(
             effective_query,
             effective_session_format,
             effective_tags,
-            effective_location,
+            effective_location_cities,
+            effective_location_names,
             False,
         )
 
@@ -100,7 +105,8 @@ async def _apply_optional_query_refinement(
             event_id=recommend_req.event_id,
             session_format=effective_session_format,
             tags=effective_tags,
-            location=effective_location,
+            location_cities=effective_location_cities,
+            location_names=effective_location_names,
         ),
     )
     effective_query = refined.refined_queries or None
@@ -109,14 +115,15 @@ async def _apply_optional_query_refinement(
         effective_session_format = refined.session_format
     if not effective_tags:
         effective_tags = refined.tags
-    if not effective_location:
-        effective_location = refined.location
+    if not effective_location_cities:
+        effective_location_cities = refined.location_cities
 
     return (
         effective_query,
         effective_session_format,
         effective_tags,
-        effective_location,
+        effective_location_cities,
+        effective_location_names,
         True,
     )
 
@@ -209,8 +216,12 @@ async def search_similar_sessions(
         description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
     ),
     tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location: str | None = Query(
-        None, description="Filter by location (comma-separated, OR logic)"
+    location_cities: str | None = Query(
+        None, description="Filter by city (comma-separated, OR logic)"
+    ),
+    location_names: str | None = Query(
+        None,
+        description="Filter by location name such as stage or room (comma-separated, OR logic)",
     ),
     language: str | None = Query(
         None,
@@ -274,10 +285,15 @@ async def search_similar_sessions(
         if language:
             language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
 
-        # Parse tags and location (comma-separated)
+        # Parse tags and locations (comma-separated)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        location_list = (
-            [loc.strip() for loc in location.split(",") if loc.strip()] if location else None
+        location_cities_list = (
+            [c.strip() for c in location_cities.split(",") if c.strip()]
+            if location_cities
+            else None
+        )
+        location_names_list = (
+            [n.strip() for n in location_names.split(",") if n.strip()] if location_names else None
         )
 
         # Parse unified time windows
@@ -294,7 +310,8 @@ async def search_similar_sessions(
             event_id=event_id,
             session_format=session_format_list,
             tags=tags_list,
-            location=location_list,
+            location_cities=location_cities_list,
+            location_names=location_names_list,
             language=language_list,
             duration_min=duration_min,
             duration_max=duration_max,
@@ -310,7 +327,8 @@ async def search_similar_sessions(
             filters_applied=bool(
                 session_format_list
                 or tags_list
-                or location_list
+                or location_cities_list
+                or location_names_list
                 or language_list
                 or duration_min
                 or duration_max
@@ -448,7 +466,8 @@ async def recommend_sessions(
             effective_query,
             effective_session_format,
             effective_tags,
-            effective_location,
+            effective_location_cities,
+            effective_location_names,
             query_refined,
         ) = await _apply_optional_query_refinement(recommend_req=recommend_req, db=db)
 
@@ -465,7 +484,8 @@ async def recommend_sessions(
             event_id=recommend_req.event_id,
             session_format=effective_session_format,
             tags=effective_tags,
-            location=effective_location,
+            location_cities=effective_location_cities,
+            location_names=effective_location_names,
             language=recommend_req.language,
             duration_min=recommend_req.duration_min,
             duration_max=recommend_req.duration_max,
