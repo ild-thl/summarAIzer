@@ -68,7 +68,7 @@ class QueryRefinementService:
     ) -> dict[str, Any]:
         """Serialize the current frontend state for the LLM prompt."""
         return {
-            "query": params.query,
+            "queries": params.queries,
             "event_id": params.event_id,
             "existing_filters": {
                 "session_format": params.session_format,
@@ -111,7 +111,7 @@ class QueryRefinementService:
         """Assemble the system prompt from smaller instruction blocks."""
         return (
             "You optimize search intent for a festival session retrieval system. "
-            "Rewrite the input into content-focused semantic retrieval queries while preserving "
+            "Rewrite the input queries into content-focused semantic retrieval queries while preserving "
             "the user's actual topics and intent. Remove non-content phrasing like preferences, "
             "meta instructions, and conversational filler. "
             "Split the query into 2 or 3 refined queries when the input contains distinct "
@@ -205,7 +205,7 @@ class QueryRefinementService:
 
             logger.info(
                 "search_intent_refined",
-                query_length=len(params.query),
+                query_count=len(params.queries),
                 session_format_recommended=bool(llm_result.recommended_session_format),
                 tags_recommended=bool(tags),
                 location_recommended=bool(location),

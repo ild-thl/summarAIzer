@@ -31,7 +31,9 @@ class TestQueryRefinementService:
         result = await service.refine_search_intent(
             MagicMock(spec=Session),
             SearchIntentRefinementRequest(
-                query="Ich will mit anderen ueber den ethischen Einsatz von KI im Unterricht diskutieren",
+                queries=[
+                    "Ich will mit anderen ueber den ethischen Einsatz von KI im Unterricht diskutieren"
+                ],
                 event_id=5,
             ),
         )
@@ -55,7 +57,7 @@ class TestQueryRefinementService:
         result = await service.refine_search_intent(
             MagicMock(spec=Session),
             SearchIntentRefinementRequest(
-                query="Ethik in KI im Unterricht",
+                queries=["Ethik in KI im Unterricht"],
                 event_id=5,
                 session_format=["input"],
                 tags=["Bereits gesetzt"],
@@ -85,10 +87,10 @@ class TestQueryRefinementService:
         result = await service.refine_search_intent(
             MagicMock(spec=Session),
             SearchIntentRefinementRequest(
-                query=(
+                queries=[
                     "Kuenstliche Intelligenz praktisch in der Lehre einsetzen und "
                     "kritisches Denken sowie Demokratiebewusstsein schulen"
-                ),
+                ],
                 event_id=5,
             ),
         )
@@ -119,7 +121,7 @@ class TestQueryRefinementService:
     async def test_human_payload_omits_duration_and_time_windows(self):
         payload = QueryRefinementService._build_human_payload(
             SearchIntentRefinementRequest(
-                query="Ich will ueber KI diskutieren",
+                queries=["Ich will ueber KI diskutieren"],
                 event_id=4,
             ),
             ["Ethik"],

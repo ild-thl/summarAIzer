@@ -290,10 +290,17 @@ class RecommendRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str | None = Field(
+    query: str | list[str] | None = Field(
         None,
         max_length=8000,
-        description="Optional text query for semantic search",
+        description="Optional single query or list of queries for semantic search",
+    )
+    refine_query: bool = Field(
+        default=False,
+        description=(
+            "If true, run LLM query refinement before recommendation. "
+            "Requires event_id when query is provided."
+        ),
     )
     accepted_ids: list[int] = Field(
         default_factory=list,
@@ -392,9 +399,37 @@ class RecommendRequest(BaseModel):
         """Normalize language codes to lowercase for consistency."""
         return _normalize_string_list(v, lowercase=True)
 
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize session format filter as validated list."""
+        return _normalize_session_format_list(v)
+
+    @field_validator("tags", "location", mode="before")
+    @classmethod
+    def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize optional string-list filters."""
+        return _normalize_string_list(v)
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def normalize_query(cls, v: str | list[str] | None) -> str | list[str] | None:
+        """Normalize query input for single or multi-query requests."""
+        if v is None:
+            return None
+
+        if isinstance(v, list):
+            normalized = _normalize_string_list(v)
+            return normalized
+
+        text = str(v).strip()
+        return text or None
+
     @model_validator(mode="after")
     def validate_time_window(self):
         """Validate plan-mode specific constraints."""
+        if self.refine_query and self.query and self.event_id is None:
+            raise ValueError("event_id is required when refine_query=true and query is provided")
         if (
             self.goal_mode == "plan"
             and self.time_windows is not None
@@ -409,11 +444,11 @@ class SearchIntentRefinementRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    query: str = Field(
+    queries: list[str] = Field(
         ...,
         min_length=1,
-        max_length=8000,
-        description="Natural language search intent to optimize for retrieval",
+        max_length=10,
+        description="One or more natural language search intents to optimize for retrieval",
     )
     event_id: int = Field(
         ...,
@@ -433,14 +468,14 @@ class SearchIntentRefinementRequest(BaseModel):
         description="Existing location filters",
     )
 
-    @field_validator("query", mode="before")
+    @field_validator("queries", mode="before")
     @classmethod
-    def normalize_query(cls, v: str) -> str:
-        """Normalize query text and reject blank input."""
-        query = str(v).strip()
-        if not query:
-            raise ValueError("query must not be blank")
-        return query
+    def normalize_queries(cls, v: list[str]) -> list[str]:
+        """Normalize query list and reject empty/blank input."""
+        normalized = _normalize_string_list(v)
+        if normalized is None:
+            raise ValueError("queries must contain at least one query")
+        return normalized[:10]
 
     @field_validator("session_format", mode="before")
     @classmethod
@@ -488,21 +523,12 @@ class SearchIntentRefinementLLMResponse(BaseModel):
 
     @field_validator("refined_queries", mode="before")
     @classmethod
-    def normalize_refined_queries(cls, v: list[str] | str) -> list[str]:
+    def normalize_refined_queries(cls, v: list[str]) -> list[str]:
         """Ensure at least one non-empty refined query is returned."""
         normalized = _normalize_string_list(v)
         if normalized is None:
             raise ValueError("refined_queries must contain at least one query")
         return normalized[:3]
-
-    @model_validator(mode="before")
-    @classmethod
-    def migrate_single_refined_query(cls, data: object) -> object:
-        """Allow legacy single-query responses by mapping to refined_queries."""
-        if isinstance(data, dict) and "refined_queries" not in data and "refined_query" in data:
-            data = dict(data)
-            data["refined_queries"] = [data["refined_query"]]
-        return data
 
     @field_validator("recommended_tags", mode="before")
     @classmethod
@@ -567,7 +593,7 @@ class SearchIntentRefinementResponse(BaseModel):
 
     @field_validator("refined_queries", mode="before")
     @classmethod
-    def normalize_refined_queries(cls, v: list[str] | str) -> list[str]:
+    def normalize_refined_queries(cls, v: list[str]) -> list[str]:
         """Normalize and validate refined semantic queries."""
         normalized = _normalize_string_list(v)
         if normalized is None:

@@ -152,13 +152,13 @@ class TestSearchIntentRefinementSchemas:
     def test_refinement_request_normalizes_filters(self):
         """Test request schema normalization for existing filters."""
         request = SearchIntentRefinementRequest(
-            query="  Ich will mit anderen ueber KI diskutieren  ",
+            queries=["  Ich will mit anderen ueber KI diskutieren  "],
             event_id=4,
             session_format=["Workshop", "diskussion", "Workshop"],
             tags=[" AI ", "Ethik", "AI"],
         )
 
-        assert request.query == "Ich will mit anderen ueber KI diskutieren"
+        assert request.queries == ["Ich will mit anderen ueber KI diskutieren"]
         assert request.event_id == 4
         assert request.session_format == ["workshop", "diskussion"]
         assert request.tags == ["AI", "Ethik"]
@@ -177,4 +177,4 @@ class TestSearchIntentRefinementSchemas:
     def test_refinement_request_requires_event_id(self):
         """Test refinement request requires event_id."""
         with pytest.raises(ValidationError):
-            SearchIntentRefinementRequest(query="Ich will ueber KI diskutieren")
+            SearchIntentRefinementRequest(queries=["Ich will ueber KI diskutieren"])

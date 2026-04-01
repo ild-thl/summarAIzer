@@ -26,7 +26,7 @@ logger = structlog.get_logger()
 class RecommendationQueryParams:
     """Shared recommendation query/filter parameters across recommendation modes."""
 
-    query: str | None
+    query: str | list[str] | None
     accepted_ids: list[int]
     rejected_ids: list[int]
     event_id: int | None = None
@@ -46,6 +46,34 @@ class RecommendationQueryParams:
 
 class RecommendationService:
     """Coordinates recommendation execution paths and filter-mode semantic search."""
+
+    @staticmethod
+    def _normalize_query_list(query: str | list[str] | None) -> list[str]:
+        """Normalize single/multi-query input to a trimmed unique list."""
+        if query is None:
+            return []
+
+        values = query if isinstance(query, list) else [query]
+        normalized: list[str] = []
+        for value in values:
+            text = str(value).strip()
+            if not text:
+                continue
+            if text not in normalized:
+                normalized.append(text)
+        return normalized
+
+    @staticmethod
+    def _dedupe_chroma_results_by_similarity(chroma_results: list[tuple]) -> list[tuple]:
+        """Keep only the highest-similarity hit per session across search passes."""
+        deduped: dict[int, tuple[int, float, Any]] = {}
+        for session_id, similarity, metadata in chroma_results:
+            current = deduped.get(session_id)
+            if current is None or similarity > current[1]:
+                deduped[session_id] = (session_id, similarity, metadata)
+        results = list(deduped.values())
+        results.sort(key=lambda item: item[1], reverse=True)
+        return results
 
     def __init__(self, embedding_service: EmbeddingService):
         self.embedding_service = embedding_service
@@ -447,7 +475,7 @@ class RecommendationService:
         db: Session,
         accepted_ids: list[int] | None = None,
         rejected_ids: list[int] | None = None,
-        query: str | None = None,
+        query: str | list[str] | None = None,
         limit: int = 10,
         event_id: int | None = None,
         session_format: list[str] | None = None,
@@ -541,7 +569,7 @@ class RecommendationService:
         seen_ids: set[int],
         candidate_limit: int,
     ) -> tuple[list[tuple], dict[str, Any]]:
-        query_embedding, semantic_similarity_enabled = await self._determine_query_embedding(
+        query_embeddings, semantic_similarity_enabled = await self._determine_query_embeddings(
             query=params.query,
             accepted_ids=params.accepted_ids,
             rejected_ids=params.rejected_ids,
@@ -561,41 +589,53 @@ class RecommendationService:
         nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
         chroma_where = self._combine_conditions(nin_condition, metadata_conditions)
 
-        chroma_results_soft = []
-        soft_pass_triggered = False
+        chroma_results_hard: list[tuple] = []
+        chroma_results_soft: list[tuple] = []
+        soft_pass_triggered = params.filter_mode == "soft"
+
+        for query_embedding in query_embeddings:
+            if params.filter_mode == "soft":
+                try:
+                    soft_search_limit = candidate_limit * 2
+                    soft_results = await self._collect_soft_pass_candidates(
+                        query_embedding=query_embedding,
+                        soft_search_limit=soft_search_limit,
+                        nin_condition=nin_condition,
+                        time_windows=params.time_windows,
+                    )
+                    chroma_results_soft.extend(soft_results)
+                except Exception as e:
+                    logger.warning("recommendation_soft_pass_search_failed", error=str(e))
+            else:
+                try:
+                    if chroma_where:
+                        hard_results = await self.embedding_service.search_similar_sessions(
+                            query_embedding, limit=candidate_limit, where=chroma_where
+                        )
+                    else:
+                        hard_results = await self.embedding_service.search_similar_sessions(
+                            query_embedding, limit=candidate_limit
+                        )
+                    chroma_results_hard.extend(hard_results)
+                except Exception as e:
+                    logger.error("recommendation_chroma_search_failed", error=str(e))
+                    raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
+
+        if len(query_embeddings) > 1:
+            chroma_results_hard = self._dedupe_chroma_results_by_similarity(chroma_results_hard)[
+                :candidate_limit
+            ]
+            chroma_results_soft = self._dedupe_chroma_results_by_similarity(chroma_results_soft)[
+                : candidate_limit * 2
+            ]
 
         if params.filter_mode == "soft":
-            soft_pass_triggered = True
-            chroma_results_hard = []
-            try:
-                soft_search_limit = candidate_limit * 2
-                chroma_results_soft = await self._collect_soft_pass_candidates(
-                    query_embedding=query_embedding,
-                    soft_search_limit=soft_search_limit,
-                    nin_condition=nin_condition,
-                    time_windows=params.time_windows,
-                )
-                logger.info(
-                    "recommendation_soft_mode_direct_pass",
-                    soft_search_limit=soft_search_limit,
-                    soft_results_before_dedup=len(chroma_results_soft),
-                )
-            except Exception as e:
-                logger.warning("recommendation_soft_pass_search_failed", error=str(e))
-                chroma_results_soft = []
-        else:
-            try:
-                if chroma_where:
-                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                        query_embedding, limit=candidate_limit, where=chroma_where
-                    )
-                else:
-                    chroma_results_hard = await self.embedding_service.search_similar_sessions(
-                        query_embedding, limit=candidate_limit
-                    )
-            except Exception as e:
-                logger.error("recommendation_chroma_search_failed", error=str(e))
-                raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
+            logger.info(
+                "recommendation_soft_mode_direct_pass",
+                soft_search_limit=candidate_limit * 2,
+                soft_results_before_dedup=len(chroma_results_soft),
+                query_count=len(query_embeddings),
+            )
 
         preference_embeddings = await self._prefetch_preference_embeddings(
             accepted_ids=params.accepted_ids,
@@ -668,23 +708,26 @@ class RecommendationService:
         deduped_results.sort(key=lambda item: item[1], reverse=True)
         return deduped_results[:soft_search_limit]
 
-    async def _determine_query_embedding(
+    async def _determine_query_embeddings(
         self,
-        query: str | None,
+        query: str | list[str] | None,
         accepted_ids: list[int],
         rejected_ids: list[int],
-    ) -> tuple[list, bool]:
-        if query:
-            if not EmbeddingService.validate_embedding_text(query):
-                raise InvalidEmbeddingTextError("Query text is invalid or too long")
-            query_embedding = await self.embedding_service.embed_query(query)
+    ) -> tuple[list[list[float]], bool]:
+        queries = self._normalize_query_list(query)
+        if queries:
+            query_embeddings: list[list[float]] = []
+            for query_item in queries:
+                if not EmbeddingService.validate_embedding_text(query_item):
+                    raise InvalidEmbeddingTextError("Query text is invalid or too long")
+                query_embeddings.append(await self.embedding_service.embed_query(query_item))
             logger.info(
                 "recommendation_query_provided",
-                query_length=len(query),
+                query_count=len(queries),
                 accepted_ids_count=len(accepted_ids),
                 rejected_ids_count=len(rejected_ids),
             )
-            return query_embedding, True
+            return query_embeddings, True
 
         liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
         if not liked_embeddings:
@@ -701,7 +744,21 @@ class RecommendationService:
             embeddings_found=len(liked_embeddings),
             rejected_ids_count=len(rejected_ids),
         )
-        return query_embedding, False
+        return [query_embedding], False
+
+    async def _determine_query_embedding(
+        self,
+        query: str | list[str] | None,
+        accepted_ids: list[int],
+        rejected_ids: list[int],
+    ) -> tuple[list, bool]:
+        """Backward-compatible helper for callers/tests expecting a single embedding."""
+        embeddings, semantic_enabled = await self._determine_query_embeddings(
+            query=query,
+            accepted_ids=accepted_ids,
+            rejected_ids=rejected_ids,
+        )
+        return embeddings[0], semantic_enabled
 
     async def _recommend_fallback(
         self,

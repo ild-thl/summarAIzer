@@ -23,6 +23,104 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/sessions", tags=["embeddings"])
 
 
+def _extract_query_values(query: str | list[str] | None) -> list[str]:
+    """Normalize query input to a list of non-empty query strings."""
+    if isinstance(query, list):
+        return [item for item in query if item]
+    if isinstance(query, str) and query:
+        return [query]
+    return []
+
+
+def _is_refinement_worthy(query_values: list[str]) -> bool:
+    """Return True when at least one query is substantial enough for LLM refinement."""
+    for query in query_values:
+        normalized = query.strip()
+        if not normalized:
+            continue
+        words = [word for word in normalized.split() if word]
+        if len(words) >= 2 or len(normalized) >= 20:
+            return True
+    return False
+
+
+async def _apply_optional_query_refinement(
+    recommend_req: "RecommendRequest",
+    db: Session,
+) -> tuple[list[str] | None, list[str] | None, list[str] | None, list[str] | None, bool]:
+    """Apply query refinement when requested and return effective recommendation inputs."""
+    from app.services.embedding.factory import get_query_refinement_service
+
+    query_values = _extract_query_values(recommend_req.query)
+    effective_query: list[str] | None = query_values or None
+
+    effective_session_format = recommend_req.session_format
+    effective_tags = recommend_req.tags
+    effective_location = recommend_req.location
+
+    if not (recommend_req.refine_query and query_values):
+        return (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location,
+            False,
+        )
+
+    if not _is_refinement_worthy(query_values):
+        logger.info(
+            "recommendation_query_refinement_skipped",
+            reason="query_too_short_or_single_word",
+            query_count=len(query_values),
+        )
+        return (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location,
+            False,
+        )
+
+    if recommend_req.event_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="event_id is required when refine_query=true and query is provided",
+        )
+    if not isinstance(recommend_req.query, list):
+        raise HTTPException(
+            status_code=400,
+            detail="query must be a list when refine_query=true",
+        )
+
+    refinement_service = get_query_refinement_service()
+    refined = await refinement_service.refine_search_intent(
+        db,
+        SearchIntentRefinementRequest(
+            queries=query_values,
+            event_id=recommend_req.event_id,
+            session_format=effective_session_format,
+            tags=effective_tags,
+            location=effective_location,
+        ),
+    )
+    effective_query = refined.refined_queries or None
+
+    if not effective_session_format:
+        effective_session_format = refined.session_format
+    if not effective_tags:
+        effective_tags = refined.tags
+    if not effective_location:
+        effective_location = refined.location
+
+    return (
+        effective_query,
+        effective_session_format,
+        effective_tags,
+        effective_location,
+        True,
+    )
+
+
 @router.post("/query/refine", response_model=SearchIntentRefinementResponse)
 async def refine_search_intent(
     request_body: SearchIntentRefinementRequest,
@@ -338,12 +436,21 @@ async def recommend_sessions(
         EmbeddingError,
         EmbeddingSearchError,
         InvalidEmbeddingTextError,
+        QueryRefinementError,
     )
     from app.services.embedding.factory import get_recommendation_service
 
     try:
         # Validate request
         recommend_req = request_body
+
+        (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location,
+            query_refined,
+        ) = await _apply_optional_query_refinement(recommend_req=recommend_req, db=db)
 
         # Get recommendation service
         recommendation_service = get_recommendation_service()
@@ -353,12 +460,12 @@ async def recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
             rejected_ids=recommend_req.rejected_ids,
-            query=recommend_req.query,
+            query=effective_query,
             limit=recommend_req.limit,
             event_id=recommend_req.event_id,
-            session_format=recommend_req.session_format,
-            tags=recommend_req.tags,
-            location=recommend_req.location,
+            session_format=effective_session_format,
+            tags=effective_tags,
+            location=effective_location,
             language=recommend_req.language,
             duration_min=recommend_req.duration_min,
             duration_max=recommend_req.duration_max,
@@ -376,7 +483,8 @@ async def recommend_sessions(
 
         logger.info(
             "recommendations_completed",
-            query_provided=bool(recommend_req.query),
+            query_provided=bool(effective_query),
+            query_refined=query_refined,
             accepted_ids_count=len(recommend_req.accepted_ids or []),
             rejected_ids_count=len(recommend_req.rejected_ids or []),
             recommendations_count=len(sessions),
@@ -399,6 +507,9 @@ async def recommend_sessions(
 
     except InvalidEmbeddingTextError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except QueryRefinementError as e:
+        logger.error("recommendation_query_refinement_error", error=str(e))
+        raise HTTPException(status_code=503, detail="Query refinement service unavailable") from e
     except EmbeddingSearchError as e:
         logger.error("recommendation_search_error", error=str(e))
         raise HTTPException(status_code=503, detail="Recommendation service unavailable") from e
