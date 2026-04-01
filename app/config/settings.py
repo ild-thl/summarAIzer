@@ -41,11 +41,16 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
-    llm_model: str = os.getenv("LLM_MODEL", "llama-3.1-8b")
+    llm_model: str = os.getenv("LLM_MODEL", "apertus-70b-instruct-2509")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
-    llm_top_p: float = float(os.getenv("LLM_TOP_P", "1.0"))
+    llm_top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
+
+    # LLM Model for structured output tasks (e.g., query refinement, slot filling)
+    llm_model_structured_output: str = os.getenv(
+        "LLM_MODEL_STRUCTURED_OUTPUT", "qwen3-30b-a3b-instruct-2507"
+    )
 
     # Embedding Configuration for semantic search
     enable_embeddings: bool = os.getenv("ENABLE_EMBEDDINGS", "true").lower() == "true"

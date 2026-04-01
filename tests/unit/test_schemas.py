@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from app.schemas.session import (
     EventCreate,
+    SearchIntentRefinementLLMResponse,
+    SearchIntentRefinementRequest,
     SessionCreate,
     SessionUpdate,
 )
@@ -142,3 +144,37 @@ class TestSessionSchema:
         assert update.status == "published"
         assert update.start_datetime is None
         assert update.location is None
+
+
+class TestSearchIntentRefinementSchemas:
+    """Test suite for query refinement schema validation."""
+
+    def test_refinement_request_normalizes_filters(self):
+        """Test request schema normalization for existing filters."""
+        request = SearchIntentRefinementRequest(
+            query="  Ich will mit anderen ueber KI diskutieren  ",
+            event_id=4,
+            session_format=["Workshop", "diskussion", "Workshop"],
+            tags=[" AI ", "Ethik", "AI"],
+        )
+
+        assert request.query == "Ich will mit anderen ueber KI diskutieren"
+        assert request.event_id == 4
+        assert request.session_format == ["workshop", "diskussion"]
+        assert request.tags == ["AI", "Ethik"]
+
+    def test_refinement_llm_response_rejects_invalid_session_format(self):
+        """Test LLM response schema validates recommended session formats."""
+        with pytest.raises(ValidationError):
+            SearchIntentRefinementLLMResponse(
+                refined_queries=["ethischer Einsatz von KI im Unterricht"],
+                recommended_session_format=["panel"],
+                recommended_tags=["Ethik"],
+                recommended_location=[],
+                rationale="Discussion intent implies a format preference.",
+            )
+
+    def test_refinement_request_requires_event_id(self):
+        """Test refinement request requires event_id."""
+        with pytest.raises(ValidationError):
+            SearchIntentRefinementRequest(query="Ich will ueber KI diskutieren")

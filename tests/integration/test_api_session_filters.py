@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timedelta
 from itertools import pairwise
+from unittest.mock import AsyncMock
 
 import pytest
 from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
@@ -296,6 +297,77 @@ class TestSessionFilteringAPI:
         payload = _time_windows_query([{"start": "2024-13-45", "end": "2024-12-31T23:59:59"}])
         response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_400_BAD_REQUEST
+
+    def test_query_refinement_route_returns_refined_payload(self, client, monkeypatch):
+        """Test the query refinement route returns structured optimized filters."""
+        from app.schemas.session import SearchIntentRefinementResponse
+        from app.services.embedding import factory as embedding_factory
+
+        refinement_service = AsyncMock()
+        refinement_service.refine_search_intent.return_value = SearchIntentRefinementResponse(
+            refined_queries=["ethischer Einsatz von KI im Unterricht"],
+            event_id=9,
+            session_format=["diskussion", "workshop"],
+            tags=["Ethik", "Bildung"],
+            location=["Raum A"],
+            rationale="The query implies collaborative discussion and education-related topics.",
+        )
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_query_refinement_service",
+            lambda: refinement_service,
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={
+                "query": "Ich will mit anderen ueber KI diskutieren",
+                "event_id": 9,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        assert data["refined_queries"] == ["ethischer Einsatz von KI im Unterricht"]
+        assert "refined_query" not in data
+        assert "original_query" not in data
+        assert data["session_format"] == ["diskussion", "workshop"]
+        assert data["tags"] == ["Ethik", "Bildung"]
+        assert data["location"] == ["Raum A"]
+
+    def test_query_refinement_route_rejects_blank_query(self, client):
+        """Test the query refinement route rejects blank queries at schema level."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={"query": "   ", "event_id": 9},
+        )
+
+        assert response.status_code == 422
+
+    def test_query_refinement_route_requires_event_id(self, client):
+        """Test the query refinement route requires event_id."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={"query": "Ich will mit anderen ueber KI diskutieren"},
+        )
+
+        assert response.status_code == 422
+
+    def test_query_refinement_route_rejects_removed_filter_params(self, client):
+        """Test the query refinement route rejects fields that are no longer part of the contract."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={
+                "query": "Ich will mit anderen ueber KI diskutieren",
+                "event_id": 9,
+                "language": ["de"],
+                "duration_min": 30,
+                "time_windows": [],
+            },
+        )
+
+        assert response.status_code == 422
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_valid_iso_datetime_time_windows(self, client):

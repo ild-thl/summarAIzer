@@ -11,6 +11,7 @@ import structlog
 
 from app.config.settings import get_settings
 from app.services.embedding.exceptions import ChromaConnectionError
+from app.services.embedding.query_refinement_service import QueryRefinementService
 from app.services.embedding.search_service import EmbeddingSearchService
 from app.services.embedding.service import EmbeddingService
 from app.services.recommendation.service import RecommendationService
@@ -100,6 +101,12 @@ def get_recommendation_service() -> RecommendationService:
     return RecommendationService(embedding_service)
 
 
+@lru_cache(maxsize=1)
+def get_query_refinement_service() -> QueryRefinementService:
+    """Factory for query refinement service."""
+    return QueryRefinementService()
+
+
 def reset_services():
     """
     Reset cached services (useful for testing).
@@ -109,4 +116,9 @@ def reset_services():
     get_embedding_service.cache_clear()
     get_search_service.cache_clear()
     get_recommendation_service.cache_clear()
+    try:
+        get_query_refinement_service().clear_inventory_cache()
+    except Exception:
+        logger.debug("query_refinement_service_cache_clear_failed")
+    get_query_refinement_service.cache_clear()
     logger.debug("embedding_services_cache_cleared")

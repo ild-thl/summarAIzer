@@ -81,9 +81,7 @@ class EmbeddingSearchService:
                 if len(session_format) == 1:
                     conditions.append({"session_format": session_format[0]})
                 else:
-                    conditions.append(
-                        {"$or": [{"session_format": fmt} for fmt in session_format]}
-                    )
+                    conditions.append({"$or": [{"session_format": fmt} for fmt in session_format]})
             else:
                 conditions.append({"session_format": session_format})
         if language:

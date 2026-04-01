@@ -72,10 +72,7 @@ class RecommendationDiversityOptimizer:
 
             # When filter values are active for this attribute, only care about those
             filter_vals = active_filter_values.get(attr) if active_filter_values else None
-            if filter_vals:
-                relevant_values = values & filter_vals
-            else:
-                relevant_values = values
+            relevant_values = values & filter_vals if filter_vals else values
 
             if not relevant_values:
                 continue

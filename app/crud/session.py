@@ -1,5 +1,6 @@
 """CRUD operations for Session model."""
 
+from collections.abc import Iterable
 from typing import Any
 
 import structlog
@@ -9,9 +10,26 @@ from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
+from app.database.models import SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
 
 logger = structlog.get_logger()
+
+
+def _invalidate_query_refinement_cache(event_ids: set[int | None]) -> None:
+    """Invalidate cached refinement metadata for affected events."""
+    from app.services.embedding.factory import get_query_refinement_service
+
+    try:
+        refinement_service = get_query_refinement_service()
+        for event_id in event_ids:
+            refinement_service.invalidate_event_filter_inventory(event_id)
+    except Exception as e:
+        logger.debug(
+            "query_refinement_cache_invalidation_failed",
+            event_ids=sorted(event_id for event_id in event_ids if event_id is not None),
+            error=str(e),
+        )
 
 
 class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
@@ -53,6 +71,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 event_id=db_obj.event_id,
                 owner_id=owner_id,
             )
+
+            _invalidate_query_refinement_cache({db_obj.event_id})
 
             # Emit event if session is published
             if db_obj.status == "published":
@@ -97,6 +117,36 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             .all()
         )
 
+    def get_available_tags_and_locations(
+        self,
+        db: Session,
+        event_id: int,
+        status: SessionStatus = SessionStatus.PUBLISHED,
+    ) -> tuple[list[str], list[str]]:
+        """Return unique tags and locations available for an event."""
+        rows = (
+            db.query(self.model.tags, self.model.location)
+            .filter(self.model.event_id == event_id, self.model.status == status)
+            .all()
+        )
+
+        unique_tags: set[str] = set()
+        unique_locations: set[str] = set()
+
+        for tags, location in rows:
+            if isinstance(tags, Iterable) and not isinstance(tags, str):
+                for tag in tags:
+                    tag_text = str(tag).strip()
+                    if tag_text:
+                        unique_tags.add(tag_text)
+
+            if location:
+                location_text = str(location).strip()
+                if location_text:
+                    unique_locations.add(location_text)
+
+        return sorted(unique_tags), sorted(unique_locations)
+
     def list_by_status(
         self, db: Session, status: str, skip: int = 0, limit: int = 100
     ) -> list[SessionModel]:
@@ -108,8 +158,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
     def list_published(self, db: Session, skip: int = 0, limit: int = 100) -> list[SessionModel]:
         """List only published sessions."""
-        from app.database.models import SessionStatus
-
         limit = min(limit, 1000)
         return (
             db.query(self.model)
@@ -298,6 +346,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
             # Track previous status to detect published transition
             previous_status = db_obj.status
+            previous_event_id = db_obj.event_id
 
             update_data = obj_in.model_dump(exclude_unset=True)
 
@@ -312,6 +361,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db.commit()
             db.refresh(db_obj)
             logger.info("session_updated", session_id=id)
+
+            _invalidate_query_refinement_cache({previous_event_id, db_obj.event_id})
 
             from app.events import SessionEventBus
 
@@ -357,6 +408,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db.delete(db_obj)
             db.commit()
             logger.info("session_deleted", session_id=id)
+
+            _invalidate_query_refinement_cache({event_id})
 
             # Emit event for deletion (only if session was published - had embeddings)
             if was_published:

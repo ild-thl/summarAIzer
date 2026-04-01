@@ -8,13 +8,45 @@ from starlette.status import HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND
 from app.crud.session import session_crud
 from app.database.connection import get_db
 from app.database.models import User
-from app.schemas.session import RecommendRequest, SessionResponse, SessionWithScore
+from app.schemas.session import (
+    RecommendRequest,
+    SearchIntentRefinementRequest,
+    SearchIntentRefinementResponse,
+    SessionResponse,
+    SessionWithScore,
+)
 from app.security.auth import get_current_user
 from app.utils.helpers import DateTimeUtils
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", tags=["embeddings"])
+
+
+@router.post("/query/refine", response_model=SearchIntentRefinementResponse)
+async def refine_search_intent(
+    request_body: SearchIntentRefinementRequest,
+    db: Session = Depends(get_db),
+):
+    """Refine a free-text session query and infer missing hard filters when strongly implied."""
+    from app.services.embedding.exceptions import QueryRefinementError
+    from app.services.embedding.factory import get_query_refinement_service
+
+    try:
+        refinement_service = get_query_refinement_service()
+        return await refinement_service.refine_search_intent(db, request_body)
+    except QueryRefinementError as e:
+        logger.error("search_intent_refinement_error", error=str(e))
+        raise HTTPException(status_code=503, detail="Query refinement service unavailable") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(
+            "search_intent_refinement_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(status_code=500, detail="Query refinement failed") from e
 
 
 @router.post(

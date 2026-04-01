@@ -7,6 +7,52 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, mod
 
 from app.database.models import EventStatus, SessionFormat, SessionStatus
 
+
+def _normalize_session_format_list(
+    value: list[str] | str | list[SessionFormat] | SessionFormat | None,
+) -> list[str] | None:
+    """Normalize session format filters to validated lowercase strings."""
+    if value is None:
+        return None
+
+    items = value if isinstance(value, list) else [value]
+    valid_formats = {fmt.value for fmt in SessionFormat}
+    normalized: list[str] = []
+    for item in items:
+        item_value = item.value if isinstance(item, SessionFormat) else str(item).strip().lower()
+        if not item_value:
+            continue
+        if item_value not in valid_formats:
+            raise ValueError(
+                f"Invalid session_format: {item}. Must be one of: {', '.join(sorted(valid_formats))}"
+            )
+        if item_value not in normalized:
+            normalized.append(item_value)
+    return normalized or None
+
+
+def _normalize_string_list(
+    value: list[str] | str | None,
+    *,
+    lowercase: bool = False,
+) -> list[str] | None:
+    """Normalize optional string-list filters by trimming and de-duplicating values."""
+    if value is None:
+        return None
+
+    items = value if isinstance(value, list) else [value]
+    normalized: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if not text:
+            continue
+        if lowercase:
+            text = text.lower()
+        if text not in normalized:
+            normalized.append(text)
+    return normalized or None
+
+
 # ============================================================================
 # Event Schemas
 # ============================================================================
@@ -106,20 +152,8 @@ class SessionBase(BaseModel):
     @classmethod
     def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
         """Normalize session_format to lowercase for case-insensitive matching."""
-        if v is None:
-            return v
-        # If it's already an enum, get its value
-        if isinstance(v, SessionFormat):
-            return v.value
-        # Convert to string and lowercase
-        v_str = str(v).lower()
-        # Validate it matches one of the enum values
-        valid_formats = {fmt.value for fmt in SessionFormat}
-        if v_str not in valid_formats:
-            raise ValueError(
-                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
-            )
-        return v_str
+        normalized = _normalize_session_format_list(v)
+        return normalized[0] if normalized else None
 
     @field_validator("language", mode="before")
     @classmethod
@@ -188,20 +222,8 @@ class SessionUpdate(BaseModel):
     @classmethod
     def normalize_session_format(cls, v: str | SessionFormat | None) -> str | None:
         """Normalize session_format to lowercase for case-insensitive matching."""
-        if v is None:
-            return v
-        # If it's already an enum, get its value
-        if isinstance(v, SessionFormat):
-            return v.value
-        # Convert to string and lowercase
-        v_str = str(v).lower()
-        # Validate it matches one of the enum values
-        valid_formats = {fmt.value for fmt in SessionFormat}
-        if v_str not in valid_formats:
-            raise ValueError(
-                f"Invalid session_format: {v}. Must be one of: {', '.join(sorted(valid_formats))}"
-            )
-        return v_str
+        normalized = _normalize_session_format_list(v)
+        return normalized[0] if normalized else None
 
     @field_validator("language", mode="before")
     @classmethod
@@ -368,11 +390,7 @@ class RecommendRequest(BaseModel):
     @classmethod
     def normalize_language(cls, v: list[str] | str | None) -> list[str] | None:
         """Normalize language codes to lowercase for consistency."""
-        if v is None:
-            return v
-        if isinstance(v, str):
-            return [v.lower()]
-        return [str(code).lower() for code in v] if v else None
+        return _normalize_string_list(v, lowercase=True)
 
     @model_validator(mode="after")
     def validate_time_window(self):
@@ -384,6 +402,177 @@ class RecommendRequest(BaseModel):
         ):
             raise ValueError("time_windows must not be empty when provided")
         return self
+
+
+class SearchIntentRefinementRequest(BaseModel):
+    """Request payload for LLM-based query and filter refinement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=8000,
+        description="Natural language search intent to optimize for retrieval",
+    )
+    event_id: int = Field(
+        ...,
+        ge=1,
+        description="Event ID used to constrain suggested tags and locations",
+    )
+    session_format: list[str] | None = Field(
+        None,
+        description="Existing session format filters that must be preserved",
+    )
+    tags: list[str] | None = Field(
+        None,
+        description="Existing tag filters that must be preserved",
+    )
+    location: list[str] | None = Field(
+        None,
+        description="Existing location filters",
+    )
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def normalize_query(cls, v: str) -> str:
+        """Normalize query text and reject blank input."""
+        query = str(v).strip()
+        if not query:
+            raise ValueError("query must not be blank")
+        return query
+
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize existing session format filters."""
+        return _normalize_session_format_list(v)
+
+    @field_validator("tags", "location", mode="before")
+    @classmethod
+    def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize optional string-list filters."""
+        return _normalize_string_list(v)
+
+
+class SearchIntentRefinementLLMResponse(BaseModel):
+    """Structured LLM output for query refinement."""
+
+    refined_queries: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=3,
+        description=(
+            "One or more refined semantic-search queries focused on content only. "
+            "Use multiple queries when the original text contains distinct interests."
+        ),
+    )
+    recommended_session_format: list[SessionFormat] = Field(
+        default_factory=list,
+        description="Recommended session formats inferred from the query when missing in user filters",
+    )
+    recommended_tags: list[str] = Field(
+        default_factory=list,
+        description="Recommended tags inferred from the query when missing in user filters",
+    )
+    recommended_location: list[str] = Field(
+        default_factory=list,
+        description="Recommended locations inferred from the query when missing in user filters",
+    )
+    rationale: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Short explanation of the refinement choices",
+    )
+
+    @field_validator("refined_queries", mode="before")
+    @classmethod
+    def normalize_refined_queries(cls, v: list[str] | str) -> list[str]:
+        """Ensure at least one non-empty refined query is returned."""
+        normalized = _normalize_string_list(v)
+        if normalized is None:
+            raise ValueError("refined_queries must contain at least one query")
+        return normalized[:3]
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_single_refined_query(cls, data: object) -> object:
+        """Allow legacy single-query responses by mapping to refined_queries."""
+        if isinstance(data, dict) and "refined_queries" not in data and "refined_query" in data:
+            data = dict(data)
+            data["refined_queries"] = [data["refined_query"]]
+        return data
+
+    @field_validator("recommended_tags", mode="before")
+    @classmethod
+    def normalize_recommended_tags(cls, v: list[str] | str | None) -> list[str]:
+        """Normalize recommended tags and remove empty items."""
+        normalized = _normalize_string_list(v)
+        if normalized is None:
+            return []
+        return normalized[:8]
+
+    @field_validator("recommended_location", mode="before")
+    @classmethod
+    def normalize_recommended_location(cls, v: list[str] | str | None) -> list[str]:
+        """Normalize recommended locations and remove empty items."""
+        normalized = _normalize_string_list(v)
+        if normalized is None:
+            return []
+        return normalized[:5]
+
+    @field_validator("rationale", mode="before")
+    @classmethod
+    def normalize_rationale(cls, v: str) -> str:
+        """Normalize rationale text."""
+        rationale = str(v).strip()
+        if not rationale:
+            raise ValueError("rationale must not be blank")
+        return rationale
+
+
+class SearchIntentRefinementResponse(BaseModel):
+    """API response with refined query and final hard filters."""
+
+    refined_queries: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=3,
+        description="One or more content-focused queries optimized for semantic retrieval",
+    )
+    event_id: int | None = Field(None, description="Event ID used for tag/location constraints")
+    session_format: list[str] | None = Field(
+        None,
+        description="Final session format filters after preserving user input and applying safe recommendations",
+    )
+    tags: list[str] | None = Field(
+        None,
+        description="Final tag filters after preserving user input and applying safe recommendations",
+    )
+    location: list[str] | None = Field(None, description="Unchanged location filters")
+    rationale: str = Field(..., description="Short explanation of the refinement choices")
+
+    @field_validator("session_format", mode="before")
+    @classmethod
+    def normalize_session_format(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize response session format filters."""
+        return _normalize_session_format_list(v)
+
+    @field_validator("tags", "location", mode="before")
+    @classmethod
+    def normalize_string_filters(cls, v: list[str] | str | None) -> list[str] | None:
+        """Normalize response string-list filters."""
+        return _normalize_string_list(v)
+
+    @field_validator("refined_queries", mode="before")
+    @classmethod
+    def normalize_refined_queries(cls, v: list[str] | str) -> list[str]:
+        """Normalize and validate refined semantic queries."""
+        normalized = _normalize_string_list(v)
+        if normalized is None:
+            raise ValueError("refined_queries must contain at least one query")
+        return normalized[:3]
 
 
 class SessionWithScore(BaseModel):
