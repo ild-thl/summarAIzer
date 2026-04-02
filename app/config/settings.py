@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "")
     embedding_api_base_url: str = os.getenv("EMBEDDING_API_BASE_URL", "")
     embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+    embedding_sync_enabled: bool = os.getenv("EMBEDDING_SYNC_ENABLED", "true").lower() == "true"
+    embedding_sync_interval_minutes: int = int(os.getenv("EMBEDDING_SYNC_INTERVAL_MINUTES", "30"))
+    embedding_sync_batch_size: int = int(os.getenv("EMBEDDING_SYNC_BATCH_SIZE", "200"))
+    embedding_sync_max_enqueues_per_run: int = int(
+        os.getenv("EMBEDDING_SYNC_MAX_ENQUEUES_PER_RUN", "500")
+    )
+    embedding_sync_stale_threshold_seconds: int = int(
+        os.getenv("EMBEDDING_SYNC_STALE_THRESHOLD_SECONDS", "0")
+    )
 
     # Chroma Configuration for vector storage
     chroma_host: str = os.getenv("CHROMA_HOST", "localhost")

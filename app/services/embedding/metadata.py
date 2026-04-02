@@ -26,4 +26,5 @@ class EmbeddingMetadataBuilder:
                 session.start_datetime.timestamp() if session.start_datetime else None
             ),
             "end_datetime": session.end_datetime.timestamp() if session.end_datetime else None,
+            "source_updated_at": session.updated_at.timestamp() if session.updated_at else None,
         }

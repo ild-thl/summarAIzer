@@ -1,7 +1,7 @@
 """Tests for async Celery tasks."""
 
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -281,3 +281,107 @@ async def test_execute_generated_content_database_session_closed(mock_db_session
 
         # Verify database session was closed
         mock_db_session.close.assert_called_once()
+
+
+def test_reconcile_session_embeddings_queues_missing_and_stale():
+    """Reconcile task should enqueue refresh for missing and stale published embeddings."""
+    now = datetime.utcnow()
+
+    settings = Mock(
+        enable_embeddings=True,
+        embedding_sync_enabled=True,
+        embedding_sync_batch_size=100,
+        embedding_sync_max_enqueues_per_run=50,
+        embedding_sync_stale_threshold_seconds=0,
+    )
+
+    # First batch has two published sessions, second batch empty.
+    rows = [(1, now), (2, now)]
+    query_mock = MagicMock()
+    query_mock.filter.return_value = query_mock
+    query_mock.order_by.return_value = query_mock
+    query_mock.offset.return_value = query_mock
+    query_mock.limit.return_value = query_mock
+    query_mock.all.side_effect = [rows, []]
+
+    db_mock = MagicMock()
+    db_mock.query.return_value = query_mock
+
+    embedding_service = Mock()
+    # session_1 missing, session_2 stale metadata
+    embedding_service.sessions_collection.get.return_value = {
+        "ids": ["session_2"],
+        "metadatas": [{"source_updated_at": 0.0}],
+    }
+
+    with (
+        patch("app.config.settings.get_settings", return_value=settings),
+        patch("app.async_jobs.tasks.SessionLocal", return_value=db_mock),
+        patch("app.async_jobs.tasks.get_embedding_service", return_value=embedding_service),
+        patch.object(tasks_module.generate_session_embedding, "apply_async") as mock_apply_async,
+    ):
+        result = tasks_module.reconcile_session_embeddings.run()
+
+    assert result["status"] == "ok"
+    assert result["scanned"] == 2
+    assert result["missing"] == 1
+    assert result["stale"] == 1
+    assert result["queued"] == 2
+    assert mock_apply_async.call_count == 2
+    db_mock.close.assert_called_once()
+
+
+def test_reconcile_session_embeddings_scopes_to_event_when_provided():
+    """Reconcile task should filter published sessions by event_id when provided."""
+    now = datetime.utcnow()
+    settings = Mock(
+        enable_embeddings=True,
+        embedding_sync_enabled=True,
+        embedding_sync_batch_size=100,
+        embedding_sync_max_enqueues_per_run=50,
+        embedding_sync_stale_threshold_seconds=0,
+    )
+
+    rows = [(11, now)]
+    query_mock = MagicMock()
+    query_mock.filter.return_value = query_mock
+    query_mock.order_by.return_value = query_mock
+    query_mock.offset.return_value = query_mock
+    query_mock.limit.return_value = query_mock
+    query_mock.all.side_effect = [rows, []]
+
+    db_mock = MagicMock()
+    db_mock.query.return_value = query_mock
+
+    embedding_service = Mock()
+    embedding_service.sessions_collection.get.return_value = {
+        "ids": [],
+        "metadatas": [],
+    }
+
+    with (
+        patch("app.config.settings.get_settings", return_value=settings),
+        patch("app.async_jobs.tasks.SessionLocal", return_value=db_mock),
+        patch("app.async_jobs.tasks.get_embedding_service", return_value=embedding_service),
+        patch.object(tasks_module.generate_session_embedding, "apply_async") as mock_apply_async,
+    ):
+        result = tasks_module.reconcile_session_embeddings.run(event_id=321)
+
+    assert result["status"] == "ok"
+    assert result["event_id"] == 321
+    assert result["queued"] == 1
+    assert mock_apply_async.call_count == 1
+
+
+def test_reconcile_session_embeddings_skips_when_disabled():
+    """Reconcile task should no-op when embedding sync is disabled."""
+    settings = Mock(
+        enable_embeddings=True,
+        embedding_sync_enabled=False,
+    )
+
+    with patch("app.config.settings.get_settings", return_value=settings):
+        result = tasks_module.reconcile_session_embeddings.run()
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "disabled"

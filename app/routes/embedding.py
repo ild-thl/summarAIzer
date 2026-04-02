@@ -206,6 +206,57 @@ async def refresh_session_embedding(
     }
 
 
+@router.post(
+    "/embeddings/reconcile",
+    response_model=dict,
+    status_code=HTTP_202_ACCEPTED,
+)
+async def reconcile_embeddings(
+    event_id: int | None = Query(None, description="Optional event scope for reconciliation"),
+    current_user: User = Depends(get_current_user),
+):
+    """Return immediate reconciliation stats and queue async refresh execution."""
+    from app.async_jobs.tasks import reconcile_session_embeddings
+
+    preview = reconcile_session_embeddings.apply(
+        kwargs={"event_id": event_id, "enqueue_refreshes": False}
+    ).get()
+
+    task = reconcile_session_embeddings.apply_async(
+        kwargs={"event_id": event_id},
+        queue="embeds",
+    )
+
+    will_reembed = min(preview.get("to_reembed", 0), preview.get("max_enqueues", 0))
+
+    logger.info(
+        "session_embedding_reconcile_requested",
+        user_id=current_user.id,
+        event_id=event_id,
+        task_id=task.id,
+        scanned=preview.get("scanned", 0),
+        synced=preview.get("synced", 0),
+        missing=preview.get("missing", 0),
+        stale=preview.get("stale", 0),
+        to_reembed=preview.get("to_reembed", 0),
+        will_reembed=will_reembed,
+    )
+
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "event_id": event_id,
+        "scanned": preview.get("scanned", 0),
+        "synced": preview.get("synced", 0),
+        "missing": preview.get("missing", 0),
+        "stale": preview.get("stale", 0),
+        "to_reembed": preview.get("to_reembed", 0),
+        "will_reembed": will_reembed,
+        "max_enqueues": preview.get("max_enqueues", 0),
+        "message": "Embedding reconciliation queued with preview statistics",
+    }
+
+
 @router.get("/search/similar", response_model=list[SessionWithScore])
 async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),

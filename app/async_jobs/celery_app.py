@@ -1,11 +1,14 @@
 """Celery configuration for backend generative workflows."""
 
 import os
+from datetime import timedelta
 
 import structlog
 from celery import Celery
 from celery.signals import worker_ready
 from kombu import Exchange, Queue
+
+from app.config.settings import get_settings
 
 logger = structlog.get_logger()
 
@@ -38,12 +41,34 @@ default_queue = Queue("default", exchange=default_exchange, routing_key="default
 
 app.conf.task_queues = (
     Queue("workflows", exchange=default_exchange, routing_key="workflows", priority=10),
+    Queue("embeds", exchange=default_exchange, routing_key="embeds", priority=10),
     Queue("default", exchange=default_exchange, routing_key="default", priority=5),
 )
 
 app.conf.task_routes = {
     "app.async_jobs.tasks.*": {"queue": "workflows", "priority": 10},
 }
+
+settings = get_settings()
+if settings.enable_embeddings and settings.embedding_sync_enabled:
+    sync_interval_minutes = max(1, settings.embedding_sync_interval_minutes)
+    app.conf.beat_schedule = {
+        "reconcile-session-embeddings": {
+            "task": "app.async_jobs.tasks.reconcile_session_embeddings",
+            "schedule": timedelta(minutes=sync_interval_minutes),
+            "options": {"queue": "embeds", "priority": 8},
+        }
+    }
+    logger.info(
+        "celery_embedding_sync_schedule_enabled",
+        interval_minutes=sync_interval_minutes,
+    )
+else:
+    logger.info(
+        "celery_embedding_sync_schedule_disabled",
+        embeddings_enabled=settings.enable_embeddings,
+        sync_enabled=settings.embedding_sync_enabled,
+    )
 
 # Explicitly tell Celery which modules contain tasks
 app.conf.include = [
