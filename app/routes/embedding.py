@@ -513,6 +513,11 @@ async def recommend_sessions(
         # Validate request
         recommend_req = request_body
 
+        if recommend_req.event_id is not None:
+            event = event_crud.read(db, recommend_req.event_id)
+            if event is None:
+                raise HTTPException(status_code=404, detail="Event not found")
+
         (
             effective_query,
             effective_session_format,
