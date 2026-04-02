@@ -425,82 +425,64 @@ async def recommend_sessions(
     db: Session = Depends(get_db),
 ):
     """
-    Get personalized session recommendations based on user preferences.
+    Get personalized session recommendations.
 
-    Recommends sessions similar to those the user has liked, excluding sessions they've
-    already seen. Supports optional text query (if provided, overrides centroid from liked sessions).
+    This endpoint supports two modes:
+    - `similarity`: rank sessions by semantic and preference similarity
+    - `plan`: generate a non-overlapping schedule from candidate sessions
 
-    **Request Body:**
-    - **query**: Optional text query. If not provided, recommendations use centroid of liked sessions.
-    - **accepted_ids**: List of session IDs the user has liked or want to get more like
-    - **rejected_ids**: List of session IDs the user has disliked (excluded from results)
-    - **limit**: Max recommendations (1-100)
-    - **Filters**: Format/language/tags/location/duration filters apply as hard constraints
-    - **goal_mode**: `similarity` (default) or `plan` (build non-overlapping session schedule)
-    - **time_windows**: Optional list of time windows used for filtering and in `plan` mode
-    - **min_break_minutes**: Minimum break between selected sessions in `plan` mode
-    - **max_gap_minutes**: Optional max allowed gap between selected sessions in `plan` mode
-    - **plan_candidate_multiplier**: Candidate pool expansion factor before plan optimization
+    Filter behavior:
+    - `filter_mode="hard"`: all provided filters are applied during retrieval.
+    - `filter_mode="soft"`: only always-hard filters are applied during retrieval
+        (event scope, seen-session exclusion, and optional time windows); other filters
+        are used later in scoring/ranking.
 
-    **Examples:**
-    - Basic: User did not like sessions [1, 2] and liked session [5], give me more like [5]
-      ```json
-      {
-        "accepted_ids": [5],
-        "rejected_ids": [1, 2],
-        "limit": 10
-      }
-      ```
-    - With query: Find workshops similar to "machine learning" but exclude sessions 1, 2, 3
-      ```json
-      {
-        "query": "machine learning",
-        "accepted_ids": [],
-        "rejected_ids": [1, 2, 3],
-        "session_format": "workshop",
-        "language": "en",
-        "limit": 10
-      }
-      ```
-    - With timeframe: Recommendations for 10:00-11:30 timeframe that are similar to loved session 42
-      ```json
-      {
-        "accepted_ids": [42],
-        "rejected_ids": [],
-                "goal_mode": "plan",
-                "time_windows": [{"start": "2024-06-01T10:00:00", "end": "2024-06-01T11:30:00"}],
-        "limit": 5
-      }
-      ```
-        - Plan mode: Build a non-overlapping schedule for a multi-day event
-            ```json
-            {
-                "query": "machine learning",
-                "goal_mode": "plan",
-                "time_windows": [
-                    {"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"},
-                    {"start": "2024-06-02T09:00:00", "end": "2024-06-02T18:00:00"},
-                    {"start": "2024-06-03T09:00:00", "end": "2024-06-03T17:00:00"}
-                ],
-                "min_break_minutes": 15,
-                "max_gap_minutes": 90,
-                "plan_candidate_multiplier": 4,
-                "limit": 5
-            }
-            ```
-        - Plan mode without query: Build a schedule from liked sessions and filters
-            ```json
-            {
-                "accepted_ids": [10, 14],
-                "goal_mode": "plan",
-                "time_windows": [{"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"}],
-                "session_format": "workshop",
-                "language": "en",
-                "min_break_minutes": 10,
-                "limit": 4
-            }
-            ```
+    Optional query refinement:
+    - Set `refine_query=true` to infer/improve search intent from a list of query strings.
+    - When enabled, `event_id` is required and `query` must be a list.
+
+    Examples:
+    - Similarity mode with event scope:
+        ```json
+        {
+            "event_id": 3,
+            "query": "machine learning",
+            "accepted_ids": [],
+            "rejected_ids": [1, 2, 3],
+            "session_format": ["workshop"],
+            "language": ["en"],
+            "limit": 10
+        }
+        ```
+    - Soft filtering (rank-oriented):
+        ```json
+        {
+            "event_id": 3,
+            "query": ["ai ethics"],
+            "filter_mode": "soft",
+            "tags": ["ethics", "policy"],
+            "location_cities": ["Berlin"],
+            "limit": 10
+        }
+        ```
+    - Plan mode with windows:
+        ```json
+        {
+            "event_id": 3,
+            "goal_mode": "plan",
+            "query": ["machine learning"],
+            "time_windows": [
+                {"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"},
+                {"start": "2024-06-02T09:00:00", "end": "2024-06-02T18:00:00"}
+            ],
+            "min_break_minutes": 15,
+            "max_gap_minutes": 90,
+            "plan_candidate_multiplier": 4,
+            "limit": 5
+        }
+        ```
     """
+    from app.crud.event import event_crud
     from app.services.embedding.exceptions import (
         EmbeddingError,
         EmbeddingSearchError,
