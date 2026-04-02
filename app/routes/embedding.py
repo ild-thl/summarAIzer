@@ -476,7 +476,7 @@ async def recommend_sessions(
             ],
             "min_break_minutes": 15,
             "max_gap_minutes": 90,
-            "plan_candidate_multiplier": 4,
+            "plan_candidate_multiplier": 2,
             "limit": 5
         }
         ```

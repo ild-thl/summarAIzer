@@ -397,14 +397,14 @@ class RecommendRequest(BaseModel):
 
     # Phase 2: Tuning parameters for re-ranking
     liked_embedding_weight: float = Field(
-        default=0.2,
+        default=0.3,
         ge=0.0,
         le=1.0,
         description="Weight (a) to boost sessions similar to liked sessions (0-1). "
         "Higher = more influence from liked session similarities. Default 0.3",
     )
     disliked_embedding_weight: float = Field(
-        default=0.3,
+        default=0.2,
         ge=0.0,
         le=1.0,
         description="Weight (b) to penalize sessions similar to disliked sessions (0-1). "
@@ -425,12 +425,12 @@ class RecommendRequest(BaseModel):
         ),
     )
     filter_margin_weight: float = Field(
-        default=0.1,
+        default=0.5,
         ge=0.0,
         le=1.0,
         description=(
             "Weight to blend filter_compliance_score into overall_score when soft_filters are active (0-1). "
-            "Default 0.1 means filter compliance contributes 10% to final score."
+            "Default 0.5 means filter compliance contributes 50% to final score."
         ),
     )
     # Phase 4: Plan optimization mode (non-overlapping schedule curation)
@@ -463,7 +463,7 @@ class RecommendRequest(BaseModel):
 
     # Phase 3.5: Diversity optimization
     diversity_weight: float = Field(
-        default=0.0,
+        default=0.3,
         ge=0.0,
         le=1.0,
         description="Weight for diversity re-ranking (0-1). 0 = pure relevance (default), "

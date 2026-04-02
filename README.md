@@ -386,7 +386,7 @@ $$\text{score} = \frac{\sum_i s_i \cdot w_i}{\sum_i w_i}$$
 | **Semantic similarity** | 1.0 | Cosine similarity of session embedding to query embedding |
 | **Liked cluster similarity** | 0.3 (`liked_embedding_weight`) | Similarity to the centroid of accepted session embeddings |
 | **Inverted disliked similarity** | 0.2 (`disliked_embedding_weight`) | $1 - \text{sim}(\text{disliked})$ — penalises sessions close to rejected ones |
-| **Filter compliance** | 0.1 (`filter_margin_weight`) | Ratio of active filters matched (only active in soft mode) |
+| **Filter compliance** | 0.5 (`filter_margin_weight`) | Ratio of active filters matched (only active in soft mode) |
 
 All weights are request parameters and can be tuned per call.
 

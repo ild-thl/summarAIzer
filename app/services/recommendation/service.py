@@ -5,7 +5,7 @@ Keeps recommendation flow and ranking logic isolated from search-only services.
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 from sqlalchemy.orm import Session
@@ -40,13 +40,21 @@ class RecommendationQueryParams:
     liked_embedding_weight: float = 0.3
     disliked_embedding_weight: float = 0.2
     soft_filters: list[str] | None = None
-    filter_margin_weight: float = 0.1
+    filter_margin_weight: float = 0.5
     diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
 
 
 class RecommendationService:
     """Coordinates recommendation execution paths and filter-mode semantic search."""
+
+    SOFT_FILTER_KEYS: ClassVar[set[str]] = {
+        "session_format",
+        "tags",
+        "location",
+        "language",
+        "duration",
+    }
 
     @staticmethod
     def _normalize_query_list(query: str | list[str] | None) -> list[str]:
@@ -89,16 +97,6 @@ class RecommendationService:
         if isinstance(window, dict):
             return window.get("start"), window.get("end")
         return getattr(window, "start", None), getattr(window, "end", None)
-
-    @staticmethod
-    def _combine_conditions(condition1: dict | None, condition2: dict | None) -> dict | None:
-        if not condition1 and not condition2:
-            return None
-        if not condition1:
-            return condition2
-        if not condition2:
-            return condition1
-        return {"$and": [condition1, condition2]}
 
     def _build_location_condition(
         self, location_cities: list[str] | None, location_names: list[str] | None
@@ -147,6 +145,14 @@ class RecommendationService:
         return {"$or": window_conditions}
 
     @staticmethod
+    def _build_or_equals_condition(field: str, values: list[str] | None) -> dict | None:
+        if not values:
+            return None
+        if len(values) == 1:
+            return {field: values[0]}
+        return {"$or": [{field: value} for value in values]}
+
+    @staticmethod
     def _build_simple_conditions(
         session_format: list[str] | None,
         language: list[str] | None,
@@ -155,19 +161,15 @@ class RecommendationService:
     ) -> list[dict]:
         conditions = []
 
-        # Handle session_format as OR condition
-        if session_format:
-            if len(session_format) == 1:
-                conditions.append({"session_format": session_format[0]})
-            else:
-                conditions.append({"$or": [{"session_format": fmt} for fmt in session_format]})
+        session_format_condition = RecommendationService._build_or_equals_condition(
+            "session_format", session_format
+        )
+        if session_format_condition:
+            conditions.append(session_format_condition)
 
-        # Handle language as OR condition
-        if language:
-            if len(language) == 1:
-                conditions.append({"language": language[0]})
-            else:
-                conditions.append({"$or": [{"language": lang} for lang in language]})
+        language_condition = RecommendationService._build_or_equals_condition("language", language)
+        if language_condition:
+            conditions.append(language_condition)
 
         if duration_min is not None:
             conditions.append({"duration": {"$gte": duration_min}})
@@ -218,22 +220,11 @@ class RecommendationService:
             return all_conditions[0]
         return {"$and": all_conditions}
 
-    async def _search_similar_with_optional_where(
-        self,
-        query_embedding: list[float],
-        limit: int,
-        where: dict | None,
-    ) -> list[tuple]:
-        if where:
-            return await self.embedding_service.search_similar_sessions(
-                query_embedding,
-                limit=limit,
-                where=where,
-            )
-        return await self.embedding_service.search_similar_sessions(
-            query_embedding,
-            limit=limit,
-        )
+    @classmethod
+    def _get_soft_filter_set(cls, soft_filters: list[str] | None) -> set[str]:
+        if not soft_filters:
+            return set()
+        return set(soft_filters).intersection(cls.SOFT_FILTER_KEYS)
 
     def _optimize_session_plan(
         self,
@@ -538,13 +529,13 @@ class RecommendationService:
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
         soft_filters: list[str] | None = None,
-        filter_margin_weight: float = 0.1,
-        diversity_weight: float = 0.0,
+        filter_margin_weight: float = 0.5,
+        diversity_weight: float = 0.3,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
         min_break_minutes: int = 0,
         max_gap_minutes: int | None = None,
-        plan_candidate_multiplier: int = 3,
+        plan_candidate_multiplier: int = 2,
     ) -> list[tuple]:
         accepted_ids = accepted_ids or []
         rejected_ids = rejected_ids or []
@@ -627,7 +618,7 @@ class RecommendationService:
             rejected_ids=params.rejected_ids,
         )
 
-        soft = set(params.soft_filters or [])
+        soft = self._get_soft_filter_set(params.soft_filters)
         has_soft = bool(soft)
         search_limit = candidate_limit * 2 if has_soft else candidate_limit
 
@@ -647,11 +638,17 @@ class RecommendationService:
         chroma_results: list[tuple] = []
         for query_embedding in query_embeddings:
             try:
-                results = await self._search_similar_with_optional_where(
-                    query_embedding=query_embedding,
-                    limit=search_limit,
-                    where=where_condition,
-                )
+                if where_condition:
+                    results = await self.embedding_service.search_similar_sessions(
+                        query_embedding,
+                        limit=search_limit,
+                        where=where_condition,
+                    )
+                else:
+                    results = await self.embedding_service.search_similar_sessions(
+                        query_embedding,
+                        limit=search_limit,
+                    )
                 chroma_results.extend(results)
             except Exception as e:
                 logger.error("recommendation_chroma_search_failed", error=str(e))
@@ -815,7 +812,7 @@ class RecommendationService:
         params: RecommendationQueryParams,
     ) -> float | None:
         """Compute compliance only for soft_filter attributes. Returns None if no soft filters active."""
-        soft = set(params.soft_filters or [])
+        soft = self._get_soft_filter_set(params.soft_filters)
         if not soft:
             return None
 
@@ -900,7 +897,7 @@ class RecommendationService:
         limit: int = 10,
     ) -> list[tuple]:
         try:
-            soft = set(params.soft_filters or [])
+            soft = self._get_soft_filter_set(params.soft_filters)
             sessions = session_crud.list_with_filters(
                 db=db,
                 limit=limit + len(params.rejected_ids),
@@ -1007,7 +1004,7 @@ class RecommendationService:
         liked_embedding_weight: float,
         disliked_embedding_weight: float,
         filter_compliance_score: float | None = None,
-        filter_margin_weight: float = 0.1,
+        filter_margin_weight: float = 0.5,
     ) -> dict[str, float | None]:
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
