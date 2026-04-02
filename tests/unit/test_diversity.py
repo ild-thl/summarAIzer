@@ -156,11 +156,12 @@ class TestLanguageDiversity:
 
 
 class TestEmbeddingDiversity:
-    """Diversity uses embedding dissimilarity to avoid near-duplicate vectors."""
+    """Embedding diversity is disabled; diversity now relies purely on metadata."""
 
-    def test_dissimilar_embeddings_preferred(self):
+    def test_embedding_diversity_disabled_metadata_only(self):
+        """With EMBEDDING_DIVERSITY_RATIO=0, selection ignores embedding similarity."""
         optimizer = RecommendationDiversityOptimizer()
-        # Sessions 1 & 2 have near-identical embeddings; session 3 is different
+        # Sessions with identical tags; selection based on relevance + metadata coverage (empty here)
         candidates = [
             (_make_session(1, tags=["ai"]), _make_scores(0.90)),
             (_make_session(2, tags=["ai"]), _make_scores(0.88)),
@@ -178,12 +179,12 @@ class TestEmbeddingDiversity:
             embeddings_map=embeddings,
         )
         selected_ids = [s.id for s, _ in result]
-        # Session 3 (dissimilar embedding) should be chosen over session 2 (near-duplicate)
-        assert 1 in selected_ids
-        assert 3 in selected_ids
+        # With metadata-only diversity and all sessions having same tags,
+        # selection falls back to relevance ranking (0.90, 0.88)
+        assert selected_ids == [1, 2]
 
     def test_no_embeddings_gracefully_handled(self):
-        """When no embeddings available, embedding diversity defaults to 1.0 for all."""
+        """When no embeddings available, embedding diversity defaults to 1.0 for all (ignored now)."""
         optimizer = RecommendationDiversityOptimizer()
         candidates = [
             (_make_session(1, tags=["ai"]), _make_scores(0.9)),

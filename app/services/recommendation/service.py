@@ -242,6 +242,8 @@ class RecommendationService:
         time_windows: list[Any] | None,
         min_break_minutes: int,
         max_gap_minutes: int | None,
+        diversity_scores: dict[int, float] | None = None,
+        diversity_weight: float = 0.0,
     ) -> list[tuple]:
         return self.recommendation_planner.optimize_session_plan(
             recommendations=recommendations,
@@ -249,6 +251,8 @@ class RecommendationService:
             time_windows=time_windows,
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
+            diversity_scores=diversity_scores,
+            diversity_weight=diversity_weight,
         )
 
     @staticmethod
@@ -416,17 +420,7 @@ class RecommendationService:
             candidate_limit=candidate_limit,
         )
 
-        if params.diversity_weight > 0:
-            recommendations = self.diversity_optimizer.diversify_results(
-                candidates=recommendations,
-                limit=len(recommendations),
-                diversity_weight=params.diversity_weight,
-                embeddings_map=search_debug.get("embeddings_map"),
-                session_format=params.session_format,
-                tags=params.tags,
-                language=params.language,
-            )
-
+        # First pass: optimize without diversity (pure relevance ranking)
         planned = self._optimize_session_plan(
             recommendations=recommendations,
             limit=limit,
@@ -473,12 +467,34 @@ class RecommendationService:
             if current is None or scores["overall_score"] > current[1]["overall_score"]:
                 merged_by_session_id[session.id] = (session, scores)
 
+        # Compute diversity scores for merged candidates for use in second planning pass
+        # This single pass on merged candidates ensures gap-fill selections are diverse wrt planned sessions
+        diversity_scores: dict[int, float] | None = None
+        if params.diversity_weight > 0:
+            merged_candidates = list(merged_by_session_id.values())
+            reranked = self.diversity_optimizer.diversify_results(
+                candidates=merged_candidates,
+                limit=len(merged_candidates),
+                diversity_weight=params.diversity_weight,
+                embeddings_map=search_debug.get("embeddings_map"),
+                session_format=params.session_format,
+                tags=params.tags,
+                language=params.language,
+            )
+            # Extract diversity scores from reranked results
+            diversity_scores = {}
+            for session, scores in reranked:
+                if scores.get("diversity_score") is not None:
+                    diversity_scores[session.id] = scores["diversity_score"]
+
         replanned = self._optimize_session_plan(
             recommendations=list(merged_by_session_id.values()),
             limit=limit,
             time_windows=params.time_windows,
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
+            diversity_scores=diversity_scores,
+            diversity_weight=params.diversity_weight,
         )
 
         logger.info(
@@ -709,6 +725,14 @@ class RecommendationService:
                 limit=soft_search_limit,
                 where=base_where_condition,
             )
+        # else:
+        #     window_condition = self._build_time_windows_conditions(time_windows)
+        #     chroma_where_soft = self._combine_conditions(base_where_condition, window_condition)
+        #     return await self._search_similar_with_optional_where(
+        #         query_embedding,
+        #         limit=soft_search_limit,
+        #         where=chroma_where_soft,
+        #     )
 
         per_window_limit = max(1, soft_search_limit // len(time_windows))
         collected_results = []

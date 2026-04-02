@@ -6,10 +6,10 @@ import numpy as np
 
 
 class RecommendationDiversityOptimizer:
-    """Greedy MMR-style optimizer combining metadata coverage and embedding dissimilarity."""
+    """Greedy MMR-style optimizer focusing on metadata diversity for predictable coverage."""
 
-    METADATA_DIVERSITY_RATIO = 0.6
-    EMBEDDING_DIVERSITY_RATIO = 0.4
+    METADATA_DIVERSITY_RATIO = 1.0
+    EMBEDDING_DIVERSITY_RATIO = 0.0
 
     @staticmethod
     def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
