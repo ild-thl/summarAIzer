@@ -1082,10 +1082,14 @@ class RecommendationService:
         params: RecommendationQueryParams,
     ) -> list[tuple[Any, dict[str, float | None], str]]:
         ranked: list[tuple[Any, dict[str, float | None], str]] = []
+        embedding_required = (
+            semantic_similarity_enabled or bool(liked_embeddings) or bool(disliked_embeddings)
+        )
 
         for session, chroma_similarity, session_embedding, source in candidates:
             if session_embedding is None:
-                logger.warning("session_embedding_not_found_soft_pass", session_id=session.id)
+                if embedding_required:
+                    logger.warning("session_embedding_not_found_soft_pass", session_id=session.id)
                 session_embedding = self._get_default_embedding()
 
             filter_compliance_score = self.filter_evaluator.compute_filter_compliance_score(

@@ -285,8 +285,8 @@ class TestSessionEventEmissions:
             assert call_args[0][0] == "session_published"
             assert call_args[1]["previous_status"] == SessionStatus.DRAFT
 
-    def test_event_not_emitted_on_update_published_to_published(self, test_db, sample_event):
-        """Test that event is NOT emitted when updating published session (no status change)."""
+    def test_event_emitted_on_update_published_relevant_field_change(self, test_db, sample_event):
+        """Published updates on embedding-relevant fields should emit session_updated."""
         from unittest.mock import patch
 
         from app.events import SessionEventBus
@@ -312,7 +312,38 @@ class TestSessionEventEmissions:
             update_data = SessionUpdate(title="Updated Title")
             session_crud.update(test_db, session.id, update_data)
 
-            # Verify event was NOT emitted (no status change)
+            # Verify update event was emitted
+            mock_emit.assert_called_once()
+            call_args = mock_emit.call_args
+            assert call_args[0][0] == "session_updated"
+            assert call_args[1]["session_id"] == session.id
+            assert "title" in call_args[1]["changed_fields"]
+
+    def test_event_not_emitted_on_update_published_non_relevant_field(self, test_db, sample_event):
+        """Published updates on non-embedding fields should not emit embedding refresh event."""
+        from unittest.mock import patch
+
+        from app.events import SessionEventBus
+
+        now = datetime.utcnow()
+        session_create = SessionCreate(
+            title="Published Non Relevant Update",
+            start_datetime=now,
+            end_datetime=now + timedelta(hours=1),
+            status=SessionStatus.PUBLISHED,
+            language="en",
+            uri="pub-non-relevant",
+            event_id=sample_event.id,
+        )
+        session = session_crud.create(test_db, session_create)
+
+        with patch.object(SessionEventBus, "emit") as mock_emit:
+            mock_emit.reset_mock()
+
+            # recording_url is not part of embedding metadata/text
+            update_data = SessionUpdate(recording_url="https://example.com/recording")
+            session_crud.update(test_db, session.id, update_data)
+
             mock_emit.assert_not_called()
 
     def test_event_emitted_with_correct_metadata(self, test_db, sample_event):
@@ -366,6 +397,30 @@ class TestSessionEventEmissions:
             session = session_crud.create(test_db, session_create)
 
             # Verify the embedding task was queued
+            mock_delay.assert_called_once_with(session.id)
+
+    def test_event_handler_called_on_published_update(self, test_db, sample_event):
+        """Test that embedding refresh task is queued on published relevant updates."""
+        from unittest.mock import patch
+
+        from app.async_jobs.tasks import generate_session_embedding
+
+        now = datetime.utcnow()
+        session_create = SessionCreate(
+            title="Published Update Handler Test",
+            start_datetime=now,
+            end_datetime=now + timedelta(hours=1),
+            status=SessionStatus.PUBLISHED,
+            language="en",
+            uri="published-update-handler",
+            event_id=sample_event.id,
+        )
+        session = session_crud.create(test_db, session_create)
+
+        with patch.object(generate_session_embedding, "delay") as mock_delay:
+            update_data = SessionUpdate(tags=["updated-tag"])
+            session_crud.update(test_db, session.id, update_data)
+
             mock_delay.assert_called_once_with(session.id)
 
     def test_event_emitted_on_update_published_to_draft(self, test_db, sample_event):
