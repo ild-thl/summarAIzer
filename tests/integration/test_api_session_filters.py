@@ -867,7 +867,9 @@ class TestRecommendationAPI:
             "kritisches denken",
         ]
 
-    def test_recommend_route_can_refine_query_before_recommend(self, client, monkeypatch):
+    def test_recommend_route_can_refine_query_before_recommend(
+        self, client, monkeypatch, sample_event
+    ):
         """Recommend endpoint should optionally refine query before recommendation."""
         from app.schemas.session import SearchIntentRefinementResponse
         from app.services.embedding import factory as embedding_factory
@@ -904,7 +906,7 @@ class TestRecommendationAPI:
                 "query": ["Ich moechte KI praktisch in der Lehre einsetzen"],
                 "accepted_ids": [],
                 "rejected_ids": [],
-                "event_id": 9,
+                "event_id": sample_event.id,
                 "refine_query": True,
                 "limit": 5,
             },
@@ -932,7 +934,7 @@ class TestRecommendationAPI:
 
         assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
 
-    def test_recommend_route_refine_query_rejects_single_query_string(self, client):
+    def test_recommend_route_refine_query_rejects_single_query_string(self, client, sample_event):
         """Recommend endpoint should require query list in refine mode."""
         response = client.post(
             "/api/v2/sessions/recommend",
@@ -940,7 +942,7 @@ class TestRecommendationAPI:
                 "query": "KI in der Lehre",
                 "accepted_ids": [],
                 "rejected_ids": [],
-                "event_id": 9,
+                "event_id": sample_event.id,
                 "refine_query": True,
                 "limit": 5,
             },
@@ -949,7 +951,7 @@ class TestRecommendationAPI:
         assert response.status_code == HTTP_400_BAD_REQUEST
 
     def test_recommend_route_refine_query_skips_trivial_single_word_query(
-        self, client, monkeypatch
+        self, client, monkeypatch, sample_event
     ):
         """Refinement should be skipped for very short single-word query lists."""
         from app.services.embedding import factory as embedding_factory
@@ -978,7 +980,7 @@ class TestRecommendationAPI:
                 "query": ["KI"],
                 "accepted_ids": [],
                 "rejected_ids": [],
-                "event_id": 9,
+                "event_id": sample_event.id,
                 "refine_query": True,
                 "limit": 5,
             },
@@ -1070,7 +1072,6 @@ class TestRecommendationAPI:
                 "accepted_ids": [liked_session_id],
                 "rejected_ids": [],
                 "session_format": "training",
-                "filter_mode": "hard",
                 "limit": 5,
             },
         )
@@ -1354,7 +1355,6 @@ class TestRecommendationAPI:
                 "query": "machine learning",
                 "limit": 5,
                 # Phase 3 parameters
-                "filter_mode": "hard",
                 "filter_margin_weight": 0.1,
             },
         )
@@ -1375,7 +1375,6 @@ class TestRecommendationAPI:
                 "session_format": "workshop",
                 "language": "en",
                 "limit": 10,
-                "filter_mode": "hard",
             },
         )
 
@@ -1389,14 +1388,14 @@ class TestRecommendationAPI:
                 assert session["language"].lower() == "en"
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_soft_mode_parameter_accepted(self, client):
-        """Test that soft mode parameters are accepted without errors."""
+    def test_phase3_soft_filters_parameter_accepted(self, client):
+        """Test that soft_filters parameter is accepted without errors."""
         response = client.post(
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
                 "limit": 5,
-                "filter_mode": "soft",
+                "soft_filters": ["language"],
                 "filter_margin_weight": 0.15,
                 "language": "en",
             },
@@ -1420,7 +1419,6 @@ class TestRecommendationAPI:
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
-                "filter_mode": "soft",
                 "filter_margin_weight": 0.0,
                 "limit": 5,
             },
@@ -1432,7 +1430,6 @@ class TestRecommendationAPI:
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
-                "filter_mode": "soft",
                 "filter_margin_weight": 1.0,
                 "limit": 5,
             },
@@ -1455,7 +1452,7 @@ class TestRecommendationAPI:
                 "liked_embedding_weight": 0.3,
                 "disliked_embedding_weight": 0.2,
                 # Phase 3 parameters
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language"],
                 "filter_margin_weight": 0.1,
                 # Filters
                 "language": "en",
@@ -1474,15 +1471,15 @@ class TestRecommendationAPI:
                 assert result["overall_score"] > 0
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_default_filter_mode_is_hard(self, client):
-        """Test that default filter mode is 'hard' when not specified."""
+    def test_phase3_default_no_soft_filters_applies_all_hard(self, client):
+        """Test that omitting soft_filters (default null) applies all filters strictly."""
         response = client.post(
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
                 "session_format": "workshop",
                 "limit": 5,
-                # No filter_mode specified - should default to 'hard'
+                # No soft_filters specified - defaults to all strict
             },
         )
 
@@ -1501,7 +1498,7 @@ class TestRecommendationAPI:
             json={
                 "query": None,
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["language"],
                 "filter_margin_weight": 0.2,
                 # Multiple filters
                 "session_format": "workshop",
@@ -1527,7 +1524,7 @@ class TestRecommendationAPI:
             json={
                 "query": "learning",
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language", "duration"],
                 "filter_margin_weight": 0.15,
                 # Restrictive format filter
                 "session_format": "diskussion",  # Only "ai-ethics" has this
@@ -1571,7 +1568,6 @@ class TestRecommendationAPI:
             json={
                 "query": "learning",
                 "limit": 10,
-                "filter_mode": "hard",  # Strict mode
                 "session_format": "diskussion",  # Very restrictive
                 "language": "en",
             },
@@ -1596,7 +1592,7 @@ class TestRecommendationAPI:
             json={
                 "query": "machine learning workshop",  # Provide query to trigger semantic path
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language"],
                 "filter_margin_weight": 0.2,
                 "session_format": "workshop",
                 "language": "en",

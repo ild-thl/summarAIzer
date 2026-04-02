@@ -464,7 +464,7 @@ class TestRecommendFallback:
                     location_names=None,
                     duration_min=45,
                     duration_max=90,
-                    filter_mode="soft",
+                    soft_filters=["session_format", "language", "tags", "location", "duration"],
                     filter_margin_weight=0.2,
                 ),
                 limit=10,
@@ -706,40 +706,6 @@ class TestFullRecommendationPipeline:
                 rejected_ids=[],
                 limit=10,
             )
-
-    @pytest.mark.asyncio
-    async def test_rank_soft_candidates_does_not_warn_when_embedding_not_required(
-        self, search_service
-    ):
-        """No warning should be emitted in fallback soft mode when no embedding signal is used."""
-        session = Mock(
-            id=49,
-            status=SessionStatus.PUBLISHED,
-            session_format=SimpleNamespace(value="workshop"),
-            language="en",
-            tags=["ml"],
-            location_rel=SimpleNamespace(city="Berlin", name="Main Stage"),
-            duration=45,
-        )
-
-        params = RecommendationQueryParams(
-            query=None,
-            accepted_ids=[],
-            rejected_ids=[],
-            filter_mode="soft",
-        )
-
-        with patch("app.services.recommendation.service.logger.warning") as mock_warning:
-            await search_service._rank_soft_candidates(
-                candidates=[(session, 0.0, None, "soft")],
-                semantic_similarity_enabled=False,
-                liked_embeddings={},
-                disliked_embeddings={},
-                params=params,
-            )
-
-        warn_events = [call.args[0] for call in mock_warning.call_args_list if call.args]
-        assert "session_embedding_not_found_soft_pass" not in warn_events
 
 
 class TestDislikedSessionPenalty:

@@ -432,10 +432,9 @@ async def recommend_sessions(
     - `plan`: generate a non-overlapping schedule from candidate sessions
 
     Filter behavior:
-    - `filter_mode="hard"`: all provided filters are applied during retrieval.
-    - `filter_mode="soft"`: only always-hard filters are applied during retrieval
-        (event scope, seen-session exclusion, and optional time windows); other filters
-        are used later in scoring/ranking.
+    - By default (`soft_filters=null`), all provided filters are applied strictly during retrieval.
+    - Set `soft_filters` to a list of attribute names (e.g. `["language", "session_format"]`) to
+        apply those filters as soft scoring rather than hard retrieval constraints.
 
     Optional query refinement:
     - Set `refine_query=true` to infer/improve search intent from a list of query strings.
@@ -459,7 +458,7 @@ async def recommend_sessions(
         {
             "event_id": 3,
             "query": ["ai ethics"],
-            "filter_mode": "soft",
+            "soft_filters": ["tags", "location"],
             "tags": ["ethics", "policy"],
             "location_cities": ["Berlin"],
             "limit": 10
@@ -529,7 +528,7 @@ async def recommend_sessions(
             duration_max=recommend_req.duration_max,
             liked_embedding_weight=recommend_req.liked_embedding_weight,
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
-            filter_mode=recommend_req.filter_mode,
+            soft_filters=recommend_req.soft_filters,
             filter_margin_weight=recommend_req.filter_margin_weight,
             diversity_weight=recommend_req.diversity_weight,
             goal_mode=recommend_req.goal_mode,

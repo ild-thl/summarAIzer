@@ -39,7 +39,7 @@ class RecommendationQueryParams:
     duration_max: int | None = None
     liked_embedding_weight: float = 0.3
     disliked_embedding_weight: float = 0.2
-    filter_mode: str = "hard"
+    soft_filters: list[str] | None = None
     filter_margin_weight: float = 0.1
     diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
@@ -537,7 +537,7 @@ class RecommendationService:
         duration_max: int | None = None,
         liked_embedding_weight: float = 0.3,
         disliked_embedding_weight: float = 0.2,
-        filter_mode: str = "hard",
+        soft_filters: list[str] | None = None,
         filter_margin_weight: float = 0.1,
         diversity_weight: float = 0.0,
         goal_mode: str = "similarity",
@@ -562,7 +562,7 @@ class RecommendationService:
             duration_max=duration_max,
             liked_embedding_weight=liked_embedding_weight,
             disliked_embedding_weight=disliked_embedding_weight,
-            filter_mode=filter_mode,
+            soft_filters=soft_filters,
             filter_margin_weight=filter_margin_weight,
             diversity_weight=diversity_weight,
             time_windows=time_windows,
@@ -627,65 +627,47 @@ class RecommendationService:
             rejected_ids=params.rejected_ids,
         )
 
-        hard_where_condition = self._build_chroma_conditions(
+        soft = set(params.soft_filters or [])
+        has_soft = bool(soft)
+        search_limit = candidate_limit * 2 if has_soft else candidate_limit
+
+        where_condition = self._build_chroma_conditions(
             event_id=params.event_id,
             seen_ids=seen_ids,
-            session_format=params.session_format,
-            tags=params.tags,
-            location_cities=params.location_cities,
-            location_names=params.location_names,
-            language=params.language,
-            duration_min=params.duration_min,
-            duration_max=params.duration_max,
+            session_format=None if "session_format" in soft else params.session_format,
+            tags=None if "tags" in soft else params.tags,
+            location_cities=None if "location" in soft else params.location_cities,
+            location_names=None if "location" in soft else params.location_names,
+            language=None if "language" in soft else params.language,
+            duration_min=None if "duration" in soft else params.duration_min,
+            duration_max=None if "duration" in soft else params.duration_max,
             time_windows=params.time_windows,
         )
-        soft_base_where_condition = self._build_chroma_conditions(
-            event_id=params.event_id,
-            seen_ids=seen_ids,
-        )
 
-        chroma_results_hard: list[tuple] = []
-        chroma_results_soft: list[tuple] = []
-        soft_pass_triggered = params.filter_mode == "soft"
-
+        chroma_results: list[tuple] = []
         for query_embedding in query_embeddings:
-            if params.filter_mode == "soft":
-                try:
-                    soft_search_limit = candidate_limit * 2
-                    soft_results = await self._collect_soft_pass_candidates(
-                        query_embedding=query_embedding,
-                        soft_search_limit=soft_search_limit,
-                        base_where_condition=soft_base_where_condition,
-                        time_windows=params.time_windows,
-                    )
-                    chroma_results_soft.extend(soft_results)
-                except Exception as e:
-                    logger.warning("recommendation_soft_pass_search_failed", error=str(e))
-            else:
-                try:
-                    hard_results = await self._search_similar_with_optional_where(
-                        query_embedding=query_embedding,
-                        limit=candidate_limit,
-                        where=hard_where_condition,
-                    )
-                    chroma_results_hard.extend(hard_results)
-                except Exception as e:
-                    logger.error("recommendation_chroma_search_failed", error=str(e))
-                    raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
+            try:
+                results = await self._search_similar_with_optional_where(
+                    query_embedding=query_embedding,
+                    limit=search_limit,
+                    where=where_condition,
+                )
+                chroma_results.extend(results)
+            except Exception as e:
+                logger.error("recommendation_chroma_search_failed", error=str(e))
+                raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
 
         if len(query_embeddings) > 1:
-            chroma_results_hard = self._dedupe_chroma_results_by_similarity(chroma_results_hard)[
-                :candidate_limit
-            ]
-            chroma_results_soft = self._dedupe_chroma_results_by_similarity(chroma_results_soft)[
-                : candidate_limit * 2
+            chroma_results = self._dedupe_chroma_results_by_similarity(chroma_results)[
+                :search_limit
             ]
 
-        if params.filter_mode == "soft":
+        if has_soft:
             logger.info(
-                "recommendation_soft_mode_direct_pass",
-                soft_search_limit=candidate_limit * 2,
-                soft_results_before_dedup=len(chroma_results_soft),
+                "recommendation_soft_filters_active",
+                soft_filters=list(soft),
+                search_limit=search_limit,
+                chroma_results_count=len(chroma_results),
                 query_count=len(query_embeddings),
             )
 
@@ -694,67 +676,21 @@ class RecommendationService:
             rejected_ids=params.rejected_ids,
         )
         recommendations, chroma_id_to_embedding = await self._process_chroma_recommendations(
-            chroma_results_hard=chroma_results_hard,
-            chroma_results_soft=chroma_results_soft,
+            chroma_results=chroma_results,
             db=db,
             semantic_similarity_enabled=semantic_similarity_enabled,
             liked_embeddings=preference_embeddings["liked"],
             disliked_embeddings=preference_embeddings["disliked"],
             params=params,
             limit=candidate_limit,
-            soft_pass_triggered=soft_pass_triggered,
         )
 
         return recommendations, {
-            "hard_pass_results": len(chroma_results_hard),
-            "soft_pass_results": len(chroma_results_soft),
-            "soft_pass_triggered": soft_pass_triggered,
+            "hard_pass_results": 0 if has_soft else len(chroma_results),
+            "soft_pass_results": len(chroma_results) if has_soft else 0,
+            "soft_pass_triggered": has_soft,
             "embeddings_map": chroma_id_to_embedding,
         }
-
-    async def _collect_soft_pass_candidates(
-        self,
-        query_embedding: list[float],
-        soft_search_limit: int,
-        base_where_condition: dict | None,
-        time_windows: list[Any] | None,
-    ) -> list:
-        if not time_windows:
-            return await self._search_similar_with_optional_where(
-                query_embedding,
-                limit=soft_search_limit,
-                where=base_where_condition,
-            )
-        # else:
-        #     window_condition = self._build_time_windows_conditions(time_windows)
-        #     chroma_where_soft = self._combine_conditions(base_where_condition, window_condition)
-        #     return await self._search_similar_with_optional_where(
-        #         query_embedding,
-        #         limit=soft_search_limit,
-        #         where=chroma_where_soft,
-        #     )
-
-        per_window_limit = max(1, soft_search_limit // len(time_windows))
-        collected_results = []
-        for window in time_windows:
-            window_condition = self._build_time_windows_conditions([window])
-            chroma_where_soft = self._combine_conditions(base_where_condition, window_condition)
-            results = await self._search_similar_with_optional_where(
-                query_embedding,
-                limit=per_window_limit,
-                where=chroma_where_soft,
-            )
-            collected_results.extend(results)
-
-        deduped: dict[int, tuple[int, float, Any]] = {}
-        for session_id, similarity, metadata in collected_results:
-            current = deduped.get(session_id)
-            if current is None or similarity > current[1]:
-                deduped[session_id] = (session_id, similarity, metadata)
-
-        deduped_results = list(deduped.values())
-        deduped_results.sort(key=lambda item: item[1], reverse=True)
-        return deduped_results[:soft_search_limit]
 
     async def _determine_query_embeddings(
         self,
@@ -762,134 +698,59 @@ class RecommendationService:
         accepted_ids: list[int],
         rejected_ids: list[int],
     ) -> tuple[list[list[float]], bool]:
-        queries = self._normalize_query_list(query)
-        if queries:
-            query_embeddings: list[list[float]] = []
-            for query_item in queries:
-                if not EmbeddingService.validate_embedding_text(query_item):
-                    raise InvalidEmbeddingTextError("Query text is invalid or too long")
-                query_embeddings.append(await self.embedding_service.embed_query(query_item))
-            logger.info(
-                "recommendation_query_provided",
-                query_count=len(queries),
-                accepted_ids_count=len(accepted_ids),
-                rejected_ids_count=len(rejected_ids),
-            )
+        normalized_queries = self._normalize_query_list(query)
+        if normalized_queries:
+            for query_text in normalized_queries:
+                if not EmbeddingService.validate_embedding_text(query_text):
+                    raise InvalidEmbeddingTextError("Invalid query text for embedding")
+            query_embeddings = [
+                await self.embedding_service.embed_query(query_text)
+                for query_text in normalized_queries
+            ]
             return query_embeddings, True
 
-        liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
-        if not liked_embeddings:
-            raise EmbeddingSearchError(f"No embeddings found for liked sessions: {accepted_ids}")
-
-        import numpy as np
-
-        centroid_array = np.mean(list(liked_embeddings.values()), axis=0)
-        query_embedding = [float(x) for x in centroid_array]
-
-        logger.info(
-            "recommendation_centroid_computed",
-            accepted_ids_count=len(accepted_ids),
-            embeddings_found=len(liked_embeddings),
-            rejected_ids_count=len(rejected_ids),
-        )
-        return [query_embedding], False
-
-    async def _determine_query_embedding(
-        self,
-        query: str | list[str] | None,
-        accepted_ids: list[int],
-        rejected_ids: list[int],
-    ) -> tuple[list, bool]:
-        """Backward-compatible helper for callers/tests expecting a single embedding."""
-        embeddings, semantic_enabled = await self._determine_query_embeddings(
-            query=query,
+        embedding, semantic_enabled = await self._determine_query_embedding(
+            query=None,
             accepted_ids=accepted_ids,
             rejected_ids=rejected_ids,
         )
-        return embeddings[0], semantic_enabled
+        return [embedding], semantic_enabled
 
-    async def _recommend_fallback(
+    async def _determine_query_embedding(
         self,
-        db: Session,
-        params: RecommendationQueryParams,
-        limit: int = 10,
-    ) -> list[tuple]:
-        try:
-            if params.filter_mode == "soft":
-                # In soft mode fallback we expand candidates first, then rank by compliance.
-                sessions = session_crud.list_with_filters(
-                    db=db,
-                    limit=(limit * 2) + len(params.rejected_ids),
-                    status=SessionStatus.PUBLISHED,
-                    event_id=params.event_id,
-                    time_windows=params.time_windows,
-                )
-            else:
-                sessions = session_crud.list_with_filters(
-                    db=db,
-                    limit=limit + len(params.rejected_ids),
-                    status=SessionStatus.PUBLISHED,
-                    event_id=params.event_id,
-                    session_format=params.session_format,
-                    tags=params.tags,
-                    location_cities=params.location_cities,
-                    location_names=params.location_names,
-                    language=params.language,
-                    duration_min=params.duration_min,
-                    duration_max=params.duration_max,
-                    time_windows=params.time_windows,
-                )
+        query: str | None,
+        accepted_ids: list[int],
+        rejected_ids: list[int],
+    ) -> tuple[list[float], bool]:
+        rejected_ids_count = len(rejected_ids)
 
-            recommendations = []
-            if params.filter_mode == "soft":
-                soft_candidates = [
-                    (session, 0.0, None, "soft")
-                    for session in sessions
-                    if session.id not in params.rejected_ids
-                ]
-                ranked_soft = await self._rank_soft_candidates(
-                    candidates=soft_candidates,
-                    semantic_similarity_enabled=False,
-                    liked_embeddings={},
-                    disliked_embeddings={},
-                    params=replace(
-                        params,
-                        liked_embedding_weight=0.0,
-                        disliked_embedding_weight=0.0,
-                    ),
-                )
-                recommendations = [(session, scores) for session, scores, _ in ranked_soft[:limit]]
-            else:
-                for session in sessions:
-                    if session.id in params.rejected_ids:
-                        continue
-                    scores = {
-                        "overall_score": 1.0,
-                        "semantic_similarity": None,
-                        "liked_cluster_similarity": None,
-                        "disliked_similarity": None,
-                        "filter_compliance_score": None,
-                        "diversity_score": None,
-                    }
-                    recommendations.append((session, scores))
-                recommendations = recommendations[:limit]
+        if query:
+            if not EmbeddingService.validate_embedding_text(query):
+                raise InvalidEmbeddingTextError("Invalid query text for embedding")
+            return await self.embedding_service.embed_query(query), True
 
-            logger.info(
-                "recommendation_crud_completed",
-                rejected_ids_count=len(params.rejected_ids),
-                recommendations=len(recommendations),
-                limit=limit,
-                filter_mode=params.filter_mode,
+        if accepted_ids:
+            accepted_embeddings_map = await self.embedding_service.get_session_embeddings(
+                accepted_ids
             )
-            return recommendations
+            accepted_embeddings = list(accepted_embeddings_map.values())
+            if not accepted_embeddings:
+                logger.warning(
+                    "accepted_embeddings_not_found",
+                    accepted_ids_count=len(accepted_ids),
+                    rejected_ids_count=rejected_ids_count,
+                )
+                raise EmbeddingSearchError("No embeddings found for accepted sessions")
 
-        except Exception as e:
-            logger.error(
-                "recommendation_crud_failed",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
-            raise EmbeddingSearchError(f"CRUD recommendation fallback failed: {e!s}") from e
+            dim = len(accepted_embeddings[0])
+            centroid = [0.0] * dim
+            for emb in accepted_embeddings:
+                for i, value in enumerate(emb):
+                    centroid[i] += value
+            centroid = [value / len(accepted_embeddings) for value in centroid]
+            return centroid, False
+
+        return self._get_default_embedding(), False
 
     async def _prefetch_preference_embeddings(
         self,
@@ -928,16 +789,9 @@ class RecommendationService:
 
     async def _batch_fetch_embeddings(
         self,
-        chroma_results_hard: list,
-        chroma_results_soft: list,
+        chroma_results: list,
     ) -> dict:
-        # Keep ordering stable but remove duplicates to satisfy Chroma get() constraints.
-        all_session_ids = list(
-            dict.fromkeys(
-                [session_id for session_id, _, _ in chroma_results_hard]
-                + [session_id for session_id, _, _ in chroma_results_soft]
-            )
-        )
+        all_session_ids = list(dict.fromkeys([session_id for session_id, _, _ in chroma_results]))
 
         chroma_id_to_embedding = {}
         if all_session_ids:
@@ -955,56 +809,76 @@ class RecommendationService:
                 )
         return chroma_id_to_embedding
 
+    def _compute_soft_filter_compliance(
+        self,
+        session: Any,
+        params: RecommendationQueryParams,
+    ) -> float | None:
+        """Compute compliance only for soft_filter attributes. Returns None if no soft filters active."""
+        soft = set(params.soft_filters or [])
+        if not soft:
+            return None
+
+        return self.filter_evaluator.compute_filter_compliance_score(
+            session=session,
+            session_format=params.session_format if "session_format" in soft else None,
+            tags=params.tags if "tags" in soft else None,
+            location_cities=params.location_cities if "location" in soft else None,
+            location_names=params.location_names if "location" in soft else None,
+            language=params.language if "language" in soft else None,
+            duration_min=params.duration_min if "duration" in soft else None,
+            duration_max=params.duration_max if "duration" in soft else None,
+            time_windows=None,
+        )
+
     async def _process_chroma_recommendations(
         self,
-        chroma_results_hard: list,
-        chroma_results_soft: list,
+        chroma_results: list,
         db: Session,
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
         params: RecommendationQueryParams,
         limit: int,
-        soft_pass_triggered: bool = False,
     ) -> tuple[list[tuple], dict]:
-        chroma_id_to_embedding = await self._batch_fetch_embeddings(
-            chroma_results_hard, chroma_results_soft
+        chroma_id_to_embedding = await self._batch_fetch_embeddings(chroma_results)
+        embedding_required = (
+            semantic_similarity_enabled or bool(liked_embeddings) or bool(disliked_embeddings)
         )
-        hard_pass_session_ids = {session_id for session_id, _, _ in chroma_results_hard}
-        recommendations = []
+        recommendations: list[tuple] = []
 
-        await self._process_hard_pass_results(
-            chroma_results_hard=chroma_results_hard,
-            db=db,
-            params=params,
-            chroma_id_to_embedding=chroma_id_to_embedding,
-            semantic_similarity_enabled=semantic_similarity_enabled,
-            liked_embeddings=liked_embeddings,
-            disliked_embeddings=disliked_embeddings,
-            limit=limit,
-            recommendations=recommendations,
-        )
+        for session_id, chroma_similarity, _ in chroma_results:
+            session = session_crud.read(db, session_id)
+            if not session or session.status != SessionStatus.PUBLISHED:
+                continue
+            if params.event_id and session.event_id != params.event_id:
+                continue
 
-        if soft_pass_triggered and chroma_results_soft:
-            await self._process_soft_pass_results(
-                chroma_results_soft=chroma_results_soft,
-                hard_pass_session_ids=hard_pass_session_ids,
-                db=db,
-                params=params,
-                chroma_id_to_embedding=chroma_id_to_embedding,
+            session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
+            if session_embedding is None:
+                if embedding_required:
+                    logger.warning("session_embedding_not_found", session_id=session_id)
+                session_embedding = self._get_default_embedding()
+
+            soft_compliance = self._compute_soft_filter_compliance(session, params)
+            scores = await self._compute_recommendation_scores(
+                session_embedding=session_embedding,
+                chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
-                limit=limit,
-                recommendations=recommendations,
+                liked_embedding_weight=params.liked_embedding_weight,
+                disliked_embedding_weight=params.disliked_embedding_weight,
+                filter_compliance_score=soft_compliance,
+                filter_margin_weight=params.filter_margin_weight,
             )
+            recommendations.append((session, scores))
 
-        recommendations_final = [(session, scores) for session, scores, _ in recommendations]
-        recommendations_final.sort(key=lambda x: x[1]["overall_score"], reverse=True)
+        recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
 
         if params.diversity_weight > 0:
-            recommendations_final = self.diversity_optimizer.diversify_results(
-                candidates=recommendations_final,
+            recommendations = self.diversity_optimizer.diversify_results(
+                candidates=recommendations,
                 limit=limit,
                 diversity_weight=params.diversity_weight,
                 embeddings_map=chroma_id_to_embedding,
@@ -1013,149 +887,70 @@ class RecommendationService:
                 language=params.language,
             )
         else:
-            recommendations_final = recommendations_final[:limit]
-            for _, scores in recommendations_final:
+            recommendations = recommendations[:limit]
+            for _, scores in recommendations:
                 scores["diversity_score"] = None
 
-        logger.info(
-            "recommendation_completed",
-            hard_pass_results=sum(1 for _, _, src in recommendations if src == "hard"),
-            soft_pass_results=sum(1 for _, _, src in recommendations if src == "soft"),
-            final_recommendations=len(recommendations_final),
-            limit=limit,
-            soft_pass_triggered=soft_pass_triggered,
-        )
+        return recommendations, chroma_id_to_embedding
 
-        return recommendations_final, chroma_id_to_embedding
-
-    async def _process_hard_pass_results(
+    async def _recommend_fallback(
         self,
-        chroma_results_hard: list,
         db: Session,
         params: RecommendationQueryParams,
-        chroma_id_to_embedding: dict,
-        semantic_similarity_enabled: bool,
-        liked_embeddings: dict[int, list[float]],
-        disliked_embeddings: dict[int, list[float]],
-        limit: int,
-        recommendations: list,
-    ) -> None:
-        for session_id, chroma_similarity, _ in chroma_results_hard:
-            session = session_crud.read(db, session_id)
-            if not session or session.status != SessionStatus.PUBLISHED:
-                continue
-            if params.event_id and session.event_id != params.event_id:
-                continue
-
-            session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
-            if session_embedding is None:
-                logger.warning("session_embedding_not_found", session_id=session_id)
-                session_embedding = self._get_default_embedding()
-
-            scores = await self._compute_recommendation_scores(
-                session_embedding=session_embedding,
-                chroma_similarity=chroma_similarity,
-                semantic_similarity_enabled=semantic_similarity_enabled,
-                liked_embeddings=liked_embeddings,
-                disliked_embeddings=disliked_embeddings,
-                liked_embedding_weight=params.liked_embedding_weight,
-                disliked_embedding_weight=params.disliked_embedding_weight,
-                filter_compliance_score=1.0,
-                filter_margin_weight=params.filter_margin_weight,
-            )
-
-            recommendations.append((session, scores, "hard"))
-            if len(recommendations) >= limit:
-                break
-
-    async def _process_soft_pass_results(
-        self,
-        chroma_results_soft: list,
-        hard_pass_session_ids: set,
-        db: Session,
-        params: RecommendationQueryParams,
-        chroma_id_to_embedding: dict,
-        semantic_similarity_enabled: bool,
-        liked_embeddings: dict[int, list[float]],
-        disliked_embeddings: dict[int, list[float]],
-        limit: int,
-        recommendations: list,
-    ) -> None:
-        soft_candidates: list[tuple[Any, float, list[float] | None, str]] = []
-        for session_id, chroma_similarity, _ in chroma_results_soft:
-            if session_id in hard_pass_session_ids:
-                continue
-
-            session = session_crud.read(db, session_id)
-            if not session or session.status != SessionStatus.PUBLISHED:
-                continue
-            if params.event_id and session.event_id != params.event_id:
-                continue
-            if any(rec[0].id == session_id for rec in recommendations):
-                continue
-
-            session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
-            soft_candidates.append((session, chroma_similarity, session_embedding, "soft"))
-
-        ranked_soft_candidates = await self._rank_soft_candidates(
-            candidates=soft_candidates,
-            semantic_similarity_enabled=semantic_similarity_enabled,
-            liked_embeddings=liked_embeddings,
-            disliked_embeddings=disliked_embeddings,
-            params=params,
-        )
-
-        for session, scores, source in ranked_soft_candidates:
-            recommendations.append((session, scores, source))
-            if len(recommendations) >= limit:
-                break
-
-    async def _rank_soft_candidates(
-        self,
-        candidates: list[tuple[Any, float, list[float] | None, str]],
-        semantic_similarity_enabled: bool,
-        liked_embeddings: dict[int, list[float]],
-        disliked_embeddings: dict[int, list[float]],
-        params: RecommendationQueryParams,
-    ) -> list[tuple[Any, dict[str, float | None], str]]:
-        ranked: list[tuple[Any, dict[str, float | None], str]] = []
-        embedding_required = (
-            semantic_similarity_enabled or bool(liked_embeddings) or bool(disliked_embeddings)
-        )
-
-        for session, chroma_similarity, session_embedding, source in candidates:
-            if session_embedding is None:
-                if embedding_required:
-                    logger.warning("session_embedding_not_found_soft_pass", session_id=session.id)
-                session_embedding = self._get_default_embedding()
-
-            filter_compliance_score = self.filter_evaluator.compute_filter_compliance_score(
-                session=session,
-                session_format=params.session_format,
-                tags=params.tags,
-                location_cities=params.location_cities,
-                location_names=params.location_names,
-                language=params.language,
-                duration_min=params.duration_min,
-                duration_max=params.duration_max,
+        limit: int = 10,
+    ) -> list[tuple]:
+        try:
+            soft = set(params.soft_filters or [])
+            sessions = session_crud.list_with_filters(
+                db=db,
+                limit=limit + len(params.rejected_ids),
+                status=SessionStatus.PUBLISHED,
+                event_id=params.event_id,
+                session_format=None if "session_format" in soft else params.session_format,
+                tags=None if "tags" in soft else params.tags,
+                location_cities=None if "location" in soft else params.location_cities,
+                location_names=None if "location" in soft else params.location_names,
+                language=None if "language" in soft else params.language,
+                duration_min=None if "duration" in soft else params.duration_min,
+                duration_max=None if "duration" in soft else params.duration_max,
                 time_windows=params.time_windows,
             )
 
-            scores = await self._compute_recommendation_scores(
-                session_embedding=session_embedding,
-                chroma_similarity=chroma_similarity,
-                semantic_similarity_enabled=semantic_similarity_enabled,
-                liked_embeddings=liked_embeddings,
-                disliked_embeddings=disliked_embeddings,
-                liked_embedding_weight=params.liked_embedding_weight,
-                disliked_embedding_weight=params.disliked_embedding_weight,
-                filter_compliance_score=filter_compliance_score,
-                filter_margin_weight=params.filter_margin_weight,
-            )
-            ranked.append((session, scores, source))
+            recommendations: list[tuple] = []
+            for session in sessions:
+                if session.id in params.rejected_ids:
+                    continue
 
-        ranked.sort(key=lambda item: item[1]["overall_score"], reverse=True)
-        return ranked
+                soft_compliance = self._compute_soft_filter_compliance(session, params)
+                scores = {
+                    "overall_score": soft_compliance if soft_compliance is not None else 1.0,
+                    "semantic_similarity": None,
+                    "liked_cluster_similarity": None,
+                    "disliked_similarity": None,
+                    "filter_compliance_score": soft_compliance,
+                    "diversity_score": None,
+                }
+                recommendations.append((session, scores))
+
+            if soft:
+                recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
+            recommendations = recommendations[:limit]
+
+            logger.info(
+                "recommendation_crud_completed",
+                rejected_ids_count=len(params.rejected_ids),
+                recommendations=len(recommendations),
+                limit=limit,
+                soft_filters=list(soft),
+            )
+            return recommendations
+        except Exception as e:
+            logger.error(
+                "recommendation_crud_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            raise EmbeddingSearchError(f"CRUD recommendation fallback failed: {e!s}") from e
 
     @staticmethod
     def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
@@ -1172,7 +967,7 @@ class RecommendationService:
             return 0.0
 
         cosine_sim = dot_product / (norm_v1 * norm_v2)
-        return float(max(0.0, (cosine_sim + 1.0) / 2.0))
+        return float(min(1.0, max(0.0, (cosine_sim + 1.0) / 2.0)))
 
     def _compute_liked_similarity(
         self,
@@ -1182,18 +977,11 @@ class RecommendationService:
         if not liked_embeddings:
             return None
 
-        try:
-            import numpy as np
-
-            centroid = np.mean(list(liked_embeddings.values()), axis=0).tolist()
-            return self._cosine_similarity(session_embedding, centroid)
-        except Exception as e:
-            logger.warning(
-                "liked_cluster_similarity_computation_failed",
-                error=str(e),
-                embeddings_count=len(liked_embeddings),
-            )
-            return None
+        similarities = [
+            self._cosine_similarity(session_embedding, embedding)
+            for embedding in liked_embeddings.values()
+        ]
+        return max(similarities) if similarities else None
 
     def _compute_disliked_similarity(
         self,
@@ -1203,46 +991,11 @@ class RecommendationService:
         if not disliked_embeddings:
             return None
 
-        try:
-            disliked_sims = [
-                self._cosine_similarity(session_embedding, disliked_emb)
-                for disliked_emb in disliked_embeddings.values()
-            ]
-            return max(disliked_sims) if disliked_sims else None
-        except Exception as e:
-            logger.warning(
-                "disliked_similarity_computation_failed",
-                error=str(e),
-                embeddings_count=len(disliked_embeddings),
-            )
-            return None
-
-    def _build_score_components(
-        self,
-        semantic_sim: float | None,
-        liked_cluster_sim: float | None,
-        disliked_sim: float | None,
-        liked_embedding_weight: float,
-        disliked_embedding_weight: float,
-        filter_compliance_score: float | None,
-        filter_margin_weight: float,
-    ) -> tuple[list, list, list]:
-        strategy_weights: dict[str, float] = {
-            "liked": liked_embedding_weight,
-            "disliked": disliked_embedding_weight,
-            "compliance": filter_margin_weight,
-        }
-        return self.score_engine.build_components(
-            semantic_sim=semantic_sim,
-            liked_cluster_sim=liked_cluster_sim,
-            disliked_sim=disliked_sim,
-            filter_compliance_score=filter_compliance_score,
-            weights=strategy_weights,
-        )
-
-    @staticmethod
-    def _calculate_overall_score(components: list, weights: list) -> float:
-        return RecommendationScoreEngine.calculate_overall_score(components, weights)
+        similarities = [
+            self._cosine_similarity(session_embedding, embedding)
+            for embedding in disliked_embeddings.values()
+        ]
+        return max(similarities) if similarities else None
 
     async def _compute_recommendation_scores(
         self,
@@ -1251,35 +1004,33 @@ class RecommendationService:
         semantic_similarity_enabled: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
-        liked_embedding_weight: float = 0.3,
-        disliked_embedding_weight: float = 0.2,
+        liked_embedding_weight: float,
+        disliked_embedding_weight: float,
         filter_compliance_score: float | None = None,
         filter_margin_weight: float = 0.1,
-    ) -> dict:
+    ) -> dict[str, float | None]:
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
         disliked_sim = self._compute_disliked_similarity(session_embedding, disliked_embeddings)
 
-        score_components, score_weights = self._build_score_components(
+        components, component_weights = self.score_engine.build_components(
             semantic_sim=semantic_sim,
             liked_cluster_sim=liked_cluster_sim,
             disliked_sim=disliked_sim,
-            liked_embedding_weight=liked_embedding_weight,
-            disliked_embedding_weight=disliked_embedding_weight,
             filter_compliance_score=filter_compliance_score,
-            filter_margin_weight=filter_margin_weight,
+            weights={
+                "liked": liked_embedding_weight,
+                "disliked": disliked_embedding_weight,
+                "compliance": filter_margin_weight,
+            },
         )
-        overall_score = self._calculate_overall_score(score_components, score_weights)
+        overall_score = self.score_engine.calculate_overall_score(components, component_weights)
 
         return {
-            "overall_score": round(overall_score, 3),
-            "semantic_similarity": round(semantic_sim, 3) if semantic_sim is not None else None,
-            "liked_cluster_similarity": (
-                round(liked_cluster_sim, 3) if liked_cluster_sim is not None else None
-            ),
-            "disliked_similarity": round(disliked_sim, 3) if disliked_sim is not None else None,
-            "filter_compliance_score": (
-                round(filter_compliance_score, 3) if filter_compliance_score is not None else None
-            ),
+            "overall_score": overall_score,
+            "semantic_similarity": semantic_sim,
+            "liked_cluster_similarity": liked_cluster_sim,
+            "disliked_similarity": disliked_sim,
+            "filter_compliance_score": filter_compliance_score,
             "diversity_score": None,
         }

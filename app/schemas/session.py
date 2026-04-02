@@ -412,18 +412,26 @@ class RecommendRequest(BaseModel):
     )
 
     # Phase 3: Soft filter margins
-    filter_mode: Literal["hard", "soft"] = Field(
-        default="soft",
-        description="Filter enforcement mode: 'hard' = strictly match all filters, "
-        "'soft' = use soft candidate retrieval and score by filter compliance",
+    soft_filters: (
+        list[Literal["session_format", "tags", "location", "language", "duration"]] | None
+    ) = Field(
+        default=None,
+        description=(
+            "Optional list of filter attributes to apply as soft scoring rather than strict retrieval. "
+            "Attributes listed here are excluded from candidate retrieval and instead scored via "
+            "filter compliance (blended into overall_score using filter_margin_weight). "
+            "Valid values: 'session_format', 'tags', 'location', 'language', 'duration'. "
+            "Default (null) applies all provided filters strictly."
+        ),
     )
     filter_margin_weight: float = Field(
         default=0.1,
         ge=0.0,
         le=1.0,
-        description="When filter_mode='soft', weight to blend filter_compliance_score into overall_score (0-1). "
-        "Default 0.1 means filter compliance contributes 10% to final score. Set to 0.0 if using soft "
-        "mode only to expand candidate pool (compliance shown in response but not scored).",
+        description=(
+            "Weight to blend filter_compliance_score into overall_score when soft_filters are active (0-1). "
+            "Default 0.1 means filter compliance contributes 10% to final score."
+        ),
     )
     # Phase 4: Plan optimization mode (non-overlapping schedule curation)
     goal_mode: Literal["similarity", "plan"] = Field(
