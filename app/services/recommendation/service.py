@@ -177,6 +177,8 @@ class RecommendationService:
 
     def _build_chroma_conditions(
         self,
+        event_id: int | None = None,
+        seen_ids: set[int] | None = None,
         session_format: list[str] | None = None,
         tags: list[str] | None = None,
         location_cities: list[str] | None = None,
@@ -187,6 +189,13 @@ class RecommendationService:
         time_windows: list[Any] | None = None,
     ) -> dict | None:
         all_conditions = []
+
+        if event_id is not None:
+            all_conditions.append({"event_id": event_id})
+
+        if seen_ids:
+            all_conditions.append({"session_id": {"$nin": list(seen_ids)}})
+
         all_conditions.extend(
             self._build_simple_conditions(session_format, language, duration_min, duration_max)
         )
@@ -208,6 +217,23 @@ class RecommendationService:
         if len(all_conditions) == 1:
             return all_conditions[0]
         return {"$and": all_conditions}
+
+    async def _search_similar_with_optional_where(
+        self,
+        query_embedding: list[float],
+        limit: int,
+        where: dict | None,
+    ) -> list[tuple]:
+        if where:
+            return await self.embedding_service.search_similar_sessions(
+                query_embedding,
+                limit=limit,
+                where=where,
+            )
+        return await self.embedding_service.search_similar_sessions(
+            query_embedding,
+            limit=limit,
+        )
 
     def _optimize_session_plan(
         self,
@@ -585,7 +611,9 @@ class RecommendationService:
             rejected_ids=params.rejected_ids,
         )
 
-        metadata_conditions = self._build_chroma_conditions(
+        hard_where_condition = self._build_chroma_conditions(
+            event_id=params.event_id,
+            seen_ids=seen_ids,
             session_format=params.session_format,
             tags=params.tags,
             location_cities=params.location_cities,
@@ -593,12 +621,12 @@ class RecommendationService:
             language=params.language,
             duration_min=params.duration_min,
             duration_max=params.duration_max,
+            time_windows=params.time_windows,
         )
-        time_windows_condition = self._build_time_windows_conditions(params.time_windows)
-        metadata_conditions = self._combine_conditions(metadata_conditions, time_windows_condition)
-
-        nin_condition = {"session_id": {"$nin": list(seen_ids)}} if seen_ids else None
-        chroma_where = self._combine_conditions(nin_condition, metadata_conditions)
+        soft_base_where_condition = self._build_chroma_conditions(
+            event_id=params.event_id,
+            seen_ids=seen_ids,
+        )
 
         chroma_results_hard: list[tuple] = []
         chroma_results_soft: list[tuple] = []
@@ -611,7 +639,7 @@ class RecommendationService:
                     soft_results = await self._collect_soft_pass_candidates(
                         query_embedding=query_embedding,
                         soft_search_limit=soft_search_limit,
-                        nin_condition=nin_condition,
+                        base_where_condition=soft_base_where_condition,
                         time_windows=params.time_windows,
                     )
                     chroma_results_soft.extend(soft_results)
@@ -619,14 +647,11 @@ class RecommendationService:
                     logger.warning("recommendation_soft_pass_search_failed", error=str(e))
             else:
                 try:
-                    if chroma_where:
-                        hard_results = await self.embedding_service.search_similar_sessions(
-                            query_embedding, limit=candidate_limit, where=chroma_where
-                        )
-                    else:
-                        hard_results = await self.embedding_service.search_similar_sessions(
-                            query_embedding, limit=candidate_limit
-                        )
+                    hard_results = await self._search_similar_with_optional_where(
+                        query_embedding=query_embedding,
+                        limit=candidate_limit,
+                        where=hard_where_condition,
+                    )
                     chroma_results_hard.extend(hard_results)
                 except Exception as e:
                     logger.error("recommendation_chroma_search_failed", error=str(e))
@@ -675,38 +700,26 @@ class RecommendationService:
         self,
         query_embedding: list[float],
         soft_search_limit: int,
-        nin_condition: dict | None,
+        base_where_condition: dict | None,
         time_windows: list[Any] | None,
     ) -> list:
         if not time_windows:
-            chroma_where_soft = self._combine_conditions(nin_condition, None)
-            if chroma_where_soft:
-                return await self.embedding_service.search_similar_sessions(
-                    query_embedding,
-                    limit=soft_search_limit,
-                    where=chroma_where_soft,
-                )
-            return await self.embedding_service.search_similar_sessions(
+            return await self._search_similar_with_optional_where(
                 query_embedding,
                 limit=soft_search_limit,
+                where=base_where_condition,
             )
 
         per_window_limit = max(1, soft_search_limit // len(time_windows))
         collected_results = []
         for window in time_windows:
             window_condition = self._build_time_windows_conditions([window])
-            chroma_where_soft = self._combine_conditions(nin_condition, window_condition)
-            if chroma_where_soft:
-                results = await self.embedding_service.search_similar_sessions(
-                    query_embedding,
-                    limit=per_window_limit,
-                    where=chroma_where_soft,
-                )
-            else:
-                results = await self.embedding_service.search_similar_sessions(
-                    query_embedding,
-                    limit=per_window_limit,
-                )
+            chroma_where_soft = self._combine_conditions(base_where_condition, window_condition)
+            results = await self._search_similar_with_optional_where(
+                query_embedding,
+                limit=per_window_limit,
+                where=chroma_where_soft,
+            )
             collected_results.extend(results)
 
         deduped: dict[int, tuple[int, float, Any]] = {}
