@@ -30,6 +30,7 @@ class SessionEventBus:
         "session_unpublished": [],
         "session_deleted": [],
         "session_created": [],
+        "session_updated": [],
     }
 
     @classmethod
@@ -184,11 +185,47 @@ def _handle_session_deleted(session_id: int, **kwargs) -> None:
         )
 
 
+def _handle_session_updated(
+    session_id: int, changed_fields: list[str] | None = None, **kwargs
+) -> None:
+    """
+    Handle session_updated event - queue embedding refresh.
+
+    Triggered for published sessions when embedding-relevant fields changed.
+
+    Args:
+        session_id: ID of updated session
+        changed_fields: Updated field names that require embedding refresh
+        **kwargs: Other event data
+    """
+    try:
+        from app.async_jobs.tasks import generate_session_embedding
+
+        generate_session_embedding.delay(session_id)
+
+        logger.info(
+            "session_embedding_refresh_queued_on_update_event",
+            session_id=session_id,
+            changed_fields=changed_fields or [],
+            **kwargs,
+        )
+    except Exception as e:
+        logger.error(
+            "failed_to_queue_embedding_refresh_on_update_event",
+            session_id=session_id,
+            changed_fields=changed_fields or [],
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+
+
 # Register event handlers at module load time (only if embeddings enabled)
 if get_settings().enable_embeddings:
     SessionEventBus.subscribe("session_published", _handle_session_published)
     SessionEventBus.subscribe("session_unpublished", _handle_session_unpublished)
     SessionEventBus.subscribe("session_deleted", _handle_session_deleted)
+    SessionEventBus.subscribe("session_updated", _handle_session_updated)
     logger.info("embedding_event_handlers_registered")
 else:
     logger.info("embedding_event_handlers_disabled_by_config")

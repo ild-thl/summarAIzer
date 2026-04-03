@@ -40,3 +40,9 @@ class ChromaConnectionError(EmbeddingError):
     """Raised when Chroma server connection fails."""
 
     pass
+
+
+class QueryRefinementError(EmbeddingError):
+    """Raised when LLM-based query refinement fails."""
+
+    pass

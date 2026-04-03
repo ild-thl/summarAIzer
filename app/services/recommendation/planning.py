@@ -97,15 +97,30 @@ class RecommendationPlanner:
         time_windows: list[Any] | None,
         min_break_minutes: int,
         max_gap_minutes: int | None,
+        diversity_scores: dict[int, float] | None = None,
+        diversity_weight: float = 0.0,
     ) -> list[tuple]:
-        """Select a non-overlapping recommendation plan using a deterministic greedy strategy."""
+        """Select a non-overlapping recommendation plan using a deterministic greedy strategy.
+
+        Supports diversity-aware tie-breaking when planning conflicts occur.
+        When diversity_weight > 0 and diversity_scores provided, uses combined score
+        (1 - diversity_weight) * overall_score + diversity_weight * diversity_score
+        to break ties between overlapping candidates.
+        """
         if not recommendations:
             return []
+
+        def _compute_combined_score(session_id: int, overall_score: float) -> float:
+            """Compute combined score for ranking, optionally weighted by diversity."""
+            if diversity_weight <= 0.0 or not diversity_scores:
+                return overall_score
+            diversity_score = diversity_scores.get(session_id, 0.0)
+            return (1.0 - diversity_weight) * overall_score + diversity_weight * diversity_score
 
         ranked_candidates = sorted(
             recommendations,
             key=lambda item: (
-                -item[1]["overall_score"],
+                -_compute_combined_score(item[0].id, item[1]["overall_score"]),
                 item[0].start_datetime,
                 item[0].end_datetime,
                 item[0].id,

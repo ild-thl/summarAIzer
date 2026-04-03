@@ -172,7 +172,13 @@ async def list_sessions(
         description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
     ),
     tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location: str = Query(None, description="Filter by location (comma-separated, OR logic)"),
+    location_cities: str | None = Query(
+        None, description="Filter by city (comma-separated, OR logic)"
+    ),
+    location_names: str | None = Query(
+        None,
+        description="Filter by location name such as stage or room (comma-separated, OR logic)",
+    ),
     language: str = Query(
         None,
         description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
@@ -200,7 +206,8 @@ async def list_sessions(
     - **event_id**: Filter by event ID
     - **session_format**: Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
     - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
-    - **location**: Filter by location - comma-separated list (OR logic: returns sessions with any location)
+    - **location_cities**: Filter by city - comma-separated list (OR logic)
+    - **location_names**: Filter by location names (stage/room/venue) - comma-separated list (OR logic)
     - **language**: Filter by language code - comma-separated (e.g., en, de, fr) - OR logic
     - **duration_min**: Minimum duration in minutes
     - **duration_max**: Maximum duration in minutes
@@ -212,7 +219,8 @@ async def list_sessions(
     - `/api/v2/sessions?status=published&language=en`
     - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
     - `/api/v2/sessions?tags=ai,machine+learning&language=en,de`
-    - `/api/v2/sessions?location=Landing:Stage+Berlin,AI:Stage+TU+Graz` (locations with URL encoding)
+    - `/api/v2/sessions?location_names=Landing:Stage+Berlin,AI:Stage+TU+Graz`
+    - `/api/v2/sessions?location_cities=Berlin,Graz`
     - `/api/v2/sessions?tags=AI%26Technology,FutureSkills` (tags with ampersand - URL-encoded)
     - `/api/v2/sessions?search=machine+learning&status=published`
     - `/api/v2/sessions?session_format=input,workshop`
@@ -233,10 +241,14 @@ async def list_sessions(
     if language:
         language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
 
-    # Parse location (comma-separated)
-    location_list = None
-    if location:
-        location_list = [loc.strip() for loc in location.split(",") if loc.strip()]
+    # Parse locations (comma-separated)
+    location_cities_list = None
+    if location_cities:
+        location_cities_list = [city.strip() for city in location_cities.split(",") if city.strip()]
+
+    location_names_list = None
+    if location_names:
+        location_names_list = [name.strip() for name in location_names.split(",") if name.strip()]
 
     # Parse time windows JSON if provided
     parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
@@ -255,7 +267,8 @@ async def list_sessions(
         event_id=event_id,
         session_format=session_format_list,
         tags=tags_list,
-        location=location_list,
+        location_cities=location_cities_list,
+        location_names=location_names_list,
         language=language_list,
         duration_min=duration_min,
         duration_max=duration_max,

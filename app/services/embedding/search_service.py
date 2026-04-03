@@ -28,13 +28,19 @@ class EmbeddingSearchService:
             return window.get("start"), window.get("end")
         return getattr(window, "start", None), getattr(window, "end", None)
 
-    def _build_location_condition(self, location: list[str] | None) -> dict | None:
-        if not location:
+    def _build_location_condition(
+        self, location_cities: list[str] | None, location_names: list[str] | None
+    ) -> dict | None:
+        conditions = []
+        if location_cities:
+            conditions.extend([{"location_city": city} for city in location_cities])
+        if location_names:
+            conditions.extend([{"location_name": name} for name in location_names])
+        if not conditions:
             return None
-        location_conditions = [{"location": loc} for loc in location]
-        if len(location_conditions) == 1:
-            return location_conditions[0]
-        return {"$or": location_conditions}
+        if len(conditions) == 1:
+            return conditions[0]
+        return {"$or": conditions}
 
     def _build_tags_condition(self, tags: list[str] | None) -> dict | None:
         if not tags:
@@ -81,9 +87,7 @@ class EmbeddingSearchService:
                 if len(session_format) == 1:
                     conditions.append({"session_format": session_format[0]})
                 else:
-                    conditions.append(
-                        {"$or": [{"session_format": fmt} for fmt in session_format]}
-                    )
+                    conditions.append({"$or": [{"session_format": fmt} for fmt in session_format]})
             else:
                 conditions.append({"session_format": session_format})
         if language:
@@ -104,7 +108,8 @@ class EmbeddingSearchService:
         self,
         session_format: list[str] | str | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: list[str] | str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -116,7 +121,7 @@ class EmbeddingSearchService:
             self._build_simple_conditions(session_format, language, duration_min, duration_max)
         )
 
-        location_condition = self._build_location_condition(location)
+        location_condition = self._build_location_condition(location_cities, location_names)
         if location_condition:
             all_conditions.append(location_condition)
 
@@ -197,7 +202,8 @@ class EmbeddingSearchService:
         event_id: int | None = None,
         session_format: list[str] | str | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: list[str] | str | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -212,7 +218,8 @@ class EmbeddingSearchService:
             chroma_where = self._build_chroma_conditions(
                 session_format=session_format,
                 tags=tags,
-                location=location,
+                location_cities=location_cities,
+                location_names=location_names,
                 language=language,
                 duration_min=duration_min,
                 duration_max=duration_max,

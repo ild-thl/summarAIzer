@@ -3,9 +3,10 @@
 import json
 from datetime import datetime, timedelta
 from itertools import pairwise
+from unittest.mock import AsyncMock
 
 import pytest
-from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST
+from starlette.status import HTTP_200_OK, HTTP_400_BAD_REQUEST, HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def _hash_api_key(key: str) -> str:
@@ -223,22 +224,22 @@ class TestSessionFilteringAPI:
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_single(self, client):
         """Test filtering by single location."""
-        response = client.get("/api/v2/sessions?location=Stage+Berlin")
+        response = client.get("/api/v2/sessions?location_names=Stage+Berlin")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         assert len(data) >= 2
         # All published results should have this location
-        assert all(s.get("location") == "Stage Berlin" for s in data)
+        assert all((s.get("location") or {}).get("name") == "Stage Berlin" for s in data)
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_multiple_or_logic(self, client):
         """Test filtering by multiple locations uses OR logic."""
-        response = client.get("/api/v2/sessions?location=Stage+Berlin,AI+Stage+TU+Graz")
+        response = client.get("/api/v2/sessions?location_names=Stage+Berlin,AI+Stage+TU+Graz")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include sessions from both locations (OR logic)
         assert len(data) >= 3
-        locations = {s.get("location") for s in data}
+        locations = {(s.get("location") or {}).get("name") for s in data}
         assert "Stage Berlin" in locations or "AI Stage TU Graz" in locations
 
     @pytest.mark.usefixtures("sessions_for_filtering")
@@ -296,6 +297,77 @@ class TestSessionFilteringAPI:
         payload = _time_windows_query([{"start": "2024-13-45", "end": "2024-12-31T23:59:59"}])
         response = client.get(f"/api/v2/sessions?time_windows={payload}")
         assert response.status_code == HTTP_400_BAD_REQUEST
+
+    def test_query_refinement_route_returns_refined_payload(self, client, monkeypatch):
+        """Test the query refinement route returns structured optimized filters."""
+        from app.schemas.session import SearchIntentRefinementResponse
+        from app.services.embedding import factory as embedding_factory
+
+        refinement_service = AsyncMock()
+        refinement_service.refine_search_intent.return_value = SearchIntentRefinementResponse(
+            refined_queries=["ethischer Einsatz von KI im Unterricht"],
+            event_id=9,
+            session_format=["diskussion", "workshop"],
+            tags=["Ethik", "Bildung"],
+            location_cities=["Raum A"],
+            rationale="The query implies collaborative discussion and education-related topics.",
+        )
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_query_refinement_service",
+            lambda: refinement_service,
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={
+                "queries": ["Ich will mit anderen ueber KI diskutieren"],
+                "event_id": 9,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        assert data["refined_queries"] == ["ethischer Einsatz von KI im Unterricht"]
+        assert "refined_query" not in data
+        assert "original_query" not in data
+        assert data["session_format"] == ["diskussion", "workshop"]
+        assert data["tags"] == ["Ethik", "Bildung"]
+        assert data["location_cities"] == ["Raum A"]
+
+    def test_query_refinement_route_rejects_blank_query(self, client):
+        """Test the query refinement route rejects blank queries at schema level."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={"queries": ["   "], "event_id": 9},
+        )
+
+        assert response.status_code == 422
+
+    def test_query_refinement_route_requires_event_id(self, client):
+        """Test the query refinement route requires event_id."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={"queries": ["Ich will mit anderen ueber KI diskutieren"]},
+        )
+
+        assert response.status_code == 422
+
+    def test_query_refinement_route_rejects_removed_filter_params(self, client):
+        """Test the query refinement route rejects fields that are no longer part of the contract."""
+        response = client.post(
+            "/api/v2/sessions/query/refine",
+            json={
+                "queries": ["Ich will mit anderen ueber KI diskutieren"],
+                "event_id": 9,
+                "language": ["de"],
+                "duration_min": 30,
+                "time_windows": [],
+            },
+        )
+
+        assert response.status_code == 422
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_valid_iso_datetime_time_windows(self, client):
@@ -764,6 +836,161 @@ class TestRecommendationAPI:
                 assert 0 <= result["overall_score"] <= 1
                 assert "semantic_similarity" in result
 
+    def test_recommend_route_forwards_multiple_queries(self, client, monkeypatch):
+        """Recommend endpoint should accept and forward a list of queries."""
+        from app.services.embedding import factory as embedding_factory
+
+        recommendation_service = AsyncMock()
+        recommendation_service.recommend_sessions.return_value = []
+
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_recommendation_service",
+            lambda: recommendation_service,
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": ["kuenstliche intelligenz in der lehre", "kritisches denken"],
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        call_kwargs = recommendation_service.recommend_sessions.await_args.kwargs
+        assert call_kwargs["query"] == [
+            "kuenstliche intelligenz in der lehre",
+            "kritisches denken",
+        ]
+
+    def test_recommend_route_can_refine_query_before_recommend(
+        self, client, monkeypatch, sample_event
+    ):
+        """Recommend endpoint should optionally refine query before recommendation."""
+        from app.schemas.session import SearchIntentRefinementResponse
+        from app.services.embedding import factory as embedding_factory
+
+        recommendation_service = AsyncMock()
+        recommendation_service.recommend_sessions.return_value = []
+
+        refinement_service = AsyncMock()
+        refinement_service.refine_search_intent.return_value = SearchIntentRefinementResponse(
+            refined_queries=["kuenstliche intelligenz praktisch in der lehre einsetzen"],
+            event_id=9,
+            session_format=["workshop"],
+            tags=["Didaktik"],
+            location_cities=["Berlin"],
+            rationale="Single clear intent",
+        )
+
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_recommendation_service",
+            lambda: recommendation_service,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_query_refinement_service",
+            lambda: refinement_service,
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": ["Ich moechte KI praktisch in der Lehre einsetzen"],
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "event_id": sample_event.id,
+                "refine_query": True,
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        call_kwargs = recommendation_service.recommend_sessions.await_args.kwargs
+        assert call_kwargs["query"] == ["kuenstliche intelligenz praktisch in der lehre einsetzen"]
+        assert call_kwargs["session_format"] == ["workshop"]
+        assert call_kwargs["tags"] == ["Didaktik"]
+        assert call_kwargs["location_cities"] == ["Berlin"]
+
+    def test_recommend_route_refine_query_requires_event_id(self, client):
+        """Recommend endpoint should reject refine_query without event_id when query exists."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": ["KI in der Lehre"],
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "refine_query": True,
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+    def test_recommend_route_refine_query_rejects_single_query_string(self, client, sample_event):
+        """Recommend endpoint should require query list in refine mode."""
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": "KI in der Lehre",
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "event_id": sample_event.id,
+                "refine_query": True,
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_400_BAD_REQUEST
+
+    def test_recommend_route_refine_query_skips_trivial_single_word_query(
+        self, client, monkeypatch, sample_event
+    ):
+        """Refinement should be skipped for very short single-word query lists."""
+        from app.services.embedding import factory as embedding_factory
+
+        recommendation_service = AsyncMock()
+        recommendation_service.recommend_sessions.return_value = []
+
+        refinement_service = AsyncMock()
+
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_recommendation_service",
+            lambda: recommendation_service,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_query_refinement_service",
+            lambda: refinement_service,
+            raising=False,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": ["KI"],
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "event_id": sample_event.id,
+                "refine_query": True,
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        refinement_service.refine_search_intent.assert_not_called()
+        call_kwargs = recommendation_service.recommend_sessions.await_args.kwargs
+        assert call_kwargs["query"] == ["KI"]
+
     @pytest.mark.usefixtures("recommendation_sessions")
     def test_recommend_with_liked_sessions(self, client, recommendation_sessions):
         """Test recommendations based on liked sessions (without query)."""
@@ -1128,7 +1355,6 @@ class TestRecommendationAPI:
                 "query": "machine learning",
                 "limit": 5,
                 # Phase 3 parameters
-                "filter_mode": "hard",
                 "filter_margin_weight": 0.1,
             },
         )
@@ -1149,7 +1375,6 @@ class TestRecommendationAPI:
                 "session_format": "workshop",
                 "language": "en",
                 "limit": 10,
-                "filter_mode": "hard",
             },
         )
 
@@ -1163,14 +1388,14 @@ class TestRecommendationAPI:
                 assert session["language"].lower() == "en"
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_soft_mode_parameter_accepted(self, client):
-        """Test that soft mode parameters are accepted without errors."""
+    def test_phase3_soft_filters_parameter_accepted(self, client):
+        """Test that soft_filters parameter is accepted without errors."""
         response = client.post(
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
                 "limit": 5,
-                "filter_mode": "soft",
+                "soft_filters": ["language"],
                 "filter_margin_weight": 0.15,
                 "language": "en",
             },
@@ -1194,7 +1419,6 @@ class TestRecommendationAPI:
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
-                "filter_mode": "soft",
                 "filter_margin_weight": 0.0,
                 "limit": 5,
             },
@@ -1206,7 +1430,6 @@ class TestRecommendationAPI:
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
-                "filter_mode": "soft",
                 "filter_margin_weight": 1.0,
                 "limit": 5,
             },
@@ -1229,7 +1452,7 @@ class TestRecommendationAPI:
                 "liked_embedding_weight": 0.3,
                 "disliked_embedding_weight": 0.2,
                 # Phase 3 parameters
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language"],
                 "filter_margin_weight": 0.1,
                 # Filters
                 "language": "en",
@@ -1248,15 +1471,15 @@ class TestRecommendationAPI:
                 assert result["overall_score"] > 0
 
     @pytest.mark.usefixtures("recommendation_sessions")
-    def test_phase3_default_filter_mode_is_hard(self, client):
-        """Test that default filter mode is 'hard' when not specified."""
+    def test_phase3_default_no_soft_filters_applies_all_hard(self, client):
+        """Test that omitting soft_filters (default null) applies all filters strictly."""
         response = client.post(
             "/api/v2/sessions/recommend",
             json={
                 "query": "learning",
                 "session_format": "workshop",
                 "limit": 5,
-                # No filter_mode specified - should default to 'hard'
+                # No soft_filters specified - defaults to all strict
             },
         )
 
@@ -1275,7 +1498,7 @@ class TestRecommendationAPI:
             json={
                 "query": None,
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["language"],
                 "filter_margin_weight": 0.2,
                 # Multiple filters
                 "session_format": "workshop",
@@ -1301,7 +1524,7 @@ class TestRecommendationAPI:
             json={
                 "query": "learning",
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language", "duration"],
                 "filter_margin_weight": 0.15,
                 # Restrictive format filter
                 "session_format": "diskussion",  # Only "ai-ethics" has this
@@ -1345,7 +1568,6 @@ class TestRecommendationAPI:
             json={
                 "query": "learning",
                 "limit": 10,
-                "filter_mode": "hard",  # Strict mode
                 "session_format": "diskussion",  # Very restrictive
                 "language": "en",
             },
@@ -1370,7 +1592,7 @@ class TestRecommendationAPI:
             json={
                 "query": "machine learning workshop",  # Provide query to trigger semantic path
                 "limit": 10,
-                "filter_mode": "soft",
+                "soft_filters": ["session_format", "language"],
                 "filter_margin_weight": 0.2,
                 "session_format": "workshop",
                 "language": "en",

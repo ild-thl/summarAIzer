@@ -8,13 +8,150 @@ from starlette.status import HTTP_202_ACCEPTED, HTTP_404_NOT_FOUND
 from app.crud.session import session_crud
 from app.database.connection import get_db
 from app.database.models import User
-from app.schemas.session import RecommendRequest, SessionResponse, SessionWithScore
+from app.schemas.session import (
+    RecommendRequest,
+    SearchIntentRefinementRequest,
+    SearchIntentRefinementResponse,
+    SessionResponse,
+    SessionWithScore,
+)
 from app.security.auth import get_current_user
 from app.utils.helpers import DateTimeUtils
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", tags=["embeddings"])
+
+
+def _extract_query_values(query: str | list[str] | None) -> list[str]:
+    """Normalize query input to a list of non-empty query strings."""
+    if isinstance(query, list):
+        return [item for item in query if item]
+    if isinstance(query, str) and query:
+        return [query]
+    return []
+
+
+def _is_refinement_worthy(query_values: list[str]) -> bool:
+    """Return True when at least one query is substantial enough for LLM refinement."""
+    for query in query_values:
+        normalized = query.strip()
+        if not normalized:
+            continue
+        words = [word for word in normalized.split() if word]
+        if len(words) >= 2 or len(normalized) >= 20:
+            return True
+    return False
+
+
+async def _apply_optional_query_refinement(
+    recommend_req: "RecommendRequest",
+    db: Session,
+) -> tuple[
+    list[str] | None, list[str] | None, list[str] | None, list[str] | None, list[str] | None, bool
+]:
+    """Apply query refinement when requested and return effective recommendation inputs."""
+    from app.services.embedding.factory import get_query_refinement_service
+
+    query_values = _extract_query_values(recommend_req.query)
+    effective_query: list[str] | None = query_values or None
+
+    effective_session_format = recommend_req.session_format
+    effective_tags = recommend_req.tags
+    effective_location_cities = recommend_req.location_cities
+    effective_location_names = recommend_req.location_names
+
+    if not (recommend_req.refine_query and query_values):
+        return (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location_cities,
+            effective_location_names,
+            False,
+        )
+
+    if not _is_refinement_worthy(query_values):
+        logger.info(
+            "recommendation_query_refinement_skipped",
+            reason="query_too_short_or_single_word",
+            query_count=len(query_values),
+        )
+        return (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location_cities,
+            effective_location_names,
+            False,
+        )
+
+    if recommend_req.event_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="event_id is required when refine_query=true and query is provided",
+        )
+    if not isinstance(recommend_req.query, list):
+        raise HTTPException(
+            status_code=400,
+            detail="query must be a list when refine_query=true",
+        )
+
+    refinement_service = get_query_refinement_service()
+    refined = await refinement_service.refine_search_intent(
+        db,
+        SearchIntentRefinementRequest(
+            queries=query_values,
+            event_id=recommend_req.event_id,
+            session_format=effective_session_format,
+            tags=effective_tags,
+            location_cities=effective_location_cities,
+            location_names=effective_location_names,
+        ),
+    )
+    effective_query = refined.refined_queries or None
+
+    if not effective_session_format:
+        effective_session_format = refined.session_format
+    if not effective_tags:
+        effective_tags = refined.tags
+    if not effective_location_cities:
+        effective_location_cities = refined.location_cities
+
+    return (
+        effective_query,
+        effective_session_format,
+        effective_tags,
+        effective_location_cities,
+        effective_location_names,
+        True,
+    )
+
+
+@router.post("/query/refine", response_model=SearchIntentRefinementResponse)
+async def refine_search_intent(
+    request_body: SearchIntentRefinementRequest,
+    db: Session = Depends(get_db),
+):
+    """Refine a free-text session query and infer missing hard filters when strongly implied."""
+    from app.services.embedding.exceptions import QueryRefinementError
+    from app.services.embedding.factory import get_query_refinement_service
+
+    try:
+        refinement_service = get_query_refinement_service()
+        return await refinement_service.refine_search_intent(db, request_body)
+    except QueryRefinementError as e:
+        logger.error("search_intent_refinement_error", error=str(e))
+        raise HTTPException(status_code=503, detail="Query refinement service unavailable") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.error(
+            "search_intent_refinement_failed",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+        raise HTTPException(status_code=500, detail="Query refinement failed") from e
 
 
 @router.post(
@@ -69,6 +206,61 @@ async def refresh_session_embedding(
     }
 
 
+@router.post(
+    "/embeddings/reconcile",
+    response_model=dict,
+    status_code=HTTP_202_ACCEPTED,
+)
+async def reconcile_embeddings(
+    event_id: int | None = Query(None, description="Optional event scope for reconciliation"),
+    current_user: User = Depends(get_current_user),
+):
+    """Return immediate reconciliation stats and queue async refresh execution."""
+    from app.async_jobs.tasks import reconcile_session_embeddings
+
+    preview = reconcile_session_embeddings.apply(
+        kwargs={"event_id": event_id, "enqueue_refreshes": False}
+    ).get()
+
+    task = reconcile_session_embeddings.apply_async(
+        kwargs={"event_id": event_id},
+        queue="embeds",
+    )
+
+    will_reembed = min(preview.get("to_reembed", 0), preview.get("max_enqueues", 0))
+
+    logger.info(
+        "session_embedding_reconcile_requested",
+        user_id=current_user.id,
+        event_id=event_id,
+        task_id=task.id,
+        scanned=preview.get("scanned", 0),
+        synced=preview.get("synced", 0),
+        missing=preview.get("missing", 0),
+        stale=preview.get("stale", 0),
+        to_reembed=preview.get("to_reembed", 0),
+        will_reembed=will_reembed,
+        orphaned=preview.get("orphaned", 0),
+        deleted_orphans=preview.get("deleted_orphans", 0),
+    )
+
+    return {
+        "status": "queued",
+        "task_id": task.id,
+        "event_id": event_id,
+        "scanned": preview.get("scanned", 0),
+        "synced": preview.get("synced", 0),
+        "missing": preview.get("missing", 0),
+        "stale": preview.get("stale", 0),
+        "to_reembed": preview.get("to_reembed", 0),
+        "will_reembed": will_reembed,
+        "orphaned": preview.get("orphaned", 0),
+        "deleted_orphans": preview.get("deleted_orphans", 0),
+        "max_enqueues": preview.get("max_enqueues", 0),
+        "message": "Embedding reconciliation queued with preview statistics",
+    }
+
+
 @router.get("/search/similar", response_model=list[SessionWithScore])
 async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
@@ -79,8 +271,12 @@ async def search_similar_sessions(
         description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
     ),
     tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location: str | None = Query(
-        None, description="Filter by location (comma-separated, OR logic)"
+    location_cities: str | None = Query(
+        None, description="Filter by city (comma-separated, OR logic)"
+    ),
+    location_names: str | None = Query(
+        None,
+        description="Filter by location name such as stage or room (comma-separated, OR logic)",
     ),
     language: str | None = Query(
         None,
@@ -144,10 +340,15 @@ async def search_similar_sessions(
         if language:
             language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
 
-        # Parse tags and location (comma-separated)
+        # Parse tags and locations (comma-separated)
         tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        location_list = (
-            [loc.strip() for loc in location.split(",") if loc.strip()] if location else None
+        location_cities_list = (
+            [c.strip() for c in location_cities.split(",") if c.strip()]
+            if location_cities
+            else None
+        )
+        location_names_list = (
+            [n.strip() for n in location_names.split(",") if n.strip()] if location_names else None
         )
 
         # Parse unified time windows
@@ -164,7 +365,8 @@ async def search_similar_sessions(
             event_id=event_id,
             session_format=session_format_list,
             tags=tags_list,
-            location=location_list,
+            location_cities=location_cities_list,
+            location_names=location_names_list,
             language=language_list,
             duration_min=duration_min,
             duration_max=duration_max,
@@ -180,7 +382,8 @@ async def search_similar_sessions(
             filters_applied=bool(
                 session_format_list
                 or tags_list
-                or location_list
+                or location_cities_list
+                or location_names_list
                 or language_list
                 or duration_min
                 or duration_max
@@ -226,92 +429,88 @@ async def recommend_sessions(
     db: Session = Depends(get_db),
 ):
     """
-    Get personalized session recommendations based on user preferences.
+    Get personalized session recommendations.
 
-    Recommends sessions similar to those the user has liked, excluding sessions they've
-    already seen. Supports optional text query (if provided, overrides centroid from liked sessions).
+    This endpoint supports two modes:
+    - `similarity`: rank sessions by semantic and preference similarity
+    - `plan`: generate a non-overlapping schedule from candidate sessions
 
-    **Request Body:**
-    - **query**: Optional text query. If not provided, recommendations use centroid of liked sessions.
-    - **accepted_ids**: List of session IDs the user has liked or want to get more like
-    - **rejected_ids**: List of session IDs the user has disliked (excluded from results)
-    - **limit**: Max recommendations (1-100)
-    - **Filters**: Format/language/tags/location/duration filters apply as hard constraints
-    - **goal_mode**: `similarity` (default) or `plan` (build non-overlapping session schedule)
-    - **time_windows**: Optional list of time windows used for filtering and in `plan` mode
-    - **min_break_minutes**: Minimum break between selected sessions in `plan` mode
-    - **max_gap_minutes**: Optional max allowed gap between selected sessions in `plan` mode
-    - **plan_candidate_multiplier**: Candidate pool expansion factor before plan optimization
+    Filter behavior:
+    - By default (`soft_filters=null`), all provided filters are applied strictly during retrieval.
+    - Set `soft_filters` to a list of attribute names (e.g. `["language", "session_format"]`) to
+        apply those filters as soft scoring rather than hard retrieval constraints.
 
-    **Examples:**
-    - Basic: User did not like sessions [1, 2] and liked session [5], give me more like [5]
-      ```json
-      {
-        "accepted_ids": [5],
-        "rejected_ids": [1, 2],
-        "limit": 10
-      }
-      ```
-    - With query: Find workshops similar to "machine learning" but exclude sessions 1, 2, 3
-      ```json
-      {
-        "query": "machine learning",
-        "accepted_ids": [],
-        "rejected_ids": [1, 2, 3],
-        "session_format": "workshop",
-        "language": "en",
-        "limit": 10
-      }
-      ```
-    - With timeframe: Recommendations for 10:00-11:30 timeframe that are similar to loved session 42
-      ```json
-      {
-        "accepted_ids": [42],
-        "rejected_ids": [],
-                "goal_mode": "plan",
-                "time_windows": [{"start": "2024-06-01T10:00:00", "end": "2024-06-01T11:30:00"}],
-        "limit": 5
-      }
-      ```
-        - Plan mode: Build a non-overlapping schedule for a multi-day event
-            ```json
-            {
-                "query": "machine learning",
-                "goal_mode": "plan",
-                "time_windows": [
-                    {"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"},
-                    {"start": "2024-06-02T09:00:00", "end": "2024-06-02T18:00:00"},
-                    {"start": "2024-06-03T09:00:00", "end": "2024-06-03T17:00:00"}
-                ],
-                "min_break_minutes": 15,
-                "max_gap_minutes": 90,
-                "plan_candidate_multiplier": 4,
-                "limit": 5
-            }
-            ```
-        - Plan mode without query: Build a schedule from liked sessions and filters
-            ```json
-            {
-                "accepted_ids": [10, 14],
-                "goal_mode": "plan",
-                "time_windows": [{"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"}],
-                "session_format": "workshop",
-                "language": "en",
-                "min_break_minutes": 10,
-                "limit": 4
-            }
-            ```
+    Optional query refinement:
+    - Set `refine_query=true` to infer/improve search intent from a list of query strings.
+    - When enabled, `event_id` is required and `query` must be a list.
+
+    Examples:
+    - Similarity mode with event scope:
+        ```json
+        {
+            "event_id": 3,
+            "query": "machine learning",
+            "accepted_ids": [],
+            "rejected_ids": [1, 2, 3],
+            "session_format": ["workshop"],
+            "language": ["en"],
+            "limit": 10
+        }
+        ```
+    - Soft filtering (rank-oriented):
+        ```json
+        {
+            "event_id": 3,
+            "query": ["ai ethics"],
+            "soft_filters": ["tags", "location"],
+            "tags": ["ethics", "policy"],
+            "location_cities": ["Berlin"],
+            "limit": 10
+        }
+        ```
+    - Plan mode with windows:
+        ```json
+        {
+            "event_id": 3,
+            "goal_mode": "plan",
+            "query": ["machine learning"],
+            "time_windows": [
+                {"start": "2024-06-01T09:00:00", "end": "2024-06-01T18:00:00"},
+                {"start": "2024-06-02T09:00:00", "end": "2024-06-02T18:00:00"}
+            ],
+            "min_break_minutes": 15,
+            "max_gap_minutes": 90,
+            "plan_candidate_multiplier": 2,
+            "limit": 5
+        }
+        ```
     """
+    from app.crud.event import event_crud
     from app.services.embedding.exceptions import (
         EmbeddingError,
         EmbeddingSearchError,
         InvalidEmbeddingTextError,
+        QueryRefinementError,
     )
     from app.services.embedding.factory import get_recommendation_service
 
     try:
         # Validate request
         recommend_req = request_body
+
+        if recommend_req.event_id is not None:
+            event = event_crud.read(db, recommend_req.event_id)
+            if event is None:
+                raise HTTPException(status_code=404, detail="Event not found")
+
+        (
+            effective_query,
+            effective_session_format,
+            effective_tags,
+            effective_location_cities,
+            effective_location_names,
+            query_refined,
+        ) = await _apply_optional_query_refinement(recommend_req=recommend_req, db=db)
 
         # Get recommendation service
         recommendation_service = get_recommendation_service()
@@ -321,19 +520,21 @@ async def recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
             rejected_ids=recommend_req.rejected_ids,
-            query=recommend_req.query,
+            query=effective_query,
             limit=recommend_req.limit,
             event_id=recommend_req.event_id,
-            session_format=recommend_req.session_format,
-            tags=recommend_req.tags,
-            location=recommend_req.location,
+            session_format=effective_session_format,
+            tags=effective_tags,
+            location_cities=effective_location_cities,
+            location_names=effective_location_names,
             language=recommend_req.language,
             duration_min=recommend_req.duration_min,
             duration_max=recommend_req.duration_max,
             liked_embedding_weight=recommend_req.liked_embedding_weight,
             disliked_embedding_weight=recommend_req.disliked_embedding_weight,
-            filter_mode=recommend_req.filter_mode,
+            soft_filters=recommend_req.soft_filters,
             filter_margin_weight=recommend_req.filter_margin_weight,
+            diversity_weight=recommend_req.diversity_weight,
             goal_mode=recommend_req.goal_mode,
             time_windows=recommend_req.time_windows,
             min_break_minutes=recommend_req.min_break_minutes,
@@ -343,7 +544,8 @@ async def recommend_sessions(
 
         logger.info(
             "recommendations_completed",
-            query_provided=bool(recommend_req.query),
+            query_provided=bool(effective_query),
+            query_refined=query_refined,
             accepted_ids_count=len(recommend_req.accepted_ids or []),
             rejected_ids_count=len(recommend_req.rejected_ids or []),
             recommendations_count=len(sessions),
@@ -359,12 +561,16 @@ async def recommend_sessions(
                 liked_cluster_similarity=scores["liked_cluster_similarity"],
                 disliked_similarity=scores["disliked_similarity"],
                 filter_compliance_score=scores["filter_compliance_score"],
+                diversity_score=scores.get("diversity_score"),
             )
             for session, scores in sessions
         ]
 
     except InvalidEmbeddingTextError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except QueryRefinementError as e:
+        logger.error("recommendation_query_refinement_error", error=str(e))
+        raise HTTPException(status_code=503, detail="Query refinement service unavailable") from e
     except EmbeddingSearchError as e:
         logger.error("recommendation_search_error", error=str(e))
         raise HTTPException(status_code=503, detail="Recommendation service unavailable") from e

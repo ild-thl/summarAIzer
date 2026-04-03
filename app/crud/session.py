@@ -1,21 +1,53 @@
 """CRUD operations for Session model."""
 
-from typing import Any
+from collections.abc import Iterable
+from typing import Any, ClassVar
 
 import structlog
-from sqlalchemy import String, and_, cast, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
+from app.database.models import SessionLocation, SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
 
 logger = structlog.get_logger()
 
 
+def _invalidate_query_refinement_cache(event_ids: set[int | None]) -> None:
+    """Invalidate cached refinement metadata for affected events."""
+    from app.services.embedding.factory import get_query_refinement_service
+
+    try:
+        refinement_service = get_query_refinement_service()
+        for event_id in event_ids:
+            refinement_service.invalidate_event_filter_inventory(event_id)
+    except Exception as e:
+        logger.debug(
+            "query_refinement_cache_invalidation_failed",
+            event_ids=sorted(event_id for event_id in event_ids if event_id is not None),
+            error=str(e),
+        )
+
+
 class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     """CRUD operations for Session model."""
+
+    EMBEDDING_REFRESH_FIELDS: ClassVar[set[str]] = {
+        "title",
+        "short_description",
+        "speakers",
+        "tags",
+        "session_format",
+        "language",
+        "duration",
+        "start_datetime",
+        "end_datetime",
+        "event_id",
+        "location",
+    }
 
     def __init__(self):
         super().__init__(SessionModel)
@@ -30,7 +62,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 speakers=obj_in.speakers,
                 tags=obj_in.tags,
                 short_description=obj_in.short_description,
-                location=obj_in.location,
                 start_datetime=obj_in.start_datetime,
                 end_datetime=obj_in.end_datetime,
                 recording_url=(str(obj_in.recording_url) if obj_in.recording_url else None),
@@ -43,6 +74,14 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 owner_id=owner_id,
                 available_content_identifiers=[],
             )
+            if obj_in.location is not None:
+                db_obj.location_rel = SessionLocation(
+                    city=obj_in.location.city,
+                    name=obj_in.location.name,
+                    country=obj_in.location.country,
+                    address=obj_in.location.address,
+                    postal_code=obj_in.location.postal_code,
+                )
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
@@ -53,6 +92,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 event_id=db_obj.event_id,
                 owner_id=owner_id,
             )
+
+            _invalidate_query_refinement_cache({db_obj.event_id})
 
             # Emit event if session is published
             if db_obj.status == "published":
@@ -97,6 +138,35 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             .all()
         )
 
+    def get_available_tags_and_locations(
+        self,
+        db: Session,
+        event_id: int,
+        status: SessionStatus = SessionStatus.PUBLISHED,
+    ) -> tuple[list[str], list[str]]:
+        """Return unique tags and city/name pairs available for an event."""
+        rows = (
+            db.query(self.model.tags, SessionLocation.city, SessionLocation.name)
+            .outerjoin(SessionLocation, SessionLocation.session_id == self.model.id)
+            .filter(self.model.event_id == event_id, self.model.status == status)
+            .all()
+        )
+
+        unique_tags: set[str] = set()
+        unique_locations: set[str] = set()
+
+        for tags, city, _loc_name in rows:
+            if isinstance(tags, Iterable) and not isinstance(tags, str):
+                for tag in tags:
+                    tag_text = str(tag).strip()
+                    if tag_text:
+                        unique_tags.add(tag_text)
+
+            if city:
+                unique_locations.add(str(city).strip())
+
+        return sorted(unique_tags), sorted(unique_locations)
+
     def list_by_status(
         self, db: Session, status: str, skip: int = 0, limit: int = 100
     ) -> list[SessionModel]:
@@ -108,8 +178,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
     def list_published(self, db: Session, skip: int = 0, limit: int = 100) -> list[SessionModel]:
         """List only published sessions."""
-        from app.database.models import SessionStatus
-
         limit = min(limit, 1000)
         return (
             db.query(self.model)
@@ -155,13 +223,14 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if window_conditions:
             filters.append(or_(*window_conditions))
 
-    def _build_session_filters(
+    def _build_session_filters(  # noqa: C901
         self,
         status: str | list[str] | None = None,
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -191,14 +260,24 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if language_condition is not None:
             filters.append(language_condition)
 
-        # Location filter: match any location (OR logic)
-        if location:
-            location_conditions = [self.model.location == loc for loc in location]
+        # Location filters via join on session_locations table
+        if location_cities or location_names:
+            location_conditions = []
+            if location_cities:
+                location_conditions.extend(
+                    [SessionLocation.city == city for city in location_cities]
+                )
+            if location_names:
+                location_conditions.extend(
+                    [SessionLocation.name == name for name in location_names]
+                )
             filters.append(or_(*location_conditions))
 
         # Tag filter: Check if session tags array contains any of the provided tags (OR logic)
         if tags:
             tag_conditions = []
+            from sqlalchemy import String, cast
+
             for tag in tags:
                 quoted_tag = f'"{tag}"'
                 tag_conditions.append(cast(self.model.tags, String).ilike(f"%{quoted_tag}%"))
@@ -209,6 +288,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         # Speaker search (cast JSON to string for searching)
         if speaker:
+            from sqlalchemy import String, cast
+
             filters.append(cast(self.model.speakers, String).ilike(f"%{speaker}%"))
 
         # Time windows filter
@@ -216,6 +297,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         # Full-text search on title, description, and speakers
         if search:
+            from sqlalchemy import String, cast
+
             search_term = f"%{search}%"
             filters.append(
                 or_(
@@ -236,7 +319,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         event_id: int | None = None,
         session_format: str | list[str] | None = None,
         tags: list[str] | None = None,
-        location: list[str] | None = None,
+        location_cities: list[str] | None = None,
+        location_names: list[str] | None = None,
         language: str | list[str] | None = None,
         duration_min: int | None = None,
         duration_max: int | None = None,
@@ -244,38 +328,20 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         time_windows: list[Any] | None = None,
         search: str | None = None,
     ) -> list[SessionModel]:
-        """
-        List sessions with advanced filtering and full-text search.
-
-        Args:
-            db: Database session
-            skip: Offset for pagination
-            limit: Max results (capped at 1000)
-            status: Filter by status - single value or list (published, draft) - OR logic
-            event_id: Filter by event ID
-            session_format: Filter by session format - single value or list (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
-            tags: Any of these tags (OR logic)
-            location: Any of these locations (OR logic)
-            language: Filter by language code - single value or list (e.g. en, de) - OR logic
-            duration_min: Minimum duration in minutes
-            duration_max: Maximum duration in minutes
-            speaker: Search for speaker name
-            time_windows: Sessions must fit within any provided time window
-            search: Full-text search on title, description, and speakers
-
-        Returns:
-            List of matching sessions
-        """
+        """List sessions with advanced filtering and full-text search."""
         limit = min(limit, 1000)
         query = db.query(self.model)
 
-        # Build and apply filters
+        if location_cities or location_names:
+            query = query.outerjoin(SessionLocation, SessionLocation.session_id == self.model.id)
+
         filters = self._build_session_filters(
             status=status,
             event_id=event_id,
             session_format=session_format,
             tags=tags,
-            location=location,
+            location_cities=location_cities,
+            location_names=location_names,
             language=language,
             duration_min=duration_min,
             duration_max=duration_max,
@@ -289,6 +355,75 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         return query.offset(skip).limit(limit).all()
 
+    def _apply_location_update(
+        self,
+        db_obj: SessionModel,
+        location_data: dict[str, Any] | None,
+        location_was_provided: bool,
+    ) -> None:
+        """Apply structured location updates to the related location row."""
+        if location_data is not None:
+            if db_obj.location_rel is None:
+                db_obj.location_rel = SessionLocation()
+            for field, value in location_data.items():
+                setattr(db_obj.location_rel, field, value)
+            return
+
+        if location_was_provided:
+            db_obj.location_rel = None
+
+    def _emit_status_transition_event(
+        self,
+        db_obj: SessionModel,
+        previous_status: str,
+    ) -> None:
+        """Emit lifecycle events when a session changes publication state."""
+        from app.events import SessionEventBus
+
+        if previous_status != "published" and db_obj.status == "published":
+            SessionEventBus.emit(
+                "session_published",
+                session_id=db_obj.id,
+                uri=db_obj.uri,
+                event_id=db_obj.event_id,
+                previous_status=previous_status,
+            )
+            return
+
+        if previous_status == "published" and db_obj.status == "draft":
+            SessionEventBus.emit(
+                "session_unpublished",
+                session_id=db_obj.id,
+                uri=db_obj.uri,
+                event_id=db_obj.event_id,
+                previous_status=previous_status,
+            )
+
+    def _emit_embedding_refresh_event_if_needed(
+        self,
+        db_obj: SessionModel,
+        previous_status: str,
+        changed_fields: set[str],
+    ) -> None:
+        """Emit update event when a published session changed embedding-relevant fields."""
+        if previous_status != "published" or db_obj.status != "published":
+            return
+
+        refresh_fields = changed_fields & self.EMBEDDING_REFRESH_FIELDS
+        if not refresh_fields:
+            return
+
+        from app.events import SessionEventBus
+
+        SessionEventBus.emit(
+            "session_updated",
+            session_id=db_obj.id,
+            uri=db_obj.uri,
+            event_id=db_obj.event_id,
+            previous_status=previous_status,
+            changed_fields=sorted(refresh_fields),
+        )
+
     def update(self, db: Session, id: int, obj_in: SessionUpdate) -> SessionModel | None:
         """Update a session."""
         try:
@@ -298,6 +433,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
             # Track previous status to detect published transition
             previous_status = db_obj.status
+            previous_event_id = db_obj.event_id
+            changed_fields = set(obj_in.model_fields_set)
 
             update_data = obj_in.model_dump(exclude_unset=True)
 
@@ -305,35 +442,31 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             if update_data.get("recording_url"):
                 update_data["recording_url"] = str(update_data["recording_url"])
 
+            # Handle structured location separately — never set as scalar column
+            location_data = update_data.pop("location", None)
+
             for field, value in update_data.items():
                 setattr(db_obj, field, value)
+
+            self._apply_location_update(
+                db_obj=db_obj,
+                location_data=location_data,
+                location_was_provided="location" in obj_in.model_fields_set,
+            )
 
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
             logger.info("session_updated", session_id=id)
 
-            from app.events import SessionEventBus
+            _invalidate_query_refinement_cache({previous_event_id, db_obj.event_id})
 
-            # Emit event if status changed to published
-            if previous_status != "published" and db_obj.status == "published":
-                SessionEventBus.emit(
-                    "session_published",
-                    session_id=db_obj.id,
-                    uri=db_obj.uri,
-                    event_id=db_obj.event_id,
-                    previous_status=previous_status,
-                )
-
-            # Emit event if status changed from published to draft (unpublished)
-            elif previous_status == "published" and db_obj.status == "draft":
-                SessionEventBus.emit(
-                    "session_unpublished",
-                    session_id=db_obj.id,
-                    uri=db_obj.uri,
-                    event_id=db_obj.event_id,
-                    previous_status=previous_status,
-                )
+            self._emit_status_transition_event(db_obj=db_obj, previous_status=previous_status)
+            self._emit_embedding_refresh_event_if_needed(
+                db_obj=db_obj,
+                previous_status=previous_status,
+                changed_fields=changed_fields,
+            )
 
             return db_obj
         except SQLAlchemyError as e:
@@ -357,6 +490,8 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db.delete(db_obj)
             db.commit()
             logger.info("session_deleted", session_id=id)
+
+            _invalidate_query_refinement_cache({event_id})
 
             # Emit event for deletion (only if session was published - had embeddings)
             if was_published:

@@ -16,6 +16,7 @@ from app.database.models import (
     Event,
     EventStatus,
     SessionFormat,
+    SessionLocation,
     SessionStatus,
     User,
 )
@@ -250,7 +251,6 @@ def sample_session(test_db, sample_event, sample_user):
         speakers=["John Doe", "Jane Smith"],
         tags=["AI", "Testing"],
         short_description="A test session",
-        location="Room 101",
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.DRAFT,
@@ -261,6 +261,7 @@ def sample_session(test_db, sample_event, sample_user):
         event_id=sample_event.id,
         owner_id=sample_user.id,
     )
+    session.location_rel = SessionLocation(name="Room 101")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
@@ -276,7 +277,6 @@ def sample_session_no_event(test_db, sample_user):
         speakers=["Jane Doe", "Bob Johnson"],
         tags=["Development"],
         short_description="A standalone test session",
-        location="Room 202",
         start_datetime=now + timedelta(days=1),
         end_datetime=now + timedelta(days=1, hours=2),
         status=SessionStatus.PUBLISHED,
@@ -287,6 +287,7 @@ def sample_session_no_event(test_db, sample_user):
         event_id=None,
         owner_id=sample_user.id,
     )
+    session.location_rel = SessionLocation(name="Room 202")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
@@ -394,7 +395,6 @@ def published_session(test_db, sample_event, sample_user):
         speakers=["John Doe"],
         tags=["Testing"],
         short_description="A published test session",
-        location="Room 101",
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.PUBLISHED,
@@ -405,6 +405,7 @@ def published_session(test_db, sample_event, sample_user):
         event_id=sample_event.id,
         owner_id=sample_user.id,
     )
+    session.location_rel = SessionLocation(name="Room 101")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
