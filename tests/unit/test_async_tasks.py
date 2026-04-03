@@ -297,28 +297,45 @@ def test_reconcile_session_embeddings_queues_missing_and_stale():
 
     # First batch has two published sessions, second batch empty.
     rows = [(1, now), (2, now)]
-    query_mock = MagicMock()
-    query_mock.filter.return_value = query_mock
-    query_mock.order_by.return_value = query_mock
-    query_mock.offset.return_value = query_mock
-    query_mock.limit.return_value = query_mock
-    query_mock.all.side_effect = [rows, []]
+    published_query = MagicMock()
+    published_query.filter.return_value = published_query
+    published_query.order_by.return_value = published_query
+    published_query.offset.return_value = published_query
+    published_query.limit.return_value = published_query
+    published_query.all.side_effect = [rows, []]
+
+    existing_ids_query = MagicMock()
+    existing_ids_query.filter.return_value = existing_ids_query
+    existing_ids_query.all.return_value = [(2,)]
 
     db_mock = MagicMock()
-    db_mock.query.return_value = query_mock
+
+    def query_side_effect(*args):
+        if len(args) == 2:
+            return published_query
+        return existing_ids_query
+
+    db_mock.query.side_effect = query_side_effect
 
     embedding_service = Mock()
     # session_1 missing, session_2 stale metadata
-    embedding_service.sessions_collection.get.return_value = {
-        "ids": ["session_2"],
-        "metadatas": [{"source_updated_at": 0.0}],
-    }
+    embedding_service.sessions_collection.get.side_effect = [
+        {
+            "ids": ["session_2"],
+            "metadatas": [{"source_updated_at": 0.0}],
+        },
+        {
+            "ids": ["session_2"],
+            "metadatas": [],
+        },
+    ]
 
     with (
         patch("app.config.settings.get_settings", return_value=settings),
         patch("app.async_jobs.tasks.SessionLocal", return_value=db_mock),
         patch("app.async_jobs.tasks.get_embedding_service", return_value=embedding_service),
         patch.object(tasks_module.generate_session_embedding, "apply_async") as mock_apply_async,
+        patch.object(embedding_service.sessions_collection, "delete") as mock_delete,
     ):
         result = tasks_module.reconcile_session_embeddings.run()
 
@@ -326,8 +343,11 @@ def test_reconcile_session_embeddings_queues_missing_and_stale():
     assert result["scanned"] == 2
     assert result["missing"] == 1
     assert result["stale"] == 1
+    assert result["orphaned"] == 0
+    assert result["deleted_orphans"] == 0
     assert result["queued"] == 2
     assert mock_apply_async.call_count == 2
+    mock_delete.assert_not_called()
     db_mock.close.assert_called_once()
 
 
@@ -343,34 +363,54 @@ def test_reconcile_session_embeddings_scopes_to_event_when_provided():
     )
 
     rows = [(11, now)]
-    query_mock = MagicMock()
-    query_mock.filter.return_value = query_mock
-    query_mock.order_by.return_value = query_mock
-    query_mock.offset.return_value = query_mock
-    query_mock.limit.return_value = query_mock
-    query_mock.all.side_effect = [rows, []]
+    published_query = MagicMock()
+    published_query.filter.return_value = published_query
+    published_query.order_by.return_value = published_query
+    published_query.offset.return_value = published_query
+    published_query.limit.return_value = published_query
+    published_query.all.side_effect = [rows, []]
+
+    existing_ids_query = MagicMock()
+    existing_ids_query.filter.return_value = existing_ids_query
+    existing_ids_query.all.return_value = [(11,)]
 
     db_mock = MagicMock()
-    db_mock.query.return_value = query_mock
+
+    def query_side_effect(*args):
+        if len(args) == 2:
+            return published_query
+        return existing_ids_query
+
+    db_mock.query.side_effect = query_side_effect
 
     embedding_service = Mock()
-    embedding_service.sessions_collection.get.return_value = {
-        "ids": [],
-        "metadatas": [],
-    }
+    embedding_service.sessions_collection.get.side_effect = [
+        {
+            "ids": [],
+            "metadatas": [],
+        },
+        {
+            "ids": ["session_11", "session_999"],
+            "metadatas": [],
+        },
+    ]
 
     with (
         patch("app.config.settings.get_settings", return_value=settings),
         patch("app.async_jobs.tasks.SessionLocal", return_value=db_mock),
         patch("app.async_jobs.tasks.get_embedding_service", return_value=embedding_service),
         patch.object(tasks_module.generate_session_embedding, "apply_async") as mock_apply_async,
+        patch.object(embedding_service.sessions_collection, "delete") as mock_delete,
     ):
         result = tasks_module.reconcile_session_embeddings.run(event_id=321)
 
     assert result["status"] == "ok"
     assert result["event_id"] == 321
+    assert result["orphaned"] == 1
+    assert result["deleted_orphans"] == 1
     assert result["queued"] == 1
     assert mock_apply_async.call_count == 1
+    mock_delete.assert_called_once_with(ids=["session_999"])
 
 
 def test_reconcile_session_embeddings_skips_when_disabled():

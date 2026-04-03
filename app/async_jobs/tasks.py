@@ -25,6 +25,52 @@ from app.workflows.services.execution_service import WorkflowExecutionService
 logger = structlog.get_logger()
 
 
+def _parse_session_id_from_chroma_id(chroma_id: str) -> int | None:
+    """Parse session ID from a Chroma ID like `session_123`."""
+    if not chroma_id.startswith("session_"):
+        return None
+
+    _, raw_id = chroma_id.split("_", 1)
+    if not raw_id.isdigit():
+        return None
+    return int(raw_id)
+
+
+def _list_chroma_session_ids(
+    collection,
+    event_id: int | None,
+    batch_size: int,
+) -> set[int]:
+    """List session IDs currently present in Chroma for reconciliation scope."""
+    scope_filter: dict[str, object]
+    if event_id is None:
+        scope_filter = {"type": "session"}
+    else:
+        # Chroma expects a single top-level operator for multi-field filters.
+        scope_filter = {"$and": [{"type": "session"}, {"event_id": event_id}]}
+
+    found_ids: set[int] = set()
+    offset = 0
+
+    while True:
+        batch = collection.get(where=scope_filter, limit=batch_size, offset=offset, include=[])
+        batch_ids = batch.get("ids") or []
+
+        if not batch_ids:
+            break
+
+        for chroma_id in batch_ids:
+            parsed_id = _parse_session_id_from_chroma_id(chroma_id)
+            if parsed_id is not None:
+                found_ids.add(parsed_id)
+
+        if len(batch_ids) < batch_size:
+            break
+        offset += batch_size
+
+    return found_ids
+
+
 def _is_transient_error(exception: Exception) -> bool:
     """
     Determine if an error is transient and worth retrying.
@@ -812,6 +858,8 @@ def reconcile_session_embeddings(  # noqa: C901
         stale = 0
         to_reembed = 0
         queued = 0
+        orphaned = 0
+        deleted_orphans = 0
         offset = 0
         enqueue_cap_reached = False
 
@@ -874,6 +922,34 @@ def reconcile_session_embeddings(  # noqa: C901
 
             offset += batch_size
 
+        chroma_session_ids = _list_chroma_session_ids(
+            collection=embedding_service.sessions_collection,
+            event_id=event_id,
+            batch_size=batch_size,
+        )
+        if chroma_session_ids:
+            existing_db_session_ids: set[int] = set()
+            chroma_session_ids_list = list(chroma_session_ids)
+
+            for idx in range(0, len(chroma_session_ids_list), batch_size):
+                session_id_chunk = chroma_session_ids_list[idx : idx + batch_size]
+                exists_query = db.query(SessionModel.id).filter(
+                    SessionModel.id.in_(session_id_chunk)
+                )
+                if event_id is not None:
+                    exists_query = exists_query.filter(SessionModel.event_id == event_id)
+                existing_rows = exists_query.all()
+                existing_db_session_ids.update(row[0] for row in existing_rows)
+
+            orphan_session_ids = sorted(chroma_session_ids - existing_db_session_ids)
+            orphaned = len(orphan_session_ids)
+
+            for idx in range(0, orphaned, batch_size):
+                orphan_chunk = orphan_session_ids[idx : idx + batch_size]
+                orphan_chroma_ids = [f"session_{session_id}" for session_id in orphan_chunk]
+                embedding_service.sessions_collection.delete(ids=orphan_chroma_ids)
+                deleted_orphans += len(orphan_chroma_ids)
+
         if enqueue_cap_reached:
             logger.warning(
                 "embedding_reconcile_enqueue_cap_reached",
@@ -892,6 +968,8 @@ def reconcile_session_embeddings(  # noqa: C901
             stale_embeddings=stale,
             total_needing_reembed=to_reembed,
             queued_refreshes=queued,
+            orphaned_embeddings=orphaned,
+            deleted_orphan_embeddings=deleted_orphans,
             enqueue_refreshes=enqueue_refreshes,
             batch_size=batch_size,
             max_enqueues=max_enqueues,
@@ -906,6 +984,8 @@ def reconcile_session_embeddings(  # noqa: C901
             "stale": stale,
             "to_reembed": to_reembed,
             "queued": queued,
+            "orphaned": orphaned,
+            "deleted_orphans": deleted_orphans,
             "enqueue_refreshes": enqueue_refreshes,
             "max_enqueues": max_enqueues,
         }

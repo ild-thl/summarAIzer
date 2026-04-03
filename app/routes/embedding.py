@@ -240,6 +240,8 @@ async def reconcile_embeddings(
         stale=preview.get("stale", 0),
         to_reembed=preview.get("to_reembed", 0),
         will_reembed=will_reembed,
+        orphaned=preview.get("orphaned", 0),
+        deleted_orphans=preview.get("deleted_orphans", 0),
     )
 
     return {
@@ -252,6 +254,8 @@ async def reconcile_embeddings(
         "stale": preview.get("stale", 0),
         "to_reembed": preview.get("to_reembed", 0),
         "will_reembed": will_reembed,
+        "orphaned": preview.get("orphaned", 0),
+        "deleted_orphans": preview.get("deleted_orphans", 0),
         "max_enqueues": preview.get("max_enqueues", 0),
         "message": "Embedding reconciliation queued with preview statistics",
     }
