@@ -94,6 +94,21 @@ class TestQueryEmbeddingDetermination:
         mock_embedding_service.embed_query.assert_called_once_with("my search query")
         mock_embedding_service.get_session_embeddings.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_multi_query_embedding_returns_multiple_embeddings(
+        self, search_service, mock_embedding_service
+    ):
+        """Test that a list of queries is embedded independently."""
+        embeddings, semantic_enabled = await search_service._determine_query_embeddings(
+            query=["machine learning", "critical thinking"],
+            accepted_ids=[],
+            rejected_ids=[],
+        )
+
+        assert semantic_enabled is True
+        assert len(embeddings) == 2
+        assert mock_embedding_service.embed_query.await_count == 2
+
 
 class TestRecommendationScoring:
     """Test _compute_recommendation_scores method."""
@@ -420,7 +435,7 @@ class TestRecommendFallback:
             session_format=SimpleNamespace(value="workshop"),
             language="en",
             tags=["ml"],
-            location="Berlin",
+            location_rel=SimpleNamespace(city="Berlin", name="Stage Berlin"),
             duration=60,
         )
         non_matching_session = Mock(
@@ -429,7 +444,7 @@ class TestRecommendFallback:
             session_format=SimpleNamespace(value="talk"),
             language="de",
             tags=["ethics"],
-            location="Graz",
+            location_rel=SimpleNamespace(city="Graz", name="Stage Graz"),
             duration=20,
         )
 
@@ -445,10 +460,11 @@ class TestRecommendFallback:
                     session_format="workshop",
                     language="en",
                     tags=["ml"],
-                    location=["Berlin"],
+                    location_cities=["Berlin"],
+                    location_names=None,
                     duration_min=45,
                     duration_max=90,
-                    filter_mode="soft",
+                    soft_filters=["session_format", "language", "tags", "location", "duration"],
                     filter_margin_weight=0.2,
                 ),
                 limit=10,
@@ -458,7 +474,8 @@ class TestRecommendFallback:
             assert call_kwargs.get("session_format") is None
             assert call_kwargs.get("language") is None
             assert call_kwargs.get("tags") is None
-            assert call_kwargs.get("location") is None
+            assert call_kwargs.get("location_cities") is None
+            assert call_kwargs.get("location_names") is None
             assert call_kwargs.get("duration_min") is None
             assert call_kwargs.get("duration_max") is None
 
@@ -476,6 +493,7 @@ class TestFullRecommendationPipeline:
     def mock_embedding_service(self):
         """Create mock EmbeddingService."""
         service = AsyncMock(spec=EmbeddingService)
+        service.embedding_dimension = 768
         service.embed_query = AsyncMock(return_value=[0.1] * 768)
         service.search_similar_sessions = AsyncMock(
             return_value=[
@@ -529,6 +547,41 @@ class TestFullRecommendationPipeline:
                 assert session.id in [1, 2]
                 assert "overall_score" in scores
                 assert "semantic_similarity" in scores
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_multiple_queries_dedupes_by_best_similarity(
+        self, search_service, mock_db_session
+    ):
+        """Test multi-query search merges duplicates and keeps higher semantic similarity."""
+        search_service.embedding_service.search_similar_sessions = AsyncMock(
+            side_effect=[
+                [(1, 0.60, "q1"), (2, 0.55, "q1")],
+                [(1, 0.90, "q2"), (3, 0.50, "q2")],
+            ]
+        )
+
+        mock_sessions = {
+            1: Mock(id=1, status=SessionStatus.PUBLISHED, event_id=100),
+            2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
+            3: Mock(id=3, status=SessionStatus.PUBLISHED, event_id=100),
+        }
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
+
+            results = await search_service.recommend_sessions(
+                query=["machine learning", "critical thinking"],
+                db=mock_db_session,
+                accepted_ids=[],
+                rejected_ids=[],
+                limit=10,
+            )
+
+            assert search_service.embedding_service.search_similar_sessions.await_count == 2
+            assert len(results) == 3
+            top_session, top_scores = results[0]
+            assert top_session.id == 1
+            assert top_scores["semantic_similarity"] == 0.9
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
@@ -1035,4 +1088,11 @@ class TestPlanRequestValidation:
                         "end": datetime(2026, 3, 20, 11, 0, 0),
                     }
                 ],
+            )
+
+    def test_refine_query_requires_event_id_when_query_present(self):
+        with pytest.raises(ValueError, match="event_id is required"):
+            RecommendRequest(
+                query="ki in der lehre",
+                refine_query=True,
             )

@@ -10,6 +10,8 @@ from app.async_jobs.celery_app import app
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
 from app.database.connection import SessionLocal
+from app.database.models import Session as SessionModel
+from app.database.models import SessionStatus
 from app.services.embedding.exceptions import ChromaConnectionError
 from app.services.embedding.factory import get_embedding_service
 from app.services.embedding.service import EmbeddingService
@@ -750,3 +752,173 @@ def health_check():
         ),
     )
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.task(
+    name="app.async_jobs.tasks.reconcile_session_embeddings",
+    bind=True,
+    max_retries=1,
+    queue="embeds",
+)
+def reconcile_session_embeddings(  # noqa: C901
+    self,
+    event_id: int | None = None,
+    enqueue_refreshes: bool = True,
+):
+    """
+    Reconcile published sessions against Chroma vectors and queue embedding refreshes.
+
+    Detects:
+    - missing embeddings: published session exists in DB but vector is absent in Chroma
+    - stale embeddings: vector metadata source_updated_at older than DB updated_at
+    """
+    from app.config.settings import get_settings
+
+    settings = get_settings()
+    task_kwargs = getattr(getattr(self, "request", None), "kwargs", {}) or {}
+    if event_id is None:
+        event_id = task_kwargs.get("event_id")
+    if not enqueue_refreshes:
+        enqueue_refreshes = bool(task_kwargs.get("enqueue_refreshes", False))
+    if not settings.enable_embeddings or not settings.embedding_sync_enabled:
+        logger.info(
+            "embedding_reconcile_skipped_disabled",
+            embeddings_enabled=settings.enable_embeddings,
+            sync_enabled=settings.embedding_sync_enabled,
+        )
+        return {
+            "status": "skipped",
+            "reason": "disabled",
+        }
+
+    db: Session | None = None
+    try:
+        embedding_service = get_embedding_service()
+        if embedding_service is None:
+            logger.info("embedding_reconcile_skipped_no_service")
+            return {
+                "status": "skipped",
+                "reason": "service_unavailable",
+            }
+
+        batch_size = max(1, settings.embedding_sync_batch_size)
+        max_enqueues = max(1, settings.embedding_sync_max_enqueues_per_run)
+        stale_threshold = max(0, settings.embedding_sync_stale_threshold_seconds)
+
+        db = SessionLocal()
+
+        scanned = 0
+        missing = 0
+        stale = 0
+        to_reembed = 0
+        queued = 0
+        offset = 0
+        enqueue_cap_reached = False
+
+        while True:
+            query = db.query(SessionModel.id, SessionModel.updated_at).filter(
+                SessionModel.status == SessionStatus.PUBLISHED
+            )
+            if event_id is not None:
+                query = query.filter(SessionModel.event_id == event_id)
+
+            rows = query.order_by(SessionModel.id).offset(offset).limit(batch_size).all()
+            if not rows:
+                break
+
+            scanned += len(rows)
+            session_ids = [row[0] for row in rows]
+            updated_at_map = {row[0]: row[1] for row in rows}
+
+            chroma_ids = [f"session_{sid}" for sid in session_ids]
+            chroma_results = embedding_service.sessions_collection.get(
+                ids=chroma_ids,
+                include=["metadatas"],
+            )
+
+            result_ids = chroma_results.get("ids") or []
+            result_metadatas = chroma_results.get("metadatas") or []
+            metadata_by_session_id: dict[int, dict] = {}
+            for chroma_id, metadata in zip(result_ids, result_metadatas, strict=False):
+                if not chroma_id.startswith("session_"):
+                    continue
+                sid = int(chroma_id.split("_")[1])
+                metadata_by_session_id[sid] = metadata or {}
+
+            for session_id in session_ids:
+                metadata = metadata_by_session_id.get(session_id)
+                needs_refresh = False
+
+                if metadata is None:
+                    missing += 1
+                    needs_refresh = True
+                else:
+                    db_updated_at = updated_at_map.get(session_id)
+                    db_updated_ts = db_updated_at.timestamp() if db_updated_at else None
+                    source_updated_at = metadata.get("source_updated_at")
+
+                    if db_updated_ts is not None and (
+                        source_updated_at is None
+                        or float(source_updated_at) + stale_threshold < db_updated_ts
+                    ):
+                        stale += 1
+                        needs_refresh = True
+
+                if needs_refresh:
+                    to_reembed += 1
+                    if enqueue_refreshes and queued < max_enqueues:
+                        generate_session_embedding.apply_async(args=[session_id], queue="embeds")
+                        queued += 1
+                    elif enqueue_refreshes:
+                        enqueue_cap_reached = True
+
+            offset += batch_size
+
+        if enqueue_cap_reached:
+            logger.warning(
+                "embedding_reconcile_enqueue_cap_reached",
+                max_enqueues=max_enqueues,
+                total_needing_reembed=to_reembed,
+            )
+
+        synced = max(0, scanned - to_reembed)
+
+        logger.info(
+            "embedding_reconcile_completed",
+            event_id=event_id,
+            scanned_published_sessions=scanned,
+            synced_embeddings=synced,
+            missing_embeddings=missing,
+            stale_embeddings=stale,
+            total_needing_reembed=to_reembed,
+            queued_refreshes=queued,
+            enqueue_refreshes=enqueue_refreshes,
+            batch_size=batch_size,
+            max_enqueues=max_enqueues,
+            stale_threshold_seconds=stale_threshold,
+        )
+        return {
+            "status": "ok",
+            "event_id": event_id,
+            "scanned": scanned,
+            "synced": synced,
+            "missing": missing,
+            "stale": stale,
+            "to_reembed": to_reembed,
+            "queued": queued,
+            "enqueue_refreshes": enqueue_refreshes,
+            "max_enqueues": max_enqueues,
+        }
+    except Exception as exc:
+        logger.error(
+            "embedding_reconcile_failed",
+            error=str(exc),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        if _is_transient_error(exc):
+            raise self.retry(exc=exc, countdown=300) from exc
+        raise
+    finally:
+        if db:
+            db.close()

@@ -8,6 +8,7 @@ AI-powered content processing system that transforms session transcriptions into
 - **LLM-powered workflows** with LangChain + LangGrap + OpenAI
 - **Asynchronous task processing** via Celery
 - **Semantic search** with embeddings (optional, can be disabled)
+- **Session recommender** with multi-query semantic search, preference learning, and optional LLM query refinement
 - **Full REST API** with OpenAPI docs
 
 ## 📊 Core Concepts
@@ -170,6 +171,14 @@ POST   /api/v2/sessions/{id}/workflow/{workflow_type}           Trigger generati
 GET    /api/v2/sessions/{id}/workflow/{execution_id}     Check job status
 ```
 
+### Embeddings & Recommender
+```
+POST   /api/v2/sessions/recommend                  Get personalized session recommendations
+GET    /api/v2/sessions/search/similar             Semantic similarity search
+POST   /api/v2/sessions/query/refine               LLM-based query refinement
+POST   /api/v2/sessions/{id}/embedding/refresh     Refresh session embedding (owner only)
+```
+
 Full OpenAPI documentation at `/docs` when running.
 
 ## 🧪 Testing
@@ -310,9 +319,9 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 ---
 
-## 🔍 Semantic Search (Optional Feature)
+## 🔍 Semantic Search & Recommender (Optional Feature)
 
-**Embeddings & Search** can be enabled for semantic content discovery:
+Both features require embeddings to be enabled:
 
 ```bash
 # Enable in .env
@@ -323,10 +332,70 @@ ENABLE_EMBEDDINGS=false
 ```
 
 **When enabled:**
-- Sessions are automatically embedded into vector database when published (Chroma)
-- `/api/v2/embeddings/search` endpoint available for semantic search
-- `/api/v2/embeddings/refresh` manually trigger re-embedding
-- Event handlers manage embedding lifecycle (create/delete/update)
+- Sessions are automatically embedded into Chroma when published
+- `/api/v2/sessions/search/similar` — semantic similarity search
+- `/api/v2/sessions/recommend` — personalized session recommendations
+- `/api/v2/sessions/query/refine` — LLM-based query rewriting
+- Event handlers manage the embedding lifecycle (create/update/delete)
+
+### Session Recommender
+
+The recommender returns a ranked list of sessions tailored to a user's interests.
+
+### How it works
+
+**1. Query embedding**
+
+One or more free-text queries are accepted (`query: string | string[]`). Each query is embedded independently using the same model that embeds session content. When no query is provided, the recommender falls back to preference-based search using accepted/rejected session IDs.
+
+**2. Optional LLM query refinement**
+
+When `refine_query: true` is set, the queries are first passed through a LangChain structured-output agent that rewrites them for better retrieval intent and can infer hard filters (format, tags, location) when they are strongly implied by the query text. Trivially short queries (single word or fewer than 20 characters) are skipped to avoid unnecessary LLM calls.
+
+```json
+POST /api/v2/sessions/recommend
+{
+  "query": ["machine learning for beginners", "intro to neural networks"],
+  "refine_query": true,
+  "event_id": 42,
+  "accepted_ids": [101, 102],
+  "rejected_ids": [205],
+  "filter_mode": "hard",
+  "goal_mode": "similarity",
+  "limit": 10
+}
+```
+
+**3. Vector search (hard / soft filter modes)**
+
+Each query embedding is run against Chroma with the active metadata filters.
+
+- **Hard mode** (default) — Chroma `where` clause enforces all filters strictly. Only matching sessions are retrieved.
+- **Soft mode** — The search runs without metadata filters from the start. Sessions receive a filter compliance penalty in the final score instead of being excluded.
+
+When multiple queries are provided, results are merged and deduplicated — keeping the highest similarity score per session.
+
+**4. Scoring**
+
+Each candidate session receives a normalized composite score $\in [0, 1]$:
+
+$$\text{score} = \frac{\sum_i s_i \cdot w_i}{\sum_i w_i}$$
+
+| Component | Weight (default) | Description |
+|---|---|---|
+| **Semantic similarity** | 1.0 | Cosine similarity of session embedding to query embedding |
+| **Liked cluster similarity** | 0.3 (`liked_embedding_weight`) | Similarity to the centroid of accepted session embeddings |
+| **Inverted disliked similarity** | 0.2 (`disliked_embedding_weight`) | $1 - \text{sim}(\text{disliked})$ — penalises sessions close to rejected ones |
+| **Filter compliance** | 0.5 (`filter_margin_weight`) | Ratio of active filters matched (only active in soft mode) |
+
+All weights are request parameters and can be tuned per call.
+
+After scoring, an optional diversity re-ranking step can be applied. When `diversity_weight > 0`, a greedy MMR-style pass re-orders the ranked candidates before the final cut to avoid clusters of near-identical results. This is separate from the weighted score above — it reorders already-scored candidates rather than contributing to their individual scores. Diversity is measured as a blend of embedding dissimilarity (40%) and categorical metadata novelty across tags, format, language, and speakers (60%).
+
+**5. Goal modes**
+
+- **`similarity`** (default) — Returns the top-N highest-scoring sessions globally.
+- **`plan`** — Runs a scheduling optimizer after scoring that selects a non-overlapping set of sessions fitting within provided time windows, respecting minimum break times and filling schedule gaps.
 
 ---
 

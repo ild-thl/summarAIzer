@@ -31,10 +31,19 @@ class RecommendationFilterEvaluator:
         return any(tag in session_tags_set for tag in tags)
 
     @staticmethod
-    def check_location(session, location: list[str] | None) -> bool:
-        if not location:
+    def check_location(
+        session, location_cities: list[str] | None, location_names: list[str] | None
+    ) -> bool:
+        if not location_cities and not location_names:
             return False
-        return bool(session.location and any(loc in session.location for loc in location))
+        loc = session.location_rel
+        if loc is None:
+            return False
+        if location_cities and loc.city in location_cities:
+            return True
+        if location_names and loc.name in location_names:
+            return True
+        return False
 
     @staticmethod
     def check_duration_min(session, duration_min: int | None) -> bool:
@@ -58,18 +67,20 @@ class RecommendationFilterEvaluator:
         session,
         session_format: list[str] | None,
         tags: list[str] | None,
-        location: list[str] | None,
+        location_cities: list[str] | None,
+        location_names: list[str] | None,
         language: list[str] | None,
         duration_min: int | None,
         duration_max: int | None,
         time_windows: list[Any] | None,
     ) -> float:
         """Compute ratio of matched active filters."""
+        location_active = location_cities is not None or location_names is not None
         filter_checks = [
             (session_format is not None, self.check_format(session, session_format)),
             (language is not None, self.check_language(session, language)),
             (tags is not None, self.check_tags(session, tags)),
-            (location is not None, self.check_location(session, location)),
+            (location_active, self.check_location(session, location_cities, location_names)),
             (duration_min is not None, self.check_duration_min(session, duration_min)),
             (duration_max is not None, self.check_duration_max(session, duration_max)),
             (time_windows is not None, self.check_time_windows(session, time_windows)),

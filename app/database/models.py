@@ -56,6 +56,31 @@ class WorkflowExecutionStatus(str, Enum):
     FAILED = "failed"
 
 
+class SessionLocation(Base):
+    """Structured location for a session (room, stage, venue, etc.)."""
+
+    __tablename__ = "session_locations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    city = Column(String(255), nullable=True, index=True)
+    name = Column(String(255), nullable=True, index=True)
+    country = Column(String(100), nullable=True)
+    address = Column(Text, nullable=True)
+    postal_code = Column(String(20), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    session = relationship("Session", back_populates="location_rel")
+
+
 class Event(Base):
     """Event model representing a conference or festival event."""
 
@@ -88,7 +113,6 @@ class Session(Base):
     speakers = Column(JSON, default=list, nullable=True)  # Array of speaker objects
     tags = Column(JSON, default=list, nullable=True)  # Array of tag strings
     short_description = Column(Text, nullable=True)
-    location = Column(String(255), nullable=True)
     start_datetime = Column(DateTime, nullable=False, index=True)
     end_datetime = Column(DateTime, nullable=False)
     recording_url = Column(String(500), nullable=True)
@@ -114,6 +138,9 @@ class Session(Base):
     owner = relationship("User", back_populates="sessions", foreign_keys=[owner_id])
     content_items = relationship(
         "GeneratedContent", back_populates="session", cascade="all, delete-orphan"
+    )
+    location_rel = relationship(
+        "SessionLocation", back_populates="session", cascade="all, delete-orphan", uselist=False
     )
 
 
