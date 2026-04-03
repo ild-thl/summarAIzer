@@ -786,16 +786,28 @@ class RecommendationService:
 
     async def _batch_fetch_embeddings(
         self,
-        chroma_results: list,
-    ) -> dict:
-        all_session_ids = list(dict.fromkeys([session_id for session_id, _, _ in chroma_results]))
+        chroma_results_hard: list[tuple] | None,
+        chroma_results_soft: list[tuple] | None = None,
+    ) -> dict[str, list[float]]:
+        combined_results = [
+            *(chroma_results_hard or []),
+            *(chroma_results_soft or []),
+        ]
+        all_session_ids = list(dict.fromkeys(session_id for session_id, _, _ in combined_results))
 
-        chroma_id_to_embedding = {}
+        chroma_id_to_embedding: dict[str, list[float]] = {}
         if all_session_ids:
             try:
                 embeddings_dict = await self.embedding_service.get_session_embeddings(
                     all_session_ids
                 )
+                if not isinstance(embeddings_dict, dict):
+                    logger.warning(
+                        "batch_embedding_retrieval_invalid_result",
+                        result_type=type(embeddings_dict).__name__,
+                        sessions_count=len(all_session_ids),
+                    )
+                    return {}
                 for session_id, embedding in embeddings_dict.items():
                     chroma_id_to_embedding[f"session_{session_id}"] = embedding
             except Exception as e:
@@ -838,7 +850,9 @@ class RecommendationService:
         params: RecommendationQueryParams,
         limit: int,
     ) -> tuple[list[tuple], dict]:
-        chroma_id_to_embedding = await self._batch_fetch_embeddings(chroma_results)
+        chroma_id_to_embedding = await self._batch_fetch_embeddings(
+            chroma_results_hard=chroma_results
+        )
         embedding_required = (
             semantic_similarity_enabled or bool(liked_embeddings) or bool(disliked_embeddings)
         )

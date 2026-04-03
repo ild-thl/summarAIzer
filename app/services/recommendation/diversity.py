@@ -12,6 +12,17 @@ class RecommendationDiversityOptimizer:
     EMBEDDING_DIVERSITY_RATIO = 0.0
 
     @staticmethod
+    def _normalize_metadata_values(values: Any) -> set[str]:
+        """Normalize optional metadata values into a set of strings."""
+        if values is None:
+            return set()
+        if isinstance(values, str):
+            return {values} if values else set()
+        if isinstance(values, list | tuple | set):
+            return {str(value) for value in values if value is not None and str(value)}
+        return set()
+
+    @staticmethod
     def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
         v1 = np.asarray(vec1, dtype=np.float32).flatten()
         v2 = np.asarray(vec2, dtype=np.float32).flatten()
@@ -28,9 +39,11 @@ class RecommendationDiversityOptimizer:
         """Extract categorical metadata from a session as sets of string values."""
         metadata: dict[str, set[str]] = {}
 
-        tags = getattr(session, "tags", None)
+        tags = RecommendationDiversityOptimizer._normalize_metadata_values(
+            getattr(session, "tags", None)
+        )
         if tags:
-            metadata["tags"] = set(tags)
+            metadata["tags"] = tags
 
         fmt = getattr(session, "session_format", None)
         if fmt is not None:
@@ -40,9 +53,11 @@ class RecommendationDiversityOptimizer:
         if lang:
             metadata["language"] = {str(lang)}
 
-        speakers = getattr(session, "speakers", None)
+        speakers = RecommendationDiversityOptimizer._normalize_metadata_values(
+            getattr(session, "speakers", None)
+        )
         if speakers:
-            metadata["speakers"] = set(speakers)
+            metadata["speakers"] = speakers
 
         return metadata
 
