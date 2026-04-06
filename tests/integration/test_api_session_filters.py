@@ -1395,9 +1395,10 @@ class TestRecommendationAPI:
             json={
                 "query": "learning",
                 "limit": 5,
-                "soft_filters": ["language"],
+                "soft_filters": ["language", "time_windows"],
                 "filter_margin_weight": 0.15,
                 "language": "en",
+                "time_windows": [{"start": "2025-05-14T09:00:00", "end": "2025-05-14T18:00:00"}],
             },
         )
 
