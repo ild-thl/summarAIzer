@@ -485,6 +485,48 @@ class TestRecommendFallback:
             assert results[1][1]["filter_compliance_score"] is not None
             assert results[0][1]["overall_score"] >= results[1][1]["overall_score"]
 
+    @pytest.mark.asyncio
+    async def test_fallback_soft_time_windows_expand_candidates_and_score_compliance(
+        self, search_service, mock_db_session
+    ):
+        """Soft time windows should not constrain fallback retrieval and should affect ranking."""
+        now = datetime.utcnow().replace(microsecond=0)
+        in_window_session = Mock(
+            id=1,
+            status=SessionStatus.PUBLISHED,
+            start_datetime=now + timedelta(minutes=10),
+            end_datetime=now + timedelta(minutes=40),
+        )
+        out_of_window_session = Mock(
+            id=2,
+            status=SessionStatus.PUBLISHED,
+            start_datetime=now + timedelta(hours=3),
+            end_datetime=now + timedelta(hours=4),
+        )
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.list_with_filters.return_value = [out_of_window_session, in_window_session]
+
+            results = await search_service._recommend_fallback(
+                db=mock_db_session,
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[],
+                    rejected_ids=[],
+                    soft_filters=["time_windows"],
+                    time_windows=[{"start": now, "end": now + timedelta(hours=1)}],
+                ),
+                limit=10,
+            )
+
+            call_kwargs = mock_crud.list_with_filters.call_args[1]
+            assert call_kwargs.get("time_windows") is None
+            assert len(results) == 2
+            assert results[0][0].id == 1
+            assert (
+                results[0][1]["filter_compliance_score"] > results[1][1]["filter_compliance_score"]
+            )
+
 
 class TestFullRecommendationPipeline:
     """Integration-style unit tests for full recommend_sessions method."""
@@ -649,6 +691,59 @@ class TestFullRecommendationPipeline:
             assert mock_embedding_service.search_similar_sessions.called
             call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
             assert "where" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_soft_time_windows_omits_window_from_chroma_where(
+        self, search_service, mock_embedding_service, mock_db_session
+    ):
+        """Soft time windows should widen retrieval while still contributing compliance scores."""
+        now = datetime(2026, 3, 17, 10, 0, 0)
+        mock_sessions = {
+            1: Mock(
+                id=1,
+                status=SessionStatus.PUBLISHED,
+                event_id=100,
+                start_datetime=now + timedelta(minutes=15),
+                end_datetime=now + timedelta(minutes=45),
+            ),
+            2: Mock(
+                id=2,
+                status=SessionStatus.PUBLISHED,
+                event_id=100,
+                start_datetime=now + timedelta(hours=3),
+                end_datetime=now + timedelta(hours=4),
+            ),
+        }
+
+        mock_embedding_service.search_similar_sessions = AsyncMock(
+            return_value=[(1, 0.80, "in-window"), (2, 0.82, "out-of-window")]
+        )
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
+
+            results = await search_service.recommend_sessions(
+                query="machine learning",
+                db=mock_db_session,
+                accepted_ids=[],
+                rejected_ids=[],
+                event_id=100,
+                soft_filters=["time_windows"],
+                time_windows=[{"start": now, "end": now + timedelta(hours=1)}],
+                filter_margin_weight=0.5,
+                limit=10,
+            )
+
+            call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]
+            where = call_kwargs.get("where")
+            where_text = str(where)
+            assert "event_id" in where_text
+            assert "start_datetime" not in where_text
+            assert "end_datetime" not in where_text
+            assert len(results) == 2
+            assert (
+                results[0][1]["filter_compliance_score"] > results[1][1]["filter_compliance_score"]
+            )
 
     @pytest.mark.asyncio
     async def test_plan_mode_uses_plan_window_as_hard_filters(

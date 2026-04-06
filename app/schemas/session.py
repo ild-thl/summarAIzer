@@ -413,14 +413,24 @@ class RecommendRequest(BaseModel):
 
     # Phase 3: Soft filter margins
     soft_filters: (
-        list[Literal["session_format", "tags", "location", "language", "duration"]] | None
+        list[
+            Literal[
+                "session_format",
+                "tags",
+                "location",
+                "language",
+                "duration",
+                "time_windows",
+            ]
+        ]
+        | None
     ) = Field(
         default=None,
         description=(
             "Optional list of filter attributes to apply as soft scoring rather than strict retrieval. "
             "Attributes listed here are excluded from candidate retrieval and instead scored via "
             "filter compliance (blended into overall_score using filter_margin_weight). "
-            "Valid values: 'session_format', 'tags', 'location', 'language', 'duration'. "
+            "Valid values: 'session_format', 'tags', 'location', 'language', 'duration', 'time_windows'. "
             "Default (null) applies all provided filters strictly."
         ),
     )

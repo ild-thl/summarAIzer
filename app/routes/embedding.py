@@ -437,7 +437,7 @@ async def recommend_sessions(
 
     Filter behavior:
     - By default (`soft_filters=null`), all provided filters are applied strictly during retrieval.
-    - Set `soft_filters` to a list of attribute names (e.g. `["language", "session_format"]`) to
+    - Set `soft_filters` to a list of attribute names (e.g. `["session_format", "tags", "location", "language", "duration", "time_windows"]`) to
         apply those filters as soft scoring rather than hard retrieval constraints.
 
     Optional query refinement:
@@ -462,9 +462,12 @@ async def recommend_sessions(
         {
             "event_id": 3,
             "query": ["ai ethics"],
-            "soft_filters": ["tags", "location"],
+            "soft_filters": ["tags", "location", "time_windows"],
             "tags": ["ethics", "policy"],
             "location_cities": ["Berlin"],
+            "time_windows": [
+                {"start": "2024-06-01T09:00:00", "end": "2024-06-01T12:00:00"}
+            ],
             "limit": 10
         }
         ```

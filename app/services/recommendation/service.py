@@ -54,6 +54,7 @@ class RecommendationService:
         "location",
         "language",
         "duration",
+        "time_windows",
     }
 
     @staticmethod
@@ -632,7 +633,7 @@ class RecommendationService:
             language=None if "language" in soft else params.language,
             duration_min=None if "duration" in soft else params.duration_min,
             duration_max=None if "duration" in soft else params.duration_max,
-            time_windows=params.time_windows,
+            time_windows=None if "time_windows" in soft else params.time_windows,
         )
 
         chroma_results: list[tuple] = []
@@ -837,7 +838,7 @@ class RecommendationService:
             language=params.language if "language" in soft else None,
             duration_min=params.duration_min if "duration" in soft else None,
             duration_max=params.duration_max if "duration" in soft else None,
-            time_windows=None,
+            time_windows=params.time_windows if "time_windows" in soft else None,
         )
 
     async def _process_chroma_recommendations(
@@ -924,7 +925,7 @@ class RecommendationService:
                 language=None if "language" in soft else params.language,
                 duration_min=None if "duration" in soft else params.duration_min,
                 duration_max=None if "duration" in soft else params.duration_max,
-                time_windows=params.time_windows,
+                time_windows=None if "time_windows" in soft else params.time_windows,
             )
 
             recommendations: list[tuple] = []
