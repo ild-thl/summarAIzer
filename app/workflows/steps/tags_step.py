@@ -7,7 +7,7 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
-from app.database.models import Session as SessionModel
+from app.database.models import Session as SessionModel, GeneratedContent
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.prompt_template import PromptTemplate
@@ -43,7 +43,7 @@ class TagsStep(PromptTemplate):
     def get_model_config(self) -> ChatModelConfig:
         """Tags are shorter outputs - use configured model settings."""
         return ChatModelConfig(
-            model="meta-llama-3.1-8b-instruct",
+            model="qwen3-30b-a3b-instruct-2507",
             temperature=0.5,  # Lower for consistent tagging
             max_tokens=500,  # Tags are brief
             top_p=0.9,
@@ -138,8 +138,11 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
         """
         Save generated tags to database and update session.tags.
 
-        Extends parent behavior to also store tags directly on the session model
-        for easier filtering and querying based on tags.
+        Preserves manually-added tags while replacing previously-generated tags.
+        - Gets the old generated tags from the previous GeneratedContent record
+        - Removes old generated tags from current session.tags
+        - Adds new generated tags
+        - Preserves any tags that were manually added during session creation
 
         Args:
             db: SQLAlchemy database session
@@ -151,32 +154,79 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
         # Call parent to save to GeneratedContent table
         super()._save_to_db(db, session_id, execution_id, identifier, content)
 
-        # Now update session.tags with generated tags
+        # Now update session.tags intelligently: preserve manual tags, replace generated ones
         try:
-            # Parse generated tags from content
-            tags_json_str = content.get("content", "{}")
-            tags_list = json.loads(tags_json_str) if isinstance(tags_json_str, str) else []
+            # Parse new generated tags from content
+            tags_json_str = content.get("content", "[]")
+            new_tags = json.loads(tags_json_str) if isinstance(tags_json_str, str) else []
 
-            if tags_list:
-                # Fetch the session and update its tags
-                db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
-                if db_session:
-                    # Override tags with generated ones
-                    db_session.tags = tags_list
-                    db.add(db_session)
-                    db.commit()
-                    logger.info(
-                        "session_tags_updated_from_workflow",
-                        session_id=session_id,
-                        execution_id=execution_id,
-                        tag_count=len(tags_list),
-                    )
-                else:
-                    logger.warning(
-                        "session_not_found_for_tags_update",
-                        session_id=session_id,
-                        execution_id=execution_id,
-                    )
+            if not new_tags:
+                logger.info(
+                    "no_tags_generated",
+                    session_id=session_id,
+                    execution_id=execution_id,
+                )
+                return
+
+            # Fetch the session
+            db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+            if not db_session:
+                logger.warning(
+                    "session_not_found_for_tags_update",
+                    session_id=session_id,
+                    execution_id=execution_id,
+                )
+                return
+
+            # Get current tags
+            current_tags = db_session.tags or []
+
+            # Get previously generated tags (from the second-to-last GeneratedContent record)
+            # We exclude the one we just created above (identified by execution_id)
+            old_generated_content = (
+                db.query(GeneratedContent)
+                .filter(
+                    GeneratedContent.session_id == session_id,
+                    GeneratedContent.identifier == "tags",
+                    GeneratedContent.workflow_execution_id != execution_id,
+                )
+                .order_by(GeneratedContent.created_at.desc())
+                .first()
+            )
+
+            # Parse old generated tags if they exist
+            old_tags = []
+            if old_generated_content:
+                old_content = old_generated_content.content
+                try:
+                    old_tags = json.loads(old_content) if isinstance(old_content, str) else []
+                except json.JSONDecodeError:
+                    old_tags = []
+
+            # Remove old generated tags from current tags (preserve manual tags)
+            # Manual tags are those not in old_tags
+            manual_tags = [tag for tag in current_tags if tag not in old_tags]
+
+            # Combine manual tags + new generated tags
+            combined_tags = list(
+                dict.fromkeys(manual_tags + new_tags)
+            )  # Remove duplicates while preserving order
+
+            # Update session with combined tags
+            db_session.tags = combined_tags
+            db.add(db_session)
+            db.commit()
+
+            logger.info(
+                "session_tags_updated_from_workflow",
+                session_id=session_id,
+                execution_id=execution_id,
+                manual_tags_count=len(manual_tags),
+                generated_tags_count=len(new_tags),
+                total_tags_count=len(combined_tags),
+                manual_tags=manual_tags,
+                new_generated_tags=new_tags,
+            )
 
         except Exception as e:
             logger.error(
