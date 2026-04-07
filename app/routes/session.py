@@ -17,6 +17,7 @@ from app.database.models import Session as SessionModel
 from app.database.models import User
 from app.schemas.session import (
     SessionCreate,
+    SessionListResponse,
     SessionResponse,
     SessionUpdate,
     SessionWithEvent,
@@ -159,7 +160,7 @@ def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> li
     return values_list
 
 
-@router.get("", response_model=list[SessionResponse])
+@router.get("", response_model=list[SessionListResponse])
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
@@ -334,7 +335,7 @@ async def delete_session(
     return None
 
 
-@router.get("/event/{event_id}/sessions", response_model=list[SessionResponse])
+@router.get("/event/{event_id}/sessions", response_model=list[SessionListResponse])
 async def list_event_sessions(
     event_id: int,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
