@@ -237,12 +237,16 @@ class WorkflowRegistry:
             workflow_instance = workflow_class
             workflow_name = workflow_instance.workflow_type
 
-        cache_key = str(workflow_name)
+        # Use workflow_type as cache key for proper cache isolation
+        # This ensures SingleStepWorkflow instances with different targets
+        # don't share cached graphs
+        cache_key = workflow_instance.workflow_type
 
         if cache_key not in cls._graph_cache:
             logger.info(
                 "building_and_caching_workflow_graph",
                 workflow_name=cache_key,
+                workflow_class=workflow_name,
             )
             cls._graph_cache[cache_key] = workflow_instance.build_graph()
 
