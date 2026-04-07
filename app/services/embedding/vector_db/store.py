@@ -33,7 +33,7 @@ class ChromaSessionVectorStore:
                 documents=[text],
                 metadatas=[chroma_metadata],
             )
-            logger.info(
+            logger.debug(
                 "session_embedding_stored",
                 session_id=session_id,
                 embedding_dimension=len(embedding),
@@ -71,7 +71,7 @@ class ChromaSessionVectorStore:
                     text = results["documents"][0][i] if results["documents"] else ""
                     output.append((session_id, similarity, text))
 
-            logger.info(
+            logger.debug(
                 "session_search_complete",
                 query_dimension=len(embedding),
                 results_found=len(output),
@@ -90,7 +90,7 @@ class ChromaSessionVectorStore:
         try:
             chroma_id = f"session_{session_id}"
             self.sessions_collection.delete(ids=[chroma_id])
-            logger.info("session_embedding_deleted", session_id=session_id)
+            logger.debug("session_embedding_deleted", session_id=session_id)
             return True
         except Exception as e:
             logger.error(
@@ -116,7 +116,7 @@ class ChromaSessionVectorStore:
                     session_id = int(chroma_id.split("_")[1])
                     out[session_id] = embedding
 
-            logger.info(
+            logger.debug(
                 "session_embeddings_retrieved",
                 requested=len(session_ids),
                 found=len(out),

@@ -5,6 +5,7 @@ Keeps recommendation flow and ranking logic isolated from search-only services.
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from time import perf_counter
 from typing import Any, ClassVar
 
 import structlog
@@ -227,6 +228,30 @@ class RecommendationService:
             return set()
         return set(soft_filters).intersection(cls.SOFT_FILTER_KEYS)
 
+    @staticmethod
+    def _has_effective_filter_value(filter_key: str, params: RecommendationQueryParams) -> bool:
+        if filter_key == "session_format":
+            return bool(params.session_format)
+        if filter_key == "tags":
+            return bool(params.tags)
+        if filter_key == "location":
+            return bool(params.location_cities or params.location_names)
+        if filter_key == "language":
+            return bool(params.language)
+        if filter_key == "duration":
+            return params.duration_min is not None or params.duration_max is not None
+        if filter_key == "time_windows":
+            return bool(params.time_windows)
+        return False
+
+    def _get_effective_soft_filters(self, params: RecommendationQueryParams) -> set[str]:
+        requested_soft = self._get_soft_filter_set(params.soft_filters)
+        return {
+            filter_key
+            for filter_key in requested_soft
+            if self._has_effective_filter_value(filter_key, params)
+        }
+
     def _optimize_session_plan(
         self,
         recommendations: list[tuple],
@@ -384,7 +409,6 @@ class RecommendationService:
                 "hard_pass_results": 0,
                 "soft_pass_results": 0,
                 "soft_pass_triggered": False,
-                "embeddings_map": {},
             }
 
         return await self._recommend_with_semantic_search(
@@ -404,15 +428,19 @@ class RecommendationService:
         min_break_minutes: int,
         max_gap_minutes: int | None,
     ) -> tuple[list[tuple], dict[str, Any]]:
+        benchmark_start = perf_counter()
         candidate_limit = limit * plan_candidate_multiplier
+        base_collect_start = perf_counter()
         recommendations, search_debug = await self._collect_base_recommendations(
             db=db,
             params=params,
             seen_ids=seen_ids,
             candidate_limit=candidate_limit,
         )
+        base_collect_ms = round((perf_counter() - base_collect_start) * 1000, 2)
 
         # First pass: optimize without diversity (pure relevance ranking)
+        initial_plan_start = perf_counter()
         planned = self._optimize_session_plan(
             recommendations=recommendations,
             limit=limit,
@@ -420,18 +448,30 @@ class RecommendationService:
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
         )
+        initial_plan_ms = round((perf_counter() - initial_plan_start) * 1000, 2)
 
+        gap_window_start = perf_counter()
         gap_fill_windows = self._derive_gap_fill_windows(
             planned=planned,
             time_windows=params.time_windows,
             max_gap_minutes=max_gap_minutes,
         )
+        gap_window_ms = round((perf_counter() - gap_window_start) * 1000, 2)
         if not gap_fill_windows:
-            logger.info(
+            logger.debug(
                 "recommendation_plan_gap_fill_skipped_no_oversized_gaps",
                 planned_size=len(planned),
                 requested_limit=limit,
                 max_gap_minutes=max_gap_minutes,
+            )
+            logger.debug(
+                "recommendation_benchmark_plan_mode",
+                candidate_limit=candidate_limit,
+                requested_limit=limit,
+                base_collect_ms=base_collect_ms,
+                initial_plan_ms=initial_plan_ms,
+                gap_window_ms=gap_window_ms,
+                total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
             )
             return planned, search_debug
 
@@ -445,12 +485,24 @@ class RecommendationService:
             rejected_ids=gap_fill_rejected,
             time_windows=gap_fill_windows,
         )
+        gap_fill_start = perf_counter()
         gap_fill_candidates = await self._recommend_fallback(
             db=db,
             params=gap_fill_params,
             limit=gap_fill_limit,
         )
+        gap_fill_fetch_ms = round((perf_counter() - gap_fill_start) * 1000, 2)
         if not gap_fill_candidates:
+            logger.debug(
+                "recommendation_benchmark_plan_mode",
+                candidate_limit=candidate_limit,
+                requested_limit=limit,
+                base_collect_ms=base_collect_ms,
+                initial_plan_ms=initial_plan_ms,
+                gap_window_ms=gap_window_ms,
+                gap_fill_fetch_ms=gap_fill_fetch_ms,
+                total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
+            )
             return planned, search_debug
 
         merged_by_session_id: dict[int, tuple] = {}
@@ -462,13 +514,14 @@ class RecommendationService:
         # Compute diversity scores for merged candidates for use in second planning pass
         # This single pass on merged candidates ensures gap-fill selections are diverse wrt planned sessions
         diversity_scores: dict[int, float] | None = None
+        diversity_ms = 0.0
         if params.diversity_weight > 0:
+            diversity_start = perf_counter()
             merged_candidates = list(merged_by_session_id.values())
             reranked = self.diversity_optimizer.diversify_results(
                 candidates=merged_candidates,
                 limit=len(merged_candidates),
                 diversity_weight=params.diversity_weight,
-                embeddings_map=search_debug.get("embeddings_map"),
                 session_format=params.session_format,
                 tags=params.tags,
                 language=params.language,
@@ -478,7 +531,9 @@ class RecommendationService:
             for session, scores in reranked:
                 if scores.get("diversity_score") is not None:
                     diversity_scores[session.id] = scores["diversity_score"]
+            diversity_ms = round((perf_counter() - diversity_start) * 1000, 2)
 
+        replan_start = perf_counter()
         replanned = self._optimize_session_plan(
             recommendations=list(merged_by_session_id.values()),
             limit=limit,
@@ -488,13 +543,26 @@ class RecommendationService:
             diversity_scores=diversity_scores,
             diversity_weight=params.diversity_weight,
         )
+        replan_ms = round((perf_counter() - replan_start) * 1000, 2)
 
-        logger.info(
+        logger.debug(
             "recommendation_plan_gap_fill_completed",
             initial_plan_size=len(planned),
             gap_fill_candidates=len(gap_fill_candidates),
             final_plan_size=len(replanned),
             requested_limit=limit,
+        )
+        logger.debug(
+            "recommendation_benchmark_plan_mode",
+            candidate_limit=candidate_limit,
+            requested_limit=limit,
+            base_collect_ms=base_collect_ms,
+            initial_plan_ms=initial_plan_ms,
+            gap_window_ms=gap_window_ms,
+            gap_fill_fetch_ms=gap_fill_fetch_ms,
+            diversity_ms=diversity_ms,
+            replan_ms=replan_ms,
+            total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
         )
         return replanned, search_debug
 
@@ -538,6 +606,7 @@ class RecommendationService:
         max_gap_minutes: int | None = None,
         plan_candidate_multiplier: int = 2,
     ) -> list[tuple]:
+        request_start = perf_counter()
         accepted_ids = accepted_ids or []
         rejected_ids = rejected_ids or []
         params = RecommendationQueryParams(
@@ -559,7 +628,34 @@ class RecommendationService:
             diversity_weight=diversity_weight,
             time_windows=time_windows,
         )
+        requested_soft_filters = params.soft_filters
+        effective_soft = self._get_effective_soft_filters(params)
+        params = replace(params, soft_filters=sorted(effective_soft))
         seen_ids = set(params.accepted_ids + params.rejected_ids)
+
+        logger.info(
+            "recommendation_request",
+            goal_mode=goal_mode,
+            limit=limit,
+            plan_candidate_multiplier=plan_candidate_multiplier,
+            event_id=params.event_id,
+            query=params.query,
+            accepted_ids_count=len(params.accepted_ids),
+            rejected_ids_count=len(params.rejected_ids),
+            session_format=params.session_format,
+            tags=params.tags,
+            location_cities=params.location_cities,
+            location_names=params.location_names,
+            language=params.language,
+            duration_min=params.duration_min,
+            duration_max=params.duration_max,
+            time_windows_count=len(params.time_windows or []),
+            requested_soft_filters=requested_soft_filters,
+            effective_soft_filters=sorted(effective_soft),
+            diversity_weight=params.diversity_weight,
+            min_break_minutes=min_break_minutes,
+            max_gap_minutes=max_gap_minutes,
+        )
 
         try:
             if goal_mode == "plan":
@@ -588,6 +684,7 @@ class RecommendationService:
                 limit=limit,
                 soft_pass_triggered=search_debug["soft_pass_triggered"],
                 goal_mode=goal_mode,
+                elapsed_ms=round((perf_counter() - request_start) * 1000, 2),
             )
 
             return recommendations
@@ -613,13 +710,16 @@ class RecommendationService:
         seen_ids: set[int],
         candidate_limit: int,
     ) -> tuple[list[tuple], dict[str, Any]]:
+        benchmark_start = perf_counter()
+        query_embedding_start = perf_counter()
         query_embeddings, semantic_similarity_enabled = await self._determine_query_embeddings(
             query=params.query,
             accepted_ids=params.accepted_ids,
             rejected_ids=params.rejected_ids,
         )
+        query_embedding_ms = round((perf_counter() - query_embedding_start) * 1000, 2)
 
-        soft = self._get_soft_filter_set(params.soft_filters)
+        soft = self._get_effective_soft_filters(params)
         has_soft = bool(soft)
         search_limit = candidate_limit * 2 if has_soft else candidate_limit
 
@@ -637,6 +737,7 @@ class RecommendationService:
         )
 
         chroma_results: list[tuple] = []
+        chroma_search_start = perf_counter()
         for query_embedding in query_embeddings:
             try:
                 if where_condition:
@@ -654,6 +755,7 @@ class RecommendationService:
             except Exception as e:
                 logger.error("recommendation_chroma_search_failed", error=str(e))
                 raise EmbeddingSearchError(f"Semantic search failed: {e!s}") from e
+        chroma_search_ms = round((perf_counter() - chroma_search_start) * 1000, 2)
 
         if len(query_embeddings) > 1:
             chroma_results = self._dedupe_chroma_results_by_similarity(chroma_results)[
@@ -661,7 +763,7 @@ class RecommendationService:
             ]
 
         if has_soft:
-            logger.info(
+            logger.debug(
                 "recommendation_soft_filters_active",
                 soft_filters=list(soft),
                 search_limit=search_limit,
@@ -669,11 +771,15 @@ class RecommendationService:
                 query_count=len(query_embeddings),
             )
 
+        preference_prefetch_start = perf_counter()
         preference_embeddings = await self._prefetch_preference_embeddings(
             accepted_ids=params.accepted_ids,
             rejected_ids=params.rejected_ids,
         )
-        recommendations, chroma_id_to_embedding = await self._process_chroma_recommendations(
+        preference_prefetch_ms = round((perf_counter() - preference_prefetch_start) * 1000, 2)
+
+        processing_start = perf_counter()
+        recommendations = await self._process_chroma_recommendations(
             chroma_results=chroma_results,
             db=db,
             semantic_similarity_enabled=semantic_similarity_enabled,
@@ -682,12 +788,26 @@ class RecommendationService:
             params=params,
             limit=candidate_limit,
         )
+        processing_ms = round((perf_counter() - processing_start) * 1000, 2)
+
+        logger.debug(
+            "recommendation_benchmark_semantic_search",
+            query_embedding_ms=query_embedding_ms,
+            chroma_search_ms=chroma_search_ms,
+            preference_prefetch_ms=preference_prefetch_ms,
+            recommendation_processing_ms=processing_ms,
+            total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
+            candidate_limit=candidate_limit,
+            search_limit=search_limit,
+            query_count=len(query_embeddings),
+            result_count=len(chroma_results),
+            soft_filters=list(soft),
+        )
 
         return recommendations, {
             "hard_pass_results": 0 if has_soft else len(chroma_results),
             "soft_pass_results": len(chroma_results) if has_soft else 0,
             "soft_pass_triggered": has_soft,
-            "embeddings_map": chroma_id_to_embedding,
         }
 
     async def _determine_query_embeddings(
@@ -825,7 +945,7 @@ class RecommendationService:
         params: RecommendationQueryParams,
     ) -> float | None:
         """Compute compliance only for soft_filter attributes. Returns None if no soft filters active."""
-        soft = self._get_soft_filter_set(params.soft_filters)
+        soft = self._get_effective_soft_filters(params)
         if not soft:
             return None
 
@@ -841,6 +961,47 @@ class RecommendationService:
             time_windows=params.time_windows if "time_windows" in soft else None,
         )
 
+    @staticmethod
+    def _load_sessions_for_chroma_results(db: Session, chroma_results: list) -> dict[int, Any]:
+        session_ids = [session_id for session_id, _, _ in chroma_results]
+        if not session_ids:
+            return {}
+
+        bulk_loader = getattr(session_crud, "read_many_by_ids", None)
+        if not callable(bulk_loader):
+            return {}
+
+        try:
+            bulk_sessions = bulk_loader(db, session_ids)
+            if isinstance(bulk_sessions, dict):
+                return bulk_sessions
+        except Exception as e:
+            logger.warning("recommendation_bulk_session_load_failed", error=str(e))
+        return {}
+
+    def _finalize_recommendations(
+        self,
+        recommendations: list[tuple],
+        limit: int,
+        params: RecommendationQueryParams,
+    ) -> list[tuple]:
+        recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
+
+        if params.diversity_weight > 0:
+            return self.diversity_optimizer.diversify_results(
+                candidates=recommendations,
+                limit=limit,
+                diversity_weight=params.diversity_weight,
+                session_format=params.session_format,
+                tags=params.tags,
+                language=params.language,
+            )
+
+        top = recommendations[:limit]
+        for _, scores in top:
+            scores["diversity_score"] = None
+        return top
+
     async def _process_chroma_recommendations(
         self,
         chroma_results: list,
@@ -850,17 +1011,28 @@ class RecommendationService:
         disliked_embeddings: dict[int, list[float]],
         params: RecommendationQueryParams,
         limit: int,
-    ) -> tuple[list[tuple], dict]:
+    ) -> list[tuple]:
+        benchmark_start = perf_counter()
         chroma_id_to_embedding = await self._batch_fetch_embeddings(
             chroma_results_hard=chroma_results
         )
+        embedding_fetch_ms = round((perf_counter() - benchmark_start) * 1000, 2)
         embedding_required = (
             semantic_similarity_enabled or bool(liked_embeddings) or bool(disliked_embeddings)
         )
         recommendations: list[tuple] = []
 
+        bulk_load_start = perf_counter()
+        sessions_by_id = self._load_sessions_for_chroma_results(
+            db=db, chroma_results=chroma_results
+        )
+        bulk_session_load_ms = round((perf_counter() - bulk_load_start) * 1000, 2)
+
+        scoring_start = perf_counter()
         for session_id, chroma_similarity, _ in chroma_results:
-            session = session_crud.read(db, session_id)
+            session = sessions_by_id.get(session_id)
+            if session is None:
+                session = session_crud.read(db, session_id)
             if not session or session.status != SessionStatus.PUBLISHED:
                 continue
             if params.event_id and session.event_id != params.event_id:
@@ -869,7 +1041,7 @@ class RecommendationService:
             session_embedding = chroma_id_to_embedding.get(f"session_{session_id}")
             if session_embedding is None:
                 if embedding_required:
-                    logger.warning("session_embedding_not_found", session_id=session_id)
+                    logger.debug("session_embedding_not_found", session_id=session_id)
                 session_embedding = self._get_default_embedding()
 
             soft_compliance = self._compute_soft_filter_compliance(session, params)
@@ -885,25 +1057,30 @@ class RecommendationService:
                 filter_margin_weight=params.filter_margin_weight,
             )
             recommendations.append((session, scores))
+        scoring_ms = round((perf_counter() - scoring_start) * 1000, 2)
 
-        recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
+        post_process_start = perf_counter()
+        recommendations = self._finalize_recommendations(
+            recommendations=recommendations,
+            limit=limit,
+            params=params,
+        )
 
-        if params.diversity_weight > 0:
-            recommendations = self.diversity_optimizer.diversify_results(
-                candidates=recommendations,
-                limit=limit,
-                diversity_weight=params.diversity_weight,
-                embeddings_map=chroma_id_to_embedding,
-                session_format=params.session_format,
-                tags=params.tags,
-                language=params.language,
-            )
-        else:
-            recommendations = recommendations[:limit]
-            for _, scores in recommendations:
-                scores["diversity_score"] = None
+        post_process_ms = round((perf_counter() - post_process_start) * 1000, 2)
 
-        return recommendations, chroma_id_to_embedding
+        logger.debug(
+            "recommendation_benchmark_processing",
+            embedding_fetch_ms=embedding_fetch_ms,
+            bulk_session_load_ms=bulk_session_load_ms,
+            scoring_ms=scoring_ms,
+            post_process_ms=post_process_ms,
+            total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
+            input_results=len(chroma_results),
+            output_results=len(recommendations),
+            used_bulk_load=bool(sessions_by_id),
+        )
+
+        return recommendations
 
     async def _recommend_fallback(
         self,
@@ -912,7 +1089,7 @@ class RecommendationService:
         limit: int = 10,
     ) -> list[tuple]:
         try:
-            soft = self._get_soft_filter_set(params.soft_filters)
+            soft = self._get_effective_soft_filters(params)
             sessions = session_crud.list_with_filters(
                 db=db,
                 limit=limit + len(params.rejected_ids),
@@ -948,7 +1125,7 @@ class RecommendationService:
                 recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
             recommendations = recommendations[:limit]
 
-            logger.info(
+            logger.debug(
                 "recommendation_crud_completed",
                 rejected_ids_count=len(params.rejected_ids),
                 recommendations=len(recommendations),

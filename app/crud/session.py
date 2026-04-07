@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 import structlog
 from sqlalchemy import and_, or_
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
@@ -115,6 +115,19 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     def read(self, db: Session, id: int) -> SessionModel | None:
         """Read a session by ID."""
         return db.query(self.model).filter(self.model.id == id).first()
+
+    def read_many_by_ids(self, db: Session, ids: list[int]) -> dict[int, SessionModel]:
+        """Read many sessions in a single query, keyed by session ID."""
+        if not ids:
+            return {}
+
+        rows = (
+            db.query(self.model)
+            .options(joinedload(self.model.location_rel))
+            .filter(self.model.id.in_(ids))
+            .all()
+        )
+        return {row.id: row for row in rows}
 
     def read_by_uri(self, db: Session, uri: str) -> SessionModel | None:
         """Read a session by URI."""

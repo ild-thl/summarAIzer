@@ -545,7 +545,7 @@ async def recommend_sessions(
             plan_candidate_multiplier=recommend_req.plan_candidate_multiplier,
         )
 
-        logger.info(
+        logger.debug(
             "recommendations_completed",
             query_provided=bool(effective_query),
             query_refined=query_refined,
