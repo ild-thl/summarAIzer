@@ -23,6 +23,10 @@ logging.basicConfig(
     format="%(name)s - %(levelname)s - %(message)s",
 )
 
+# Suppress verbose transport logs from HTTP client internals in production.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 # Configure structlog
 structlog.configure(
     processors=[
