@@ -2,14 +2,16 @@
 
 from typing import Any
 
-import numpy as np
-
 
 class RecommendationDiversityOptimizer:
-    """Greedy MMR-style optimizer focusing on metadata diversity for predictable coverage."""
+    """Greedy MMR-style optimizer using metadata-only diversity with candidate pre-pruning.
 
-    METADATA_DIVERSITY_RATIO = 1.0
-    EMBEDDING_DIVERSITY_RATIO = 0.0
+    Caps the candidate pool at MAX_CANDIDATES before the greedy loop to bound
+    worst-case complexity at O(MAX_CANDIDATES * limit).
+    """
+
+    # Maximum candidates to consider before the greedy loop.
+    MAX_CANDIDATES = 100
 
     @staticmethod
     def _normalize_metadata_values(values: Any) -> set[str]:
@@ -21,18 +23,6 @@ class RecommendationDiversityOptimizer:
         if isinstance(values, list | tuple | set):
             return {str(value) for value in values if value is not None and str(value)}
         return set()
-
-    @staticmethod
-    def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-        v1 = np.asarray(vec1, dtype=np.float32).flatten()
-        v2 = np.asarray(vec2, dtype=np.float32).flatten()
-        dot_product = float(np.dot(v1, v2))
-        norm_v1 = float(np.linalg.norm(v1))
-        norm_v2 = float(np.linalg.norm(v2))
-        if norm_v1 == 0 or norm_v2 == 0:
-            return 0.0
-        cosine_sim = dot_product / (norm_v1 * norm_v2)
-        return float(max(0.0, (cosine_sim + 1.0) / 2.0))
 
     @staticmethod
     def _extract_metadata_sets(session: Any) -> dict[str, set[str]]:
@@ -109,19 +99,6 @@ class RecommendationDiversityOptimizer:
         return sum(attribute_bonuses) / len(attribute_bonuses) if attribute_bonuses else 0.0
 
     @staticmethod
-    def _compute_embedding_diversity(
-        candidate_embedding: list[float] | None,
-        selected_embeddings: list[list[float]],
-        cosine_fn,
-    ) -> float:
-        """1 - max similarity to already-selected embeddings."""
-        if candidate_embedding is None or not selected_embeddings:
-            return 1.0
-
-        max_sim = max(cosine_fn(candidate_embedding, sel_emb) for sel_emb in selected_embeddings)
-        return 1.0 - max_sim
-
-    @staticmethod
     def _update_coverage(
         selected_coverage: dict[str, dict[str, int]],
         session_metadata: dict[str, set[str]],
@@ -154,18 +131,20 @@ class RecommendationDiversityOptimizer:
         candidates: list[tuple[Any, dict[str, Any]]],
         limit: int,
         diversity_weight: float,
-        embeddings_map: dict[str, list[float]] | None = None,
         session_format: list[str] | None = None,
         tags: list[str] | None = None,
         language: list[str] | None = None,
     ) -> list[tuple[Any, dict[str, Any]]]:
-        """Re-rank candidates using greedy diversity-aware selection.
+        """Re-rank candidates using greedy metadata-diversity-aware selection.
+
+        The candidate pool is capped at MAX_CANDIDATES (taken from the head of the
+        pre-sorted list) before the greedy loop, bounding complexity at
+        O(MAX_CANDIDATES * limit).
 
         Args:
             candidates: List of (session, scores_dict) tuples, pre-sorted by overall_score.
             limit: Maximum results to return.
             diversity_weight: 0.0 = pure relevance, 1.0 = pure diversity.
-            embeddings_map: Map of "session_{id}" -> embedding vector.
             session_format: Active session_format filter values (for targeted coverage).
             tags: Active tag filter values (for targeted coverage).
             language: Active language filter values (for targeted coverage).
@@ -182,44 +161,30 @@ class RecommendationDiversityOptimizer:
                 result.append((session, scores_copy))
             return result
 
-        embeddings_map = embeddings_map or {}
+        # Cap the pool to bound O(n * limit) cost
+        pool = candidates[: self.MAX_CANDIDATES]
         active_filter_values = self._build_active_filter_values(session_format, tags, language)
 
-        remaining = list(range(len(candidates)))
+        # Pre-compute metadata once per candidate to avoid repeated extraction in the inner loop
+        metadata_cache = {i: self._extract_metadata_sets(pool[i][0]) for i in range(len(pool))}
+
+        remaining = list(range(len(pool)))
         selected_indices: list[int] = []
-        selected_embeddings: list[list[float]] = []
         selected_coverage: dict[str, dict[str, int]] = {}
         diversity_scores: dict[int, float] = {}
 
-        for _ in range(min(limit, len(candidates))):
+        for _ in range(min(limit, len(pool))):
             best_idx = -1
             best_combined = -1.0
             best_diversity_bonus = 0.0
 
             for idx in remaining:
-                session, scores = candidates[idx]
-
-                # Use overall_score directly (already in [0, 1])
+                _, scores = pool[idx]
                 relevance = scores["overall_score"]
 
-                # Metadata diversity
-                session_metadata = self._extract_metadata_sets(session)
-                metadata_bonus = self._compute_metadata_coverage_bonus(
-                    session_metadata, selected_coverage, active_filter_values
+                diversity_bonus = self._compute_metadata_coverage_bonus(
+                    metadata_cache[idx], selected_coverage, active_filter_values
                 )
-
-                # Embedding diversity
-                emb_key = f"session_{session.id}"
-                candidate_embedding = embeddings_map.get(emb_key)
-                embedding_bonus = self._compute_embedding_diversity(
-                    candidate_embedding, selected_embeddings, self._cosine_similarity
-                )
-
-                diversity_bonus = (
-                    self.METADATA_DIVERSITY_RATIO * metadata_bonus
-                    + self.EMBEDDING_DIVERSITY_RATIO * embedding_bonus
-                )
-
                 combined = (1.0 - diversity_weight) * relevance + diversity_weight * diversity_bonus
 
                 if combined > best_combined:
@@ -230,23 +195,15 @@ class RecommendationDiversityOptimizer:
             if best_idx < 0:
                 break
 
-            # Select this candidate
             selected_indices.append(best_idx)
             remaining.remove(best_idx)
             diversity_scores[best_idx] = round(best_diversity_bonus, 3)
 
-            session, _ = candidates[best_idx]
-            session_metadata = self._extract_metadata_sets(session)
-            self._update_coverage(selected_coverage, session_metadata)
-
-            emb_key = f"session_{session.id}"
-            candidate_embedding = embeddings_map.get(emb_key)
-            if candidate_embedding is not None:
-                selected_embeddings.append(candidate_embedding)
+            self._update_coverage(selected_coverage, metadata_cache[best_idx])
 
         result: list[tuple[Any, dict[str, Any]]] = []
         for idx in selected_indices:
-            session, scores = candidates[idx]
+            session, scores = pool[idx]
             scores_copy = dict(scores)
             scores_copy["diversity_score"] = diversity_scores.get(idx)
             result.append((session, scores_copy))

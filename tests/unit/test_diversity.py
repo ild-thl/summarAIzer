@@ -156,48 +156,38 @@ class TestLanguageDiversity:
 
 
 class TestEmbeddingDiversity:
-    """Embedding diversity is disabled; diversity now relies purely on metadata."""
+    """Semantic similarity is no longer used; diversity is metadata-only."""
 
-    def test_embedding_diversity_disabled_metadata_only(self):
-        """With EMBEDDING_DIVERSITY_RATIO=0, selection ignores embedding similarity."""
+    def test_metadata_only_fallback_to_relevance_for_identical_tags(self):
+        """When all candidates share the same tags, greedy selection falls back to relevance order."""
         optimizer = RecommendationDiversityOptimizer()
-        # Sessions with identical tags; selection based on relevance + metadata coverage (empty here)
         candidates = [
             (_make_session(1, tags=["ai"]), _make_scores(0.90)),
             (_make_session(2, tags=["ai"]), _make_scores(0.88)),
             (_make_session(3, tags=["ai"]), _make_scores(0.85)),
         ]
-        embeddings = {
-            "session_1": [1.0, 0.0, 0.0],
-            "session_2": [0.99, 0.01, 0.0],  # Near-identical to session 1
-            "session_3": [0.0, 1.0, 0.0],  # Orthogonal to session 1
-        }
         result = optimizer.diversify_results(
             candidates,
             limit=2,
             diversity_weight=0.6,
-            embeddings_map=embeddings,
         )
         selected_ids = [s.id for s, _ in result]
-        # With metadata-only diversity and all sessions having same tags,
-        # selection falls back to relevance ranking (0.90, 0.88)
+        # All same metadata → coverage bonus equalises; relevance breaks the tie
         assert selected_ids == [1, 2]
 
-    def test_no_embeddings_gracefully_handled(self):
-        """When no embeddings available, embedding diversity defaults to 1.0 for all (ignored now)."""
+    def test_no_embeddings_kwarg_accepted(self):
+        """diversify_results no longer accepts embeddings_map; call without it works fine."""
         optimizer = RecommendationDiversityOptimizer()
         candidates = [
             (_make_session(1, tags=["ai"]), _make_scores(0.9)),
             (_make_session(2, tags=["bio"]), _make_scores(0.8)),
         ]
-        result = optimizer.diversify_results(
-            candidates, limit=2, diversity_weight=0.3, embeddings_map=None
-        )
+        result = optimizer.diversify_results(candidates, limit=2, diversity_weight=0.3)
         assert len(result) == 2
 
 
 class TestCombinedDiversity:
-    """Test metadata + embedding diversity interaction."""
+    """Test metadata diversity across multiple attributes."""
 
     def test_combined_diversity_promotes_variety(self):
         optimizer = RecommendationDiversityOptimizer()
@@ -215,16 +205,10 @@ class TestCombinedDiversity:
                 _make_scores(0.75),
             ),
         ]
-        embeddings = {
-            "session_1": [1.0, 0.0],
-            "session_2": [0.98, 0.02],
-            "session_3": [0.0, 1.0],
-        }
         result = optimizer.diversify_results(
             candidates,
             limit=2,
             diversity_weight=0.6,
-            embeddings_map=embeddings,
             tags=["ai", "bio"],
             session_format=["workshop", "input"],
             language=["en", "de"],
@@ -278,7 +262,7 @@ class TestEdgeCases:
         assert len(result) == 2
 
     def test_all_identical_metadata(self):
-        """All candidates have same metadata — relies on embedding diversity only."""
+        """All candidates have same metadata — selection falls back to relevance order."""
         optimizer = RecommendationDiversityOptimizer()
         candidates = [
             (

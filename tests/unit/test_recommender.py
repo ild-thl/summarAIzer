@@ -110,6 +110,52 @@ class TestQueryEmbeddingDetermination:
         assert mock_embedding_service.embed_query.await_count == 2
 
 
+class TestSoftFilterActivation:
+    """Test effective soft-filter activation behavior."""
+
+    @pytest.fixture
+    def service(self):
+        embedding_service = AsyncMock(spec=EmbeddingService)
+        return RecommendationService(embedding_service)
+
+    def test_soft_filters_without_values_are_ignored(self, service):
+        params = RecommendationQueryParams(
+            query="ml",
+            accepted_ids=[],
+            rejected_ids=[],
+            soft_filters=["session_format", "tags", "duration", "time_windows"],
+            session_format=None,
+            tags=[],
+            duration_min=None,
+            duration_max=None,
+            time_windows=[],
+        )
+
+        assert service._get_effective_soft_filters(params) == set()
+
+    def test_soft_filters_keep_only_configured_values(self, service):
+        params = RecommendationQueryParams(
+            query="ml",
+            accepted_ids=[],
+            rejected_ids=[],
+            soft_filters=["session_format", "tags", "duration", "language", "location"],
+            session_format=["workshop"],
+            tags=None,
+            duration_min=30,
+            duration_max=None,
+            language=["en"],
+            location_cities=[],
+            location_names=["Main Hall"],
+        )
+
+        assert service._get_effective_soft_filters(params) == {
+            "session_format",
+            "duration",
+            "language",
+            "location",
+        }
+
+
 class TestRecommendationScoring:
     """Test _compute_recommendation_scores method."""
 
