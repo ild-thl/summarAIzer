@@ -17,14 +17,18 @@ logger = structlog.get_logger()
 
 class TagsStep(PromptTemplate):
     """
-    Generates 10-15 topic tags for session categorization.
+    Generates topic tags for session categorization with configurable limits.
 
     Independent step (no dependencies) - can run in parallel with other steps
     Input: Session metadata + transcription (optional)
-    Output: JSON array of tag strings
+    Output: JSON array of tag strings (enforced within configured limits)
 
     Also updates session.tags with generated tags for easy querying.
     """
+
+    # Configuration with defaults - can be overridden
+    min_tags: int = 2
+    max_tags: int = 5
 
     @property
     def identifier(self) -> str:
@@ -37,7 +41,7 @@ class TagsStep(PromptTemplate):
         return []
 
     def get_model_config(self) -> ChatModelConfig:
-        """Tags are shorter outputs - use faster model with smaller max_tokens."""
+        """Tags are shorter outputs - use configured model settings."""
         return ChatModelConfig(
             model="meta-llama-3.1-8b-instruct",
             temperature=0.5,  # Lower for consistent tagging
@@ -60,9 +64,9 @@ class TagsStep(PromptTemplate):
 
         return [
             SystemMessage(
-                content="""Du bist Expert:in für Kategorisierung technischer Inhalte mit relevanten Tags.
+                content=f"""Du bist Expert:in für Kategorisierung technischer Inhalte mit relevanten Tags.
 
-Deine Aufgabe ist es, 10-15 Tags für eine Veranstaltung zu generieren. Tags sollten:
+Deine Aufgabe ist es, {self.min_tags}-{self.max_tags} Tags für eine Veranstaltung zu generieren. Tags sollten:
 - Kleinbuchstaben und mit Bindestrichen versehen (z.B. "maschinelles-lernen", "webentwicklung")
 - Technologien, Themen, Use Cases, Skilllevels abdecken
 - Spezifisch und aussagekräftig für die Kategorisierung sein
@@ -84,7 +88,7 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
         ]
 
     def process_response(self, response: Any) -> dict[str, Any]:
-        """Process LLM response into tags output."""
+        """Process LLM response into tags output, enforcing tag limits."""
         tags_json = response.content if hasattr(response, "content") else str(response)
 
         # Parse JSON response
@@ -95,6 +99,22 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
         except json.JSONDecodeError:
             tags = [tags_json]
 
+        # Enforce tag limits
+        if len(tags) > self.max_tags:
+            logger.warning(
+                "tag_limit_exceeded",
+                received_count=len(tags),
+                max_tags=self.max_tags,
+            )
+            tags = tags[: self.max_tags]
+
+        if len(tags) < self.min_tags:
+            logger.warning(
+                "tag_count_below_minimum",
+                received_count=len(tags),
+                min_tags=self.min_tags,
+            )
+
         return {
             "content": json.dumps(tags),
             "content_type": "json_array",
@@ -102,6 +122,8 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
                 "model": self.get_model_config().model,
                 "type": "generated_tags",
                 "count": len(tags),
+                "min_tags": self.min_tags,
+                "max_tags": self.max_tags,
             },
         }
 
@@ -139,18 +161,15 @@ Generiere nun relevante Tags für diese Veranstaltung:"""
                 # Fetch the session and update its tags
                 db_session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
                 if db_session:
-                    # Update tags, preserving existing tags and adding generated ones
-                    existing_tags = db_session.tags or []
-                    # Combine and deduplicate while preserving order
-                    combined_tags = list(dict.fromkeys(existing_tags + tags_list))
-                    db_session.tags = combined_tags
+                    # Override tags with generated ones
+                    db_session.tags = tags_list
                     db.add(db_session)
                     db.commit()
                     logger.info(
                         "session_tags_updated_from_workflow",
                         session_id=session_id,
                         execution_id=execution_id,
-                        tag_count=len(combined_tags),
+                        tag_count=len(tags_list),
                     )
                 else:
                     logger.warning(
