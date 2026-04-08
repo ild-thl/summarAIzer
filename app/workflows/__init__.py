@@ -4,7 +4,7 @@ Architecture:
 - BaseWorkflow: Abstract base class for LangGraph workflow definitions (in flows/)
 - ExecutionContext: State management and registries for steps/workflows
 - Steps: Individual step implementations (auto-registered)
-  - PromptTemplate: Base class for prompt-based steps
+  - LLMStep: Base class for prompt-based steps
   - node_factory.py: Factory for creating LangGraph nodes from steps
 - Flows: Workflow implementations (auto-registered)
   - BaseWorkflow: Abstract workflow base class

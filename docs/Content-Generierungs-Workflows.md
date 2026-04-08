@@ -183,12 +183,12 @@ Steps haben ihre Anforderungen in `context_requirements` deklariert. Das Framewo
 
 **Beispiel:**
 ```python
-class SummaryStep(PromptTemplate):
+class SummaryStep(LLMStep):
     @property
     def context_requirements(self) -> list[str]:
         return ["transcription"]  # ← Validiert zur Scheduling-Time wenn als erster Step
 
-class ImageStep(PromptTemplate):
+class ImageStep(LLMStep):
     @property
     def context_requirements(self) -> list[str]:
         return ["summary"]  # ← Validiert zur Runtime (nach SummaryStep)
@@ -199,12 +199,12 @@ class ImageStep(PromptTemplate):
 
 | Identifier | Klasse | Basis-Klasse | Beschreibung |
 |------------|--------|-------------|-------------|
-| `summary` | `SummaryStep` | `PromptTemplate` | Format-aware Markdown-Zusammenfassung (Vortrag / Diskussion / Workshop) |
-| `key_takeaways` | `KeyTakeawaysStep` | `PromptTemplate` | 6–8 umsetzbare Key Takeaways als JSON-Array |
-| `tags` | `TagsStep` | `PromptTemplate` | 2–5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
+| `summary` | `SummaryStep` | `LLMStep` | Format-aware Markdown-Zusammenfassung (Vortrag / Diskussion / Workshop) |
+| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | 6–8 umsetzbare Key Takeaways als JSON-Array |
+| `tags` | `TagsStep` | `LLMStep` | 2–5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
 | `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` auf 150–250 Zeichen für bessere Embeddings |
-| `mermaid` | `MermaidStep` | `PromptTemplate` | Mermaid-Mindmap-Diagramm |
-| `image` | `ImageStep` | `PromptTemplate` | KI-generiertes Titelbild, Upload zu S3 |
+| `mermaid` | `MermaidStep` | `LLMStep` | Mermaid-Mindmap-Diagramm |
+| `image` | `ImageStep` | `LLMStep` | KI-generiertes Titelbild, Upload zu S3 |
 
 ---
 
@@ -228,12 +228,12 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.prompt_template import LLMStep
 
 logger = structlog.get_logger()
 
 
-class H5PQuizStep(PromptTemplate):
+class H5PQuizStep(LLMStep):
     """
     Generates H5P-compatible quiz questions from session content.
 
@@ -432,7 +432,7 @@ POST /api/v2/sessions/42/workflow/quiz_workflow
 ## Checkliste für Beiträge
 
 - [ ] Step-Klasse in `app/workflows/steps/<name>_step.py` erstellen
-- [ ] Von `PromptTemplate` erben (für LLM-Prompts) oder direkt von `WorkflowStep` (für custom Logik)
+- [ ] Von `LLMStep` erben (für LLM-Prompts) oder direkt von `WorkflowStep` (für custom Logik)
 - [ ] `identifier`, `context_requirements`, `get_model_config()`, `get_messages()`, `process_response()` implementieren
   - **`context_requirements`**: Alle Input-Keys die dieser Step zum funktionieren braucht
     - Typisch: `["transcription"]` wenn Transkript genutzt wird

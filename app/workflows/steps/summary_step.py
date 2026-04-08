@@ -9,7 +9,7 @@ from app.database.models import Session as SessionModel
 from app.database.models import SessionFormat
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
@@ -50,7 +50,7 @@ def _get_format_config(session_format) -> tuple[str, list[str]]:
     return _FORMAT_SECTIONS["talk"]  # INPUT, LIGHTNING_TALK, None, unknown
 
 
-class SummaryStep(PromptTemplate):
+class SummaryStep(LLMStep):
     """
     Generates a comprehensive markdown summary of a session.
 

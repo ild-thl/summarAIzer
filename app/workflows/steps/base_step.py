@@ -48,12 +48,12 @@ class WorkflowStep(ABC):
         - 'key_takeaways': Output from KeyTakeawaysStep (optional enhancement for other steps)
 
         Example:
-            class SummaryStep(PromptTemplate):
+            class SummaryStep(LLMStep):
                 @property
                 def context_requirements(self) -> list[str]:
                     return ['transcription']  # Needs transcription to generate summary
 
-            class ImageStep(PromptTemplate):
+            class ImageStep(LLMStep):
                 @property
                 def context_requirements(self) -> list[str]:
                     return ['summary']  # Needs summary to generate image

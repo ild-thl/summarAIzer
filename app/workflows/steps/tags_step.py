@@ -11,12 +11,12 @@ from app.database.models import GeneratedContent
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
 
-class TagsStep(PromptTemplate):
+class TagsStep(LLMStep):
     """
     Generates topic tags for session categorization with configurable limits.
 

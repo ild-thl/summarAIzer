@@ -11,12 +11,12 @@ from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.services.image_generation_service import ImageGenerationService
 from app.workflows.services.s3_image_service import S3ImageService
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
 
-class ImageStep(PromptTemplate):
+class ImageStep(LLMStep):
     """
     Combined step for generating image descriptions and images.
 

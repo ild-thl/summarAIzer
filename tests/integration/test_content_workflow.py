@@ -186,7 +186,17 @@ class TestWorkflowEndpoints:
     """Test workflow execution endpoints."""
 
     def test_trigger_workflow_without_transcription(self, client: TestClient, session_with_event):
-        """Test that workflow requires transcription."""
+        """Test that workflow can start with tags (doesn't require transcription for first stage).
+
+        After refactoring context_requirements:
+        - tags Step has NO context requirements (can run independently)
+        - key_takeaways requires "transcription"
+        - summary requires "transcription"
+
+        Since tags is a first-stage step with no context requirements,
+        the workflow can be queued (202 Accepted).
+        Later-stage steps (key_takeaways, summary) will fail at runtime without transcription.
+        """
         session_data, plain_key = session_with_event
         session_id = session_data["id"]
 
@@ -195,8 +205,11 @@ class TestWorkflowEndpoints:
             headers={"Authorization": f"Bearer {plain_key}"},
         )
 
-        assert response.status_code == 400
-        assert "transcription" in response.json()["detail"].lower()
+        # tags Step is independent and runs first, so workflow can be queued
+        assert response.status_code == 202
+        data = response.json()
+        assert data["workflow_type"] == "talk_workflow"
+        assert data["status"] == "queued"
 
     def test_trigger_workflow_with_transcription(self, client: TestClient, session_with_event):
         """Test triggering workflow with transcription present."""

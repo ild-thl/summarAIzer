@@ -3,8 +3,8 @@
 from app.workflows.steps.base_step import WorkflowStep
 from app.workflows.steps.image_step import ImageStep
 from app.workflows.steps.key_takeaways_step import KeyTakeawaysStep
+from app.workflows.steps.llm_step import LLMStep
 from app.workflows.steps.mermaid_step import MermaidStep
-from app.workflows.steps.prompt_template import PromptTemplate
 from app.workflows.steps.short_description_step import ShortDescriptionStep
 from app.workflows.steps.summary_step import SummaryStep
 from app.workflows.steps.tags_step import TagsStep
@@ -14,7 +14,7 @@ from app.workflows.steps.tags_step import TagsStep
 
 __all__ = [
     "WorkflowStep",
-    "PromptTemplate",
+    "LLMStep",
     "SummaryStep",
     "KeyTakeawaysStep",
     "TagsStep",
