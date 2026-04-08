@@ -27,8 +27,8 @@ class MermaidStep(PromptTemplate):
         return "mermaid"
 
     @property
-    def dependencies(self) -> list[str]:
-        """Depends on summary for context."""
+    def context_requirements(self) -> list[str]:
+        """Requires 'summary' key in context for diagram generation."""
         return ["summary"]
 
     def get_model_config(self) -> ChatModelConfig:

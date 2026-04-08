@@ -14,7 +14,7 @@ class MockStep(WorkflowStep):
     """Mock step for testing."""
 
     _identifier: str = "mock_step"
-    _dependencies: ClassVar[list[str]] = []
+    _context_requirements: ClassVar[list[str]] = []
     _generate_result: ClassVar[dict[str, Any]] = {}
 
     @property
@@ -22,8 +22,8 @@ class MockStep(WorkflowStep):
         return self._identifier
 
     @property
-    def dependencies(self) -> list[str]:
-        return self._dependencies
+    def context_requirements(self) -> list[str]:
+        return self._context_requirements
 
     async def _generate(self, session_id: int, _, context: dict[str, Any]) -> dict[str, Any]:
         """Return predefined result or raise error if configured."""
@@ -34,7 +34,7 @@ class MockStep(WorkflowStep):
 
 def create_mock_step(
     identifier: str,
-    dependencies: list[str] | None = None,
+    context_requirements: list[str] | None = None,
     generate_result: dict[str, Any] | None = None,
 ) -> MockStep:
     """
@@ -42,7 +42,7 @@ def create_mock_step(
 
     Args:
         identifier: Step identifier
-        dependencies: List of dependencies
+        context_requirements: List of required context keys this step needs
         generate_result: Dict with "content", "content_type", "meta_info"
 
     Returns:
@@ -50,7 +50,7 @@ def create_mock_step(
     """
     step = MockStep()
     step._identifier = identifier
-    step._dependencies = dependencies or []
+    step._context_requirements = context_requirements or []
     step._generate_result = generate_result or {
         "content": f"Mock content from {identifier}",
         "content_type": "plain_text",

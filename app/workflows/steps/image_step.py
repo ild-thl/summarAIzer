@@ -39,8 +39,8 @@ class ImageStep(PromptTemplate):
         return "image"
 
     @property
-    def dependencies(self) -> list[str]:
-        """Depends on summary for content context."""
+    def context_requirements(self) -> list[str]:
+        """Requires 'summary' key in context for image generation."""
         return ["summary"]
 
     def __init__(

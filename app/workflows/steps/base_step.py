@@ -35,8 +35,29 @@ class WorkflowStep(ABC):
 
     @property
     @abstractmethod
-    def dependencies(self) -> list[str]:
-        """List of step identifiers this step depends on (e.g., ['summary'])."""
+    def context_requirements(self) -> list[str]:
+        """List of context keys this step requires for execution.
+
+        These keys are validated at two points:
+        - **Scheduling-time** (fail-fast): For first-stage steps (single step execution or workflow entry points)
+        - **Runtime** (in worker): For dependent steps that use outputs from prior steps
+
+        Common context keys:
+        - 'transcription': Session transcription text (required by most content generation steps)
+        - 'summary': Output from SummaryStep (used by ImageStep, MermaidStep)
+        - 'key_takeaways': Output from KeyTakeawaysStep (optional enhancement for other steps)
+
+        Example:
+            class SummaryStep(PromptTemplate):
+                @property
+                def context_requirements(self) -> list[str]:
+                    return ['transcription']  # Needs transcription to generate summary
+
+            class ImageStep(PromptTemplate):
+                @property
+                def context_requirements(self) -> list[str]:
+                    return ['summary']  # Needs summary to generate image
+        """
         pass
 
     def get_model_config(self) -> ChatModelConfig:
@@ -195,15 +216,21 @@ class WorkflowStep(ABC):
                 db.close()
 
     def validate_scheduling_requirements(self, _session_id: int, _db: Session) -> None:
-        """Validate that step's scheduling requirements are met.
+        """Validate step's scheduling requirements.
 
         Called BEFORE task scheduling to fail fast if prerequisites aren't available.
-        Use this for simple checks that can be done without needing full context
-        (e.g., verifying transcription exists in DB).
+        This method is called only for first-stage steps (single step execution or
+        workflow entry points). Override for custom validation beyond context_requirements.
 
-        Override in subclasses that have prerequisites that can be validated early.
-        For runtime-dependent validation (requiring prior step outputs), use
-        _validate_and_prepare_context() instead.
+        The framework automatically validates context_requirements for first-stage steps,
+        so you typically don't need to override this unless you have additional checks.
+
+        Example (custom additional validation):
+            def validate_scheduling_requirements(self, session_id: int, db: Session) -> None:
+                # Default validation of context_requirements happens in the framework
+                # Add any additional custom checks here
+                if session_id < 0:
+                    raise ValueError(f"Invalid session ID: {session_id}")
 
         Args:
             session_id: Session ID
@@ -212,7 +239,8 @@ class WorkflowStep(ABC):
         Raises:
             ValueError: If scheduling requirements are not met
         """
-        # Default: no scheduling-time validation required
+        # Default: framework validates context_requirements automatically
+        # Override in subclasses for additional custom validation
         return
 
     async def _validate_and_prepare_context(

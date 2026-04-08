@@ -24,8 +24,8 @@ async def test_create_and_queue_with_full_workflow(
 ):
     """Test create_and_queue for full workflow execution."""
     # Setup
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -77,7 +77,7 @@ async def test_create_and_queue_with_individual_step(
 ):
     """Test create_and_queue for individual step execution."""
     # Setup
-    step1 = create_mock_step(identifier="summary", dependencies=[])
+    step1 = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step1)
 
     # Register workflow class for this test
@@ -122,7 +122,7 @@ async def test_create_and_queue_with_individual_step(
 @pytest.mark.asyncio
 async def test_create_and_queue_missing_session(mock_db_session, clean_registries):
     """Test create_and_queue fails when session doesn't exist."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     # Mock database to return None (session not found)
@@ -144,7 +144,7 @@ async def test_create_and_queue_invalid_target(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test create_and_queue with invalid target."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.query = Mock(
@@ -269,8 +269,8 @@ def test_get_execution_status(mock_db_session):
 @pytest.mark.asyncio
 async def test_is_workflow_target_workflow(clean_registries):
     """Test is_workflow_target for workflow target."""
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -288,7 +288,7 @@ async def test_is_workflow_target_workflow(clean_registries):
 @pytest.mark.asyncio
 async def test_is_workflow_target_step(clean_registries):
     """Test is_workflow_target for step target."""
-    step = create_mock_step(identifier="my_step", dependencies=[])
+    step = create_mock_step(identifier="my_step", context_requirements=[])
     StepRegistry.register(step)
 
     # Check
@@ -298,7 +298,7 @@ async def test_is_workflow_target_step(clean_registries):
 @pytest.mark.asyncio
 async def test_is_workflow_target_invalid(clean_registries):
     """Test is_workflow_target for invalid target."""
-    step = create_mock_step(identifier="my_step", dependencies=[])
+    step = create_mock_step(identifier="my_step", context_requirements=[])
     StepRegistry.register(step)
 
     # Try invalid target
@@ -311,7 +311,7 @@ async def test_validate_prerequisites_success(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test validate_and_prepare succeeds with valid prerequisites."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     # Setup mock model
@@ -357,7 +357,7 @@ async def test_create_and_queue_returns_correct_structure(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that create_and_queue returns correct tuple structure."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     # Register workflow class for this test
@@ -405,7 +405,7 @@ async def test_multiple_executions_independent(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that multiple executions are independent."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()

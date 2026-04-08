@@ -37,8 +37,8 @@ class TagsStep(PromptTemplate):
         return "tags"
 
     @property
-    def dependencies(self) -> list[str]:
-        """No dependencies - can run in parallel."""
+    def context_requirements(self) -> list[str]:
+        """No required context keys - can run independently in parallel with other steps."""
         return []
 
     def get_model_config(self) -> ChatModelConfig:

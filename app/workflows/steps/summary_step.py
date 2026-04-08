@@ -4,7 +4,6 @@ from typing import Any
 
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from sqlalchemy.orm import Session
 
 from app.database.models import Session as SessionModel
 from app.database.models import SessionFormat
@@ -69,9 +68,12 @@ class SummaryStep(PromptTemplate):
         return "summary"
 
     @property
-    def dependencies(self) -> list[str]:
-        """No dependencies - runs independently. Uses key_takeaways if available in context."""
-        return []
+    def context_requirements(self) -> list[str]:
+        """Requires transcription to generate summary.
+
+        Optionally uses 'key_takeaways' if available in context for more complete coverage.
+        """
+        return ["transcription"]
 
     def get_model_config(self) -> ChatModelConfig:
         """Summary needs good context - use model with larger max_tokens."""
@@ -144,42 +146,6 @@ Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
             SystemMessage(content=sys_message),
             HumanMessage(content=human_message),
         ]
-
-    def validate_scheduling_requirements(self, session_id: int, db: Session) -> None:
-        """
-        Validate that transcription exists before scheduling summary task.
-
-        Called at workflow scheduling time to fail fast if transcription hasn't
-        been uploaded yet (rather than waiting for task execution).
-
-        Args:
-            session_id: Session ID
-            db: Database session
-
-        Raises:
-            ValueError: If transcription is not available
-        """
-        # Import here to avoid circular imports
-        from app.crud import generated_content as content_crud
-
-        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
-        if not tx_content:
-            logger.error(
-                "summary_scheduling_failed_no_transcription",
-                session_id=session_id,
-                reason="Summary step requires transcription to generate comprehensive summaries",
-            )
-            raise ValueError(
-                f"Cannot schedule summary generation for session {session_id}: "
-                "Transcription is required. "
-                "Please upload transcription content before generating summary."
-            )
-
-        logger.info(
-            "summary_scheduling_requirements_validated",
-            session_id=session_id,
-            has_transcription=True,
-        )
 
     def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response into summary output."""

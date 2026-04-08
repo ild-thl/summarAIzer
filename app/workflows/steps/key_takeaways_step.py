@@ -5,7 +5,6 @@ from typing import Any
 
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from sqlalchemy.orm import Session
 
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
@@ -19,8 +18,8 @@ class KeyTakeawaysStep(PromptTemplate):
     """
     Extracts 6-8 actionable key takeaways from the session.
 
-    Depends on: SummaryStep (uses summary for context)
-    Input: Session metadata + transcription + summary
+    Depends on: Session transcription
+    Input: Session metadata + transcription
     Output: JSON array of actionable takeaway strings
     """
 
@@ -30,45 +29,11 @@ class KeyTakeawaysStep(PromptTemplate):
         return "key_takeaways"
 
     @property
-    def dependencies(self) -> list[str]:
-        """No dependencies - runs first to identify key points before summary."""
-        return []
+    def context_requirements(self) -> list[str]:
+        """Requires transcription to extract key takeaways."""
+        return ["transcription"]
 
-    def validate_scheduling_requirements(self, session_id: int, db: Session) -> None:
-        """
-        Validate that transcription exists before scheduling key takeaways task.
-
-        Called at workflow scheduling time to fail fast if transcription hasn't
-        been uploaded yet (rather than waiting for task execution).
-
-        Args:
-            session_id: Session ID
-            db: Database session
-
-        Raises:
-            ValueError: If transcription is not available
-        """
-        # Import here to avoid circular imports
-        from app.crud import generated_content as content_crud
-
-        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
-        if not tx_content:
-            logger.error(
-                "key_takeaways_scheduling_failed_no_transcription",
-                session_id=session_id,
-                reason="Key Takeaways step requires transcription to extract points",
-            )
-            raise ValueError(
-                f"Cannot schedule key takeaways generation for session {session_id}: "
-                "Transcription is required. "
-                "Please upload transcription content before generating key takeaways."
-            )
-
-        logger.info(
-            "key_takeaways_scheduling_requirements_validated",
-            session_id=session_id,
-            has_transcription=True,
-        )
+    def get_model_config(self) -> ChatModelConfig:
         """Key takeaways need nuanced understanding - use well-rounded model."""
         return ChatModelConfig(
             model="gemma-3-27b-it",

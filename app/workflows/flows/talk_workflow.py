@@ -1,5 +1,7 @@
 """TalkWorkflow - Main workflow for talk/session content generation using LangGraph."""
 
+from typing import Annotated
+
 import structlog
 from langgraph.graph import END, START, StateGraph
 
@@ -7,6 +9,23 @@ from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.steps.node_factory import create_step_node
 
 logger = structlog.get_logger()
+
+
+def merge_dicts(left: dict, right: dict) -> dict:
+    """
+    Reducer function to merge state updates from parallel steps.
+
+    When multiple steps execute in parallel, LangGraph calls this reducer
+    to merge their individual updates into the combined state.
+
+    Args:
+        left: Existing state
+        right: Update from a step
+
+    Returns:
+        Merged state with right's values updated into left
+    """
+    return {**left, **right}
 
 
 class TalkWorkflow(BaseWorkflow):
@@ -45,8 +64,9 @@ class TalkWorkflow(BaseWorkflow):
         """
         logger.info("building_talk_workflow_graph")
 
-        # Create the state graph
-        builder = StateGraph(dict)
+        # Create the state graph with Annotated reducer for parallel step merging
+        # The merge_dicts reducer allows multiple parallel steps to update state simultaneously
+        builder = StateGraph(Annotated[dict, merge_dicts])
 
         # Create nodes from steps using node factory
         # This provides consistent logging and error handling

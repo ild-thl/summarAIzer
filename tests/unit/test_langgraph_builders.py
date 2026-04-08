@@ -36,7 +36,7 @@ class SampleWorkflow(BaseWorkflow):
 async def test_workflow_graph_cache_creates_valid_graph(clean_registries):
     """Test that WorkflowRegistry creates valid compiled graphs from workflows."""
     # Register test step
-    step1 = create_mock_step(identifier="step1", dependencies=[])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step1)
 
     # Build graph via cache
@@ -51,7 +51,7 @@ async def test_workflow_graph_cache_creates_valid_graph(clean_registries):
 @pytest.mark.asyncio
 async def test_workflow_graph_cache_stores_graphs(clean_registries):
     """Test that WorkflowRegistry properly caches compiled graphs."""
-    step = create_mock_step(identifier="step1", dependencies=[])
+    step = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step)
 
     WorkflowRegistry.clear()
@@ -67,7 +67,7 @@ async def test_workflow_graph_cache_stores_graphs(clean_registries):
 
 def test_workflow_graph_cache_returns_same_after_clear(clean_registries):
     """Test that cache rebuilds after clear."""
-    step = create_mock_step(identifier="step1", dependencies=[])
+    step = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step)
 
     WorkflowRegistry.clear()
@@ -90,7 +90,7 @@ def test_workflow_graph_cache_clear():
 
 def test_workflow_graph_cache_key_uniqueness(clean_registries):
     """Test that different workflow classes use different cache keys."""
-    step = create_mock_step(identifier="step1", dependencies=[])
+    step = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step)
 
     # Create two different workflow classes
@@ -139,9 +139,9 @@ def test_workflow_graph_cache_key_uniqueness(clean_registries):
 async def test_workflow_graph_parallel_execution(clean_registries):
     """Test that independent steps can execute in parallel."""
     # Create independent steps (no dependencies)
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=[])
-    step3 = create_mock_step(identifier="step3", dependencies=[])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=[])
+    step3 = create_mock_step(identifier="step3", context_requirements=[])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -187,10 +187,10 @@ async def test_build_workflow_graph_with_diamond_dependency(clean_registries):
     #    \    /
     #     step4
 
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
-    step3 = create_mock_step(identifier="step3", dependencies=["step1"])
-    step4 = create_mock_step(identifier="step4", dependencies=["step2", "step3"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
+    step3 = create_mock_step(identifier="step3", context_requirements=["step1"])
+    step4 = create_mock_step(identifier="step4", context_requirements=["step2", "step3"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -233,7 +233,7 @@ async def test_build_workflow_graph_with_diamond_dependency(clean_registries):
 @pytest.mark.asyncio
 async def test_workflow_graph_state_passes_through_steps(clean_registries):
     """Test that GenerationState properly flows through graph execution."""
-    step1 = create_mock_step(identifier="step1", dependencies=[])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step1)
 
     WorkflowRegistry.get_or_build_graph(SampleWorkflow)
@@ -254,7 +254,7 @@ async def test_workflow_graph_state_passes_through_steps(clean_registries):
 @pytest.mark.asyncio
 async def test_build_workflow_graph_handles_nonexistent_step(clean_registries):
     """Test that graph builder handles missing step references."""
-    step1 = create_mock_step(identifier="step1", dependencies=[])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
     StepRegistry.register(step1)
 
     class MissingStepWorkflow(BaseWorkflow):
@@ -293,10 +293,10 @@ async def test_workflow_graph_with_complex_dependencies(clean_registries):
     # step1 -> step2 -> step4
     # step3 ---------> step4
 
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
-    step3 = create_mock_step(identifier="step3", dependencies=[])
-    step4 = create_mock_step(identifier="step4", dependencies=["step2", "step3"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
+    step3 = create_mock_step(identifier="step3", context_requirements=[])
+    step4 = create_mock_step(identifier="step4", context_requirements=["step2", "step3"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)

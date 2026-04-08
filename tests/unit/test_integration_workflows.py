@@ -29,7 +29,7 @@ async def test_full_workflow_execution_talk_workflow(
     # Register steps
     step1 = create_mock_step(
         identifier="summary",
-        dependencies=[],
+        context_requirements=[],
         generate_result={
             "content": "Summary content",
             "content_type": "text",
@@ -38,7 +38,7 @@ async def test_full_workflow_execution_talk_workflow(
     )
     step2 = create_mock_step(
         identifier="key_takeaways",
-        dependencies=["summary"],
+        context_requirements=["summary"],
         generate_result={
             "content": "Key takeaways",
             "content_type": "text",
@@ -47,7 +47,7 @@ async def test_full_workflow_execution_talk_workflow(
     )
     step3 = create_mock_step(
         identifier="tags",
-        dependencies=["key_takeaways"],
+        context_requirements=["key_takeaways"],
         generate_result={"content": "Tags", "content_type": "text", "meta_info": {}},
     )
 
@@ -96,7 +96,7 @@ async def test_individual_step_execution(mock_db_session, mock_session_model, cl
     # Register only summary step
     step = create_mock_step(
         identifier="summary",
-        dependencies=[],
+        context_requirements=[],
         generate_result={"content": "Summary", "content_type": "text", "meta_info": {}},
     )
     StepRegistry.register(step)
@@ -137,12 +137,12 @@ async def test_context_chaining_through_steps(clean_registries):
     # Create steps where each adds to context
     step1 = create_mock_step(
         identifier="step1",
-        dependencies=[],
+        context_requirements=[],
         generate_result={"content": "First", "content_type": "text", "meta_info": {}},
     )
     step2 = create_mock_step(
         identifier="step2",
-        dependencies=["step1"],
+        context_requirements=["step1"],
         generate_result={"content": "Second", "content_type": "text", "meta_info": {}},
     )
 
@@ -188,7 +188,7 @@ async def test_context_chaining_through_steps(clean_registries):
 async def test_error_in_step_propagates(clean_registries):
     """Test that errors in steps are properly captured."""
     # Create step that fails
-    step = create_mock_step(identifier="failing_step", dependencies=[])
+    step = create_mock_step(identifier="failing_step", context_requirements=[])
     step._generate = AsyncMock(side_effect=RuntimeError("Step failed"))
 
     StepRegistry.register(step)
@@ -206,9 +206,9 @@ async def test_error_in_step_propagates(clean_registries):
 async def test_parallel_independent_steps(clean_registries):
     """Test workflow with parallel independent steps."""
     # Create independent steps
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=[])
-    step3 = create_mock_step(identifier="step3", dependencies=[])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=[])
+    step3 = create_mock_step(identifier="step3", context_requirements=[])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -256,7 +256,7 @@ async def test_long_dependency_chain(clean_registries):
     for i in range(1, 6):
         step_id = f"step{i}"
         deps = [f"step{i-1}"] if i > 1 else []
-        step = create_mock_step(identifier=step_id, dependencies=deps)
+        step = create_mock_step(identifier=step_id, context_requirements=deps)
         StepRegistry.register(step)
         steps.append(step)
 
@@ -357,8 +357,8 @@ async def test_task_receives_correct_step_ids(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that task receives correct step IDs for execution."""
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -391,7 +391,7 @@ async def test_step_persistence_in_execution(mock_db_session, clean_registries):
 
     step = create_mock_step(
         identifier="summary",
-        dependencies=[],
+        context_requirements=[],
         generate_result={
             "content": "Generated summary",
             "content_type": "plain_text",
@@ -427,7 +427,7 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
     # Register only step2, not step1 which it depends on
     step2 = create_mock_step(
         identifier="step2",
-        dependencies=["step1"],  # Depends on step1
+        context_requirements=["step1"],  # Depends on step1
     )
     StepRegistry.register(step2)
 
@@ -461,7 +461,7 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
 @pytest.mark.asyncio
 async def test_multiple_sessions_independent_execution(mock_db_session, clean_registries):
     """Test that executions for different sessions are independent."""
-    step = create_mock_step(identifier="test_step", dependencies=[])
+    step = create_mock_step(identifier="test_step", context_requirements=[])
     StepRegistry.register(step)
 
     mock_session1 = Mock(id=1, session_content=Mock(transcription="Session 1"))

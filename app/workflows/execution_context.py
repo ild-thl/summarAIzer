@@ -9,14 +9,14 @@ logger = structlog.get_logger()
 
 class StepRegistry:
     """
-    Registry for discovering available steps and their dependencies.
+    Registry for discovering available steps and their context requirements.
 
-    Steps auto-register themselves with the registry, making them discoverable
-    and allowing the workflow to build execution plans based on step identifiers.
+    Steps auto-register themselves with the registry, making them discoverable.
+    Context requirements describe which context keys a step expects, NOT execution order.
     """
 
     _steps: ClassVar[dict[str, Any]] = {}
-    _step_dependencies: ClassVar[dict[str, int]] = {}
+    _step_context_requirements: ClassVar[dict[str, list[str]]] = {}
 
     @classmethod
     def register(cls, step_instance: Any) -> None:
@@ -28,12 +28,12 @@ class StepRegistry:
         """
         identifier = step_instance.identifier
         cls._steps[identifier] = step_instance
-        cls._step_dependencies[identifier] = step_instance.dependencies
+        cls._step_context_requirements[identifier] = step_instance.context_requirements
 
         logger.info(
             "step_registered",
             identifier=identifier,
-            dependencies=step_instance.dependencies,
+            context_requirements=step_instance.context_requirements,
         )
 
     @classmethod
@@ -55,22 +55,22 @@ class StepRegistry:
         return cls._steps[identifier]
 
     @classmethod
-    def get_dependencies(cls, identifier: str) -> list[str]:
+    def get_context_requirements(cls, identifier: str) -> list[str]:
         """
-        Get dependencies for a step.
+        Get context requirements for a step.
 
         Args:
             identifier: Step identifier
 
         Returns:
-            List of step identifiers this step depends on
+            List of context keys this step requires
 
         Raises:
             ValueError: If step not found
         """
-        if identifier not in cls._step_dependencies:
+        if identifier not in cls._step_context_requirements:
             raise ValueError(f"Step '{identifier}' not registered")
-        return cls._step_dependencies[identifier]
+        return cls._step_context_requirements[identifier]
 
     @classmethod
     def get_all_steps(cls) -> dict[str, Any]:
@@ -85,9 +85,10 @@ class StepRegistry:
     @classmethod
     def resolve_execution_order(cls, step_ids: list[str]) -> list[str]:
         """
-        Resolve execution order for a set of steps based on dependencies.
+        Resolve execution order for a set of steps based on context requirements.
 
         Uses topological sort to determine the correct execution order.
+        Steps with no context requirements or satisfied requirements run first.
 
         Args:
             step_ids: List of step identifiers to execute
@@ -103,12 +104,12 @@ class StepRegistry:
             if step_id not in cls._steps:
                 raise ValueError(f"Step '{step_id}' not registered")
 
-        # Build adjacency list for steps in this execution
+        # Build adjacency list for steps in this execution (context requirement satisfaction)
         dependencies = {}
         for step_id in step_ids:
-            deps = cls._step_dependencies[step_id]
-            # Only include dependencies that are in our execution set
-            dependencies[step_id] = [d for d in deps if d in step_ids]
+            reqs = cls._step_context_requirements[step_id]
+            # Only include requirements that are in our execution set
+            dependencies[step_id] = [d for d in reqs if d in step_ids]
 
         # Topological sort (Kahn's algorithm)
         in_degree = {step_id: len(dependencies[step_id]) for step_id in step_ids}
@@ -130,7 +131,7 @@ class StepRegistry:
 
         # Check for cycles
         if len(result) != len(step_ids):
-            raise ValueError("Circular dependencies detected in workflow")
+            raise ValueError("Circular context requirements detected in workflow")
 
         return result
 
@@ -138,7 +139,7 @@ class StepRegistry:
     def clear(cls) -> None:
         """Clear all registered steps (useful for testing)."""
         cls._steps.clear()
-        cls._step_dependencies.clear()
+        cls._step_context_requirements.clear()
 
 
 class WorkflowRegistry:

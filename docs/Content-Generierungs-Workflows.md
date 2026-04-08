@@ -128,10 +128,28 @@ Nach Abschluss eines Knotens aktualisiert LangGraph den State mit dem Rückgabew
 key_takeaways_block = context.get("key_takeaways", "")
 ```
 
-### 3. Soft Dependencies vs. harte Graphkanten
-Es gibt zwei Arten von Abhängigkeiten:
-- **Harte Graphkanten** (`builder.add_edge`): Bestimmen die Ausführungsreihenfolge im Workflow-Graph.
-- **Soft Context Dependencies** (`context.get("key_takeaways", "")`): Steps können Outputs anderer Steps *nutzen, falls vorhanden*, aber auch ohne sie laufen. Dies ermöglicht Steps als eigenständige Einheiten auszuführen.
+### 3. Context Requirements vs. Graph Orchestration
+
+Es gibt zwei konzeptuell unterschiedliche Arten von Abhängigkeiten:
+
+**Context Requirements** (Daten-Ebene):
+- Was: Die Kontext-Keys, die ein Step benötigt, um sinnvoll zu funktionieren
+- Definiert in: `context_requirements` Property eines Steps
+- Beispiel: `ImageStep` benötigt den Key `"summary"` im State
+- Universell: Gleich für diesen Step, egal in welchem Workflow er läuft
+- Verwendung: Validierung in `_validate_and_prepare_context()`, Topologisches Sortieren
+
+**Graph Edges** (Prozess-Ebene):
+- Was: Die Ausführungsreihenfolge im konkreten Workflow
+- Definiert in: `builder.add_edge()` in der `build_graph()` Methode
+- Beispiel: In `TalkWorkflow` soll `summary` NACH `key_takeaways` laufen
+- Workflow-spezifisch: Kann pro Workflow unterschiedlich sein
+- Nutzen: Erlaubt Parallelisierung, Sequenzierung und volle Orchestrierungskontrolle
+
+**Weicher Kontext via State**:
+- Steps können Outputs anderer Steps *nutzen, falls vorhanden*, via `context.get("key_takeaways", "")`
+- Dies ermöglicht Steps als eigenständige Einheiten auszuführen
+- Unterschied: `context_requirements` definiert was NOTWENDIG ist, `context.get()` definiert was OPTIONAL genutzt wird
 
 ### 4. Dual-Mode Execution
 Jeder Step kann sowohl als Teil eines **Workflows** (voller Graph mit Parallelisierung) als auch **einzeln** ausgeführt werden. Ein `SingleStepWorkflow` wird automatisch generiert, ohne dass ein neuer Workflow geschrieben werden muss:
@@ -153,9 +171,27 @@ StepRegistry.register(_summary_step)
 Der Import in `app/workflows/steps/__init__.py` genügt – keine zentrale Konfigurationslist nötig.
 
 ### 6. Scheduling-time vs. Runtime Validation
-Steps können Voraussetzungen auf zwei Ebenen prüfen:
-- `validate_scheduling_requirements()` – vor dem Queuen des Celery-Tasks (fail-fast, synchron)
-- `_validate_and_prepare_context()` – beim Ausführen des Steps im Worker (runtime)
+Steps haben ihre Anforderungen in `context_requirements` deklariert. Das Framework validiert diese automatisch:
+
+- **Scheduling-time (fail-fast)**: Für First-Stage Steps (einzeln ausgeführt oder Workflow-Einstiegspunkte)
+  - Alle `context_requirements` müssen erfüllt sein VOR Celery-Task Queuing
+  - Fehler sofort (202 → Error), bevor Worker startet
+  
+- **Runtime**: Für nachfolgende Steps (die Outputs von vorherigen Steps nutzen)
+  - Noch nicht generierte Context-Keys werden geprüft, wenn der Step startet
+  - Von anderen Steps generierte Keys sind verfügbar im State
+
+**Beispiel:**
+```python
+class SummaryStep(PromptTemplate):
+    @property
+    def context_requirements(self) -> list[str]:
+        return ["transcription"]  # ← Validiert zur Scheduling-Time wenn als erster Step
+
+class ImageStep(PromptTemplate):
+    @property
+    def context_requirements(self) -> list[str]:
+        return ["summary"]  # ← Validiert zur Runtime (nach SummaryStep)
 
 ---
 
@@ -201,7 +237,7 @@ class H5PQuizStep(PromptTemplate):
     """
     Generates H5P-compatible quiz questions from session content.
 
-    Depends on key_takeaways for focused question generation.
+    Input: Session metadata + transcription (+ optional key_takeaways)
     Output: JSON structure compatible with H5P Question Set.
     """
 
@@ -213,10 +249,10 @@ class H5PQuizStep(PromptTemplate):
         return "h5p_quiz"
 
     @property
-    def dependencies(self) -> list[str]:
-        # Läuft nach key_takeaways, um fokussiertere Fragen zu generieren.
-        # Kann auch ohne key_takeaways laufen (soft dependency via context.get).
-        return []
+    def context_requirements(self) -> list[str]:
+        # Needs transcription for quiz question generation.
+        # Framework automatically validates this at scheduling-time (if first step) or runtime.
+        return ["transcription"]
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
@@ -397,9 +433,16 @@ POST /api/v2/sessions/42/workflow/quiz_workflow
 
 - [ ] Step-Klasse in `app/workflows/steps/<name>_step.py` erstellen
 - [ ] Von `PromptTemplate` erben (für LLM-Prompts) oder direkt von `WorkflowStep` (für custom Logik)
-- [ ] `identifier`, `dependencies`, `get_model_config()`, `get_messages()`, `process_response()` implementieren
+- [ ] `identifier`, `context_requirements`, `get_model_config()`, `get_messages()`, `process_response()` implementieren
+  - **`context_requirements`**: Alle Input-Keys die dieser Step zum funktionieren braucht
+    - Typisch: `["transcription"]` wenn Transkript genutzt wird
+    - Oder: `["summary"]` wenn Output von SummaryStep genutzt wird
+    - Oder: `[]` wenn der Step vollständig unabhängig ist
+  - Framework validiert diese automatisch zur Scheduling-Time (first steps) und Runtime (dependent steps)
+  - Kein manuelles `validate_scheduling_requirements()` override nötig (nutze default)
 - [ ] Auto-Registrierung am Ende der Datei: `StepRegistry.register(...)`
 - [ ] Import in `app/workflows/steps/__init__.py` eintragen
 - [ ] Optional: Workflow in `app/workflows/flows/` anlegen und in `flows/__init__.py` registrieren
+  - Workflow definiert Graph-Edges via `builder.add_edge()` für explizite Orchestrierung
 - [ ] Tests in `tests/unit/test_workflow_steps.py` ergänzen
 - [ ] `content_types.py` um neuen Identifier dokumentieren
