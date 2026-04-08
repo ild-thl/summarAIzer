@@ -35,7 +35,7 @@ class MyWorkflow(BaseWorkflow):
         return "my_workflow"
 
     def build_graph(self):
-        builder = StateGraph(GenerationState)
+        builder = StateGraph(dict)  # Use free-form dict, no TypedDict needed
         builder.add_node("step1", create_step_node("step1"))
         builder.add_node("step2", create_step_node("step2"))
         # Add edges...
@@ -46,7 +46,6 @@ class MyWorkflow(BaseWorkflow):
 # Import base class and workflows from flows package
 # Import execution context components for public API
 from app.workflows.execution_context import (
-    GenerationState,
     StepRegistry,
     WorkflowRegistry,
     is_workflow_target,
@@ -67,7 +66,6 @@ __all__ = [
     # Steps
     "WorkflowStep",
     # Registry and execution context
-    "GenerationState",
     "StepRegistry",
     "WorkflowRegistry",
     "is_workflow_target",

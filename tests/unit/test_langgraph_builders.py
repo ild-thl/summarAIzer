@@ -1,11 +1,8 @@
 """Tests for LangGraph workflow graph caching."""
 
-from unittest.mock import Mock
-
 import pytest
 
 from app.workflows.execution_context import (
-    GenerationState,
     StepRegistry,
     WorkflowRegistry,
 )
@@ -28,7 +25,7 @@ class SampleWorkflow(BaseWorkflow):
 
         from app.workflows.steps.node_factory import create_step_node
 
-        builder = StateGraph(GenerationState)
+        builder = StateGraph(dict)
         builder.add_node("step1", create_step_node("step1"))
         builder.add_edge(START, "step1")
         builder.add_edge("step1", END)
@@ -107,7 +104,7 @@ def test_workflow_graph_cache_key_uniqueness(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_edge(START, "step1")
             builder.add_edge("step1", END)
@@ -123,7 +120,7 @@ def test_workflow_graph_cache_key_uniqueness(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_edge(START, "step1")
             builder.add_edge("step1", END)
@@ -160,7 +157,7 @@ async def test_workflow_graph_parallel_execution(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_node("step2", create_step_node("step2"))
             builder.add_node("step3", create_step_node("step3"))
@@ -210,7 +207,7 @@ async def test_build_workflow_graph_with_diamond_dependency(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_node("step2", create_step_node("step2"))
             builder.add_node("step3", create_step_node("step3"))
@@ -245,7 +242,6 @@ async def test_workflow_graph_state_passes_through_steps(clean_registries):
     state = {
         "session_id": 1,
         "execution_id": 1,
-        "db": Mock(),
         "transcription": "Test transcription",
     }
 
@@ -253,7 +249,6 @@ async def test_workflow_graph_state_passes_through_steps(clean_registries):
     assert isinstance(state, dict)
     assert "session_id" in state
     assert "execution_id" in state
-    assert "db" in state
 
 
 @pytest.mark.asyncio
@@ -272,7 +267,7 @@ async def test_build_workflow_graph_handles_nonexistent_step(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             # Try to add node for nonexistent step - should raise error from factory
             builder.add_node("nonexistent_step", create_step_node("nonexistent_step"))
@@ -318,7 +313,7 @@ async def test_workflow_graph_with_complex_dependencies(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_node("step2", create_step_node("step2"))
             builder.add_node("step3", create_step_node("step3"))

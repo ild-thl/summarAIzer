@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from app.workflows.execution_context import (
-    GenerationState,
     StepRegistry,
     WorkflowRegistry,
 )
@@ -161,7 +160,7 @@ async def test_context_chaining_through_steps(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_node("step2", create_step_node("step2"))
             builder.add_edge(START, "step1")
@@ -228,7 +227,7 @@ async def test_parallel_independent_steps(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step1", create_step_node("step1"))
             builder.add_node("step2", create_step_node("step2"))
             builder.add_node("step3", create_step_node("step3"))
@@ -274,7 +273,7 @@ async def test_long_dependency_chain(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             for step_id in step_ids:
                 builder.add_node(step_id, create_step_node(step_id))
 
@@ -443,7 +442,7 @@ async def test_workflow_with_missing_dependency_step(clean_registries):
 
             from app.workflows.steps.node_factory import create_step_node
 
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             builder.add_node("step2", create_step_node("step2"))
             builder.add_edge(START, "step2")
             builder.add_edge("step2", END)

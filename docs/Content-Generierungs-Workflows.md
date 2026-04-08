@@ -47,7 +47,7 @@ Das System besteht aus vier aufeinander aufbauenden Schichten:
 |---------|-------------|
 | **Workflow** | Orchestriert mehrere Steps in einem LangGraph-`StateGraph`. Definiert Ausführungsreihenfolge und Parallelisierung. |
 | **Step** | Atomare Content-Einheit: ruft LLM auf, persistiert Ergebnis und gibt es dem State weiter. |
-| **GenerationState** | Geteiltes Dict, das durch den Graphen fließt. Steps lesen daraus und schreiben ihren Output hinein. |
+| **State Dict** | Freies Dict, das durch den Graphen fließt. Steps lesen daraus und schreiben ihren Output hinein. Keine zentrale Typdeklaration. |
 | **StepRegistry** | Auto-Register aller Steps beim Import. Ermöglicht Workflows, Steps per Identifier aufzurufen. |
 | **WorkflowRegistry** | Verwaltet Workflow-Klassen und cached kompilierte LangGraph-Graphen (nach `workflow_type`). |
 | **SingleStepWorkflow** | Synthetischer Wrapper, der jeden Step auch einzeln als Workflow aufrufbar macht – ohne einen neuen Workflow schreiben zu müssen. |
@@ -121,7 +121,7 @@ Die verwendeten LLMs werden per `ChatModelConfig` pro Step konfiguriert. Default
 Jeder Step persistiert sein Ergebnis **sofort** nach der LLM-Antwort, bevor der nächste Step startet. Ein Fehler in einem späteren Step führt nicht zum Verlust bereits generierter Inhalte. Retries überschreiben bestehende Einträge (`create_or_update`).
 
 ### 2. Context Chaining über State
-Der `GenerationState` ist ein geteiltes Dict. Nach Abschluss eines Knotens aktualisiert LangGraph den State mit dem Rückgabewert. Folgende Steps sehen die Outputs vorangegangener Steps als Kontext:
+Nach Abschluss eines Knotens aktualisiert LangGraph den State mit dem Rückgabewert. Folgende Steps sehen die Outputs vorangegangener Steps als Kontext:
 
 ```python
 # summary_step.py – nutzt key_takeaways aus State, falls vorhanden
@@ -365,7 +365,7 @@ class QuizWorkflow(BaseWorkflow):
         return "quiz_workflow"
 
     def build_graph(self):
-        builder = StateGraph(GenerationState)
+        builder = StateGraph(dict)
 
         builder.add_node("key_takeaways", create_step_node("key_takeaways"))
         builder.add_node("h5p_quiz", create_step_node("h5p_quiz"))
@@ -393,26 +393,6 @@ POST /api/v2/sessions/42/workflow/quiz_workflow
 
 ---
 
-## `GenerationState` erweitern
-
-Wenn ein neuer Step einen Output produziert, der von anderen Steps genutzt werden soll, muss das Feld in `GenerationState` deklariert werden:
-
-```python
-# app/workflows/execution_context.py
-
-class GenerationState(TypedDict, total=False):
-    # ...bestehende Felder...
-    h5p_quiz: str   # hinzufügen
-```
-
-Anschließend kann ein nachfolgender Step darauf zugreifen:
-
-```python
-quiz_json = context.get("h5p_quiz", "")
-```
-
----
-
 ## Checkliste für Beiträge
 
 - [ ] Step-Klasse in `app/workflows/steps/<name>_step.py` erstellen
@@ -420,7 +400,6 @@ quiz_json = context.get("h5p_quiz", "")
 - [ ] `identifier`, `dependencies`, `get_model_config()`, `get_messages()`, `process_response()` implementieren
 - [ ] Auto-Registrierung am Ende der Datei: `StepRegistry.register(...)`
 - [ ] Import in `app/workflows/steps/__init__.py` eintragen
-- [ ] `GenerationState` in `execution_context.py` um das neue Feld erweitern (falls Step einen Output produziert, der weitergenutzt wird)
 - [ ] Optional: Workflow in `app/workflows/flows/` anlegen und in `flows/__init__.py` registrieren
 - [ ] Tests in `tests/unit/test_workflow_steps.py` ergänzen
 - [ ] `content_types.py` um neuen Identifier dokumentieren

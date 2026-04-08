@@ -1,38 +1,10 @@
 """Execution context and state management for workflow execution with LangGraph."""
 
-from typing import Any, ClassVar, TypedDict
+from typing import Any, ClassVar
 
 import structlog
 
 logger = structlog.get_logger()
-
-
-class GenerationState(TypedDict, total=False):
-    """
-    Shared state dict for LangGraph workflow execution.
-
-    Contains both inputs (session_id, transcription) and outputs (generated content).
-    Steps update this state as they execute, allowing downstream steps to access results.
-
-    Transcription is optional - steps define their own dependencies:
-    - SummaryStep requires transcription and will fail if not available
-    - TagsStep uses transcription if available, falls back to session.short_description
-
-    Note: Database session is not included in state as it's not serializable.
-    Steps create their own Session instances when needed using SessionLocal().
-    """
-
-    # Execution context (set once at start)
-    session_id: int
-    execution_id: int
-
-    # Input data (optional - steps define their own dependencies)
-    transcription: str | None
-
-    # Generated content (populated by steps)
-    summary: str
-    key_takeaways: str
-    tags: str
 
 
 class StepRegistry:
@@ -365,7 +337,7 @@ def resolve_target_to_workflow_class(target: str) -> Any:
                     step_identifier=target,
                 )
 
-                async def step_node(state: GenerationState) -> dict[str, str]:
+                async def step_node(state: dict[str, Any]) -> dict[str, str]:
                     step = StepRegistry.get_step(target)
                     context = {
                         k: v for k, v in state.items() if k not in ["session_id", "execution_id"]
@@ -376,7 +348,7 @@ def resolve_target_to_workflow_class(target: str) -> Any:
                         context=context,
                     )
 
-                builder = StateGraph(GenerationState)
+                builder = StateGraph(dict)
                 # Use wrapper node name to avoid conflicting with state channel names
                 # The node's return value will update the correct state fields
                 node_name = f"_execute_{target}"

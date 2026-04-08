@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from app.workflows.execution_context import GenerationState
 from app.workflows.steps.base_step import WorkflowStep
 
 
@@ -92,7 +91,7 @@ def create_test_workflow(workflow_name: str, step_ids: list[str]):
             return workflow_name
 
         def build_graph(self):
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             # Add all steps as nodes
             for step_id in step_ids:
                 builder.add_node(step_id, create_step_node(step_id))
@@ -117,9 +116,9 @@ def create_generation_state(
     db_session: Session = None,
     transcription: str = "Test transcription",
     **kwargs,
-) -> GenerationState:
+) -> dict[str, Any]:
     """
-    Create a test GenerationState.
+    Create a test workflow state dict.
 
     Args:
         session_id: Session ID
@@ -129,17 +128,17 @@ def create_generation_state(
         **kwargs: Additional state fields
 
     Returns:
-        GenerationState dict
+        State dict for workflow execution
     """
     if db_session is None:
         db_session = Mock(spec=Session)
 
-    state: GenerationState = GenerationState(
-        session_id=session_id,
-        execution_id=execution_id,
-        db=db_session,
-        transcription=transcription,
-    )
+    state: dict[str, Any] = {
+        "session_id": session_id,
+        "execution_id": execution_id,
+        "db": db_session,
+        "transcription": transcription,
+    }
 
     # Add any additional kwargs
     for key, value in kwargs.items():

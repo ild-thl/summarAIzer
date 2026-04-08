@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime
+from typing import Any
 
 import structlog
 from sqlalchemy.orm import Session
@@ -16,7 +17,6 @@ from app.services.embedding.exceptions import ChromaConnectionError
 from app.services.embedding.factory import get_embedding_service
 from app.services.embedding.service import EmbeddingService
 from app.workflows.execution_context import (
-    GenerationState,
     WorkflowRegistry,
     resolve_target_to_workflow_class,
 )
@@ -400,7 +400,7 @@ def _resolve_and_build_workflow(target: str, execution_id: int):
 
 
 def _execute_workflow_graph(
-    graph, initial_state: GenerationState, execution_id: int, session_id: int, task_id: str
+    graph, initial_state: dict[str, Any], execution_id: int, session_id: int, task_id: str
 ):
     """
     Execute LangGraph workflow asynchronously.
@@ -409,7 +409,7 @@ def _execute_workflow_graph(
 
     Args:
         graph: Compiled LangGraph workflow
-        initial_state: Initial GenerationState
+        initial_state: Initial state dict with session_id, execution_id, transcription
         execution_id: For logging
         session_id: For logging
         task_id: Celery task ID for logging
@@ -666,25 +666,12 @@ def execute_generated_content(
             transcription_available=tx_content is not None,
         )
 
-        # Build initial state for LangGraph
-        initial_state: GenerationState = GenerationState(
-            session_id=session_id,
-            execution_id=execution_id,
-            transcription=tx_content.content if tx_content else None,
-        )
-
-        # Validate that db is NOT in state (common cause of serialization errors)
-        if "db" in initial_state:
-            logger.error(
-                "invalid_state_contains_db",
-                execution_id=execution_id,
-                db_value=repr(initial_state.get("db"))[:100],
-            )
-            raise ValueError(
-                "BUG: Database session was included in GenerationState. "
-                "This will cause serialization failures. "
-                "Each step should create its own SessionLocal() instance."
-            )
+        # Build initial state for LangGraph (free-form dict)
+        initial_state: dict[str, Any] = {
+            "session_id": session_id,
+            "execution_id": execution_id,
+            "transcription": tx_content.content if tx_content else None,
+        }
 
         logger.info(
             "content_generation_initial_state_built",

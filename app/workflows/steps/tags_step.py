@@ -7,7 +7,8 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
-from app.database.models import Session as SessionModel, GeneratedContent
+from app.database.models import GeneratedContent
+from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.prompt_template import PromptTemplate

@@ -6,10 +6,11 @@ logging and error handling.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import structlog
 
-from app.workflows.execution_context import GenerationState, StepRegistry
+from app.workflows.execution_context import StepRegistry
 
 logger = structlog.get_logger()
 
@@ -39,7 +40,7 @@ def create_step_node(step_identifier: str) -> Callable:
     # Validate step exists at creation time
     step = StepRegistry.get_step(step_identifier)
 
-    async def step_node(state: GenerationState) -> dict[str, str]:
+    async def step_node(state: dict[str, Any]) -> dict[str, str]:
         """
         Execute a step and update state with result.
 

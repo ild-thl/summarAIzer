@@ -3,7 +3,6 @@
 import structlog
 from langgraph.graph import END, START, StateGraph
 
-from app.workflows.execution_context import GenerationState
 from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.steps.node_factory import create_step_node
 
@@ -47,7 +46,7 @@ class TalkWorkflow(BaseWorkflow):
         logger.info("building_talk_workflow_graph")
 
         # Create the state graph
-        builder = StateGraph(GenerationState)
+        builder = StateGraph(dict)
 
         # Create nodes from steps using node factory
         # This provides consistent logging and error handling
