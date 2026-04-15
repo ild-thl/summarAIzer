@@ -1175,6 +1175,312 @@ class TestPlanModeOptimization:
             }
         ]
 
+    def test_gap_fill_windows_do_not_cross_between_time_windows(self, search_service):
+        """Gap generation should stay within explicit user time windows."""
+        day1 = datetime(2026, 3, 20, 8, 0, 0)
+        day2 = datetime(2026, 3, 21, 8, 0, 0)
+        planned = [
+            (
+                self._make_session(1, day1 + timedelta(hours=12), day1 + timedelta(hours=13)),
+                {"overall_score": 0.99},
+            ),
+            (
+                self._make_session(2, day2 + timedelta(hours=1), day2 + timedelta(hours=2)),
+                {"overall_score": 0.98},
+            ),
+        ]
+
+        gap_windows = search_service._derive_gap_fill_windows(
+            planned=planned,
+            time_windows=[
+                {"start": day1, "end": day1 + timedelta(hours=14)},
+                {"start": day2, "end": day2 + timedelta(hours=14)},
+            ],
+            max_gap_minutes=30,
+        )
+
+        assert gap_windows == [
+            {
+                "start": day1,
+                "end": day1 + timedelta(hours=12),
+            },
+            {
+                "start": day1 + timedelta(hours=13),
+                "end": day1 + timedelta(hours=14),
+            },
+            {
+                "start": day2,
+                "end": day2 + timedelta(hours=1),
+            },
+            {
+                "start": day2 + timedelta(hours=2),
+                "end": day2 + timedelta(hours=14),
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_uses_default_30_min_threshold_when_max_gap_missing(
+        self, search_service
+    ):
+        """Gap fill should ignore sub-30-minute gaps even without explicit max_gap_minutes."""
+        base = datetime(2026, 3, 20, 10, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        recommendations = [(s1, {"overall_score": 0.99})]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=[])
+
+        params = RecommendationQueryParams(
+            query=None,
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(minutes=80),
+                }
+            ],
+        )
+
+        result, _ = await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=3,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=None,
+        )
+
+        assert len(result) == 1
+        assert result[0][0].id == 1
+        search_service._recommend_fallback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_uses_fallback_when_candidates_fit_without_conflict(
+        self, search_service
+    ):
+        """Gap fill should keep fallback results when the gap candidates all fit."""
+        base = datetime(2026, 3, 20, 9, 0, 0)
+        s1 = self._make_session(1, base, base + timedelta(minutes=60))
+        gap_session = self._make_session(
+            2,
+            base + timedelta(hours=2),
+            base + timedelta(hours=2, minutes=45),
+        )
+        recommendations = [(s1, {"overall_score": 0.99})]
+        gap_candidates = [(gap_session, {"overall_score": 0.92})]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_with_semantic_search = AsyncMock()
+        search_service._recommend_fallback = AsyncMock(return_value=gap_candidates)
+
+        params = RecommendationQueryParams(
+            query="climate ai",
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(hours=5),
+                }
+            ],
+        )
+
+        result, _ = await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=2,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=30,
+        )
+
+        assert [session.id for session, _ in result] == [1, 2]
+        search_service._recommend_fallback.assert_called_once()
+        search_service._recommend_with_semantic_search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_semantic_reranks_only_for_conflicting_large_candidate_pool(
+        self, search_service
+    ):
+        """Gap fill should rerank semantically only when more than three candidates conflict."""
+        base = datetime(2026, 3, 20, 8, 0, 0)
+        s1 = self._make_session(1, base + timedelta(hours=1), base + timedelta(hours=2))
+        recommendations = [(s1, {"overall_score": 0.99})]
+        fallback_gap_candidates = [
+            (
+                self._make_session(2, base + timedelta(hours=2), base + timedelta(hours=3)),
+                {"overall_score": 0.9},
+            ),
+            (
+                self._make_session(
+                    3, base + timedelta(hours=2, minutes=10), base + timedelta(hours=3, minutes=10)
+                ),
+                {"overall_score": 0.89},
+            ),
+            (
+                self._make_session(
+                    4, base + timedelta(hours=2, minutes=20), base + timedelta(hours=3, minutes=20)
+                ),
+                {"overall_score": 0.88},
+            ),
+            (
+                self._make_session(
+                    5, base + timedelta(hours=2, minutes=30), base + timedelta(hours=3, minutes=30)
+                ),
+                {"overall_score": 0.87},
+            ),
+        ]
+        semantic_gap_candidates = [
+            (
+                self._make_session(
+                    6, base + timedelta(hours=2), base + timedelta(hours=2, minutes=45)
+                ),
+                {"overall_score": 0.95},
+            ),
+        ]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_with_semantic_search = AsyncMock(
+            return_value=(
+                semantic_gap_candidates,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 1,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_gap_candidates)
+
+        params = RecommendationQueryParams(
+            query="climate ai",
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(hours=10),
+                }
+            ],
+        )
+
+        await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=3,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=30,
+        )
+
+        search_service._recommend_with_semantic_search.assert_called_once()
+        assert search_service._recommend_fallback.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_gap_fill_skips_semantic_rerank_when_more_than_three_candidates_all_fit(
+        self, search_service
+    ):
+        """Gap fill should not rerank semantically when all gap candidates fit without conflict."""
+        base = datetime(2026, 3, 20, 8, 0, 0)
+        s1 = self._make_session(1, base + timedelta(hours=1), base + timedelta(hours=2))
+        recommendations = [(s1, {"overall_score": 0.99})]
+        fallback_gap_candidates = [
+            (
+                self._make_session(
+                    2, base + timedelta(hours=2), base + timedelta(hours=2, minutes=30)
+                ),
+                {"overall_score": 0.9},
+            ),
+            (
+                self._make_session(
+                    3, base + timedelta(hours=2, minutes=30), base + timedelta(hours=3)
+                ),
+                {"overall_score": 0.89},
+            ),
+            (
+                self._make_session(
+                    4, base + timedelta(hours=3), base + timedelta(hours=3, minutes=30)
+                ),
+                {"overall_score": 0.88},
+            ),
+            (
+                self._make_session(
+                    5, base + timedelta(hours=3, minutes=30), base + timedelta(hours=4)
+                ),
+                {"overall_score": 0.87},
+            ),
+        ]
+
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(
+                recommendations,
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_gap_candidates)
+        search_service._recommend_with_semantic_search = AsyncMock()
+
+        params = RecommendationQueryParams(
+            query="climate ai",
+            accepted_ids=[],
+            rejected_ids=[],
+            time_windows=[
+                {
+                    "start": base,
+                    "end": base + timedelta(hours=6),
+                }
+            ],
+        )
+
+        result, _ = await search_service._recommend_plan_mode(
+            db=MagicMock(spec=Session),
+            params=params,
+            seen_ids=set(),
+            limit=5,
+            plan_candidate_multiplier=3,
+            min_break_minutes=0,
+            max_gap_minutes=30,
+        )
+
+        assert len(result) == 5
+        search_service._recommend_fallback.assert_called_once()
+        search_service._recommend_with_semantic_search.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_gap_fill_skips_when_no_oversized_gap(self, search_service):
         """Gap fill should be skipped when gaps do not exceed max_gap_minutes."""

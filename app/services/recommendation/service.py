@@ -49,6 +49,9 @@ class RecommendationQueryParams:
 class RecommendationService:
     """Coordinates recommendation execution paths and filter-mode semantic search."""
 
+    DEFAULT_GAP_FILL_MINUTES: ClassVar[int] = 45
+    MAX_GAP_FILL_ATTEMPTS: ClassVar[int] = 10
+
     SOFT_FILTER_KEYS: ClassVar[set[str]] = {
         "session_format",
         "tags",
@@ -276,6 +279,12 @@ class RecommendationService:
     def _build_min_gap_delta(max_gap_minutes: int | None) -> timedelta | None:
         return timedelta(minutes=max_gap_minutes) if max_gap_minutes is not None else None
 
+    @classmethod
+    def _get_gap_fill_min_minutes(cls, max_gap_minutes: int | None) -> int:
+        if max_gap_minutes is not None:
+            return max_gap_minutes
+        return cls.DEFAULT_GAP_FILL_MINUTES
+
     @staticmethod
     def _append_gap_window_if_allowed(
         gap_windows: list[dict[str, datetime]],
@@ -377,7 +386,7 @@ class RecommendationService:
         time_windows: list[Any] | None,
         max_gap_minutes: int | None,
     ) -> list[dict[str, datetime]]:
-        min_gap_delta = self._build_min_gap_delta(max_gap_minutes)
+        min_gap_delta = self._build_min_gap_delta(self._get_gap_fill_min_minutes(max_gap_minutes))
         sorted_sessions = self._sort_planned_sessions(planned)
 
         if time_windows:
@@ -390,6 +399,158 @@ class RecommendationService:
         return self._derive_internal_gaps(
             sorted_sessions=sorted_sessions,
             min_gap_delta=min_gap_delta,
+        )
+
+    @staticmethod
+    def _gap_window_duration_minutes(window: dict[str, datetime]) -> float:
+        start = window.get("start")
+        end = window.get("end")
+        if start is None or end is None or end <= start:
+            return 0.0
+        return round((end - start).total_seconds() / 60, 2)
+
+    def _summarize_gap_windows(
+        self, gap_windows: list[dict[str, datetime]]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "index": index,
+                "start": window["start"],
+                "end": window["end"],
+                "duration_minutes": self._gap_window_duration_minutes(window),
+            }
+            for index, window in enumerate(gap_windows)
+        ]
+
+    @staticmethod
+    def _session_fits_gap_window(session: Any, window: dict[str, datetime]) -> bool:
+        start = window.get("start")
+        end = window.get("end")
+        session_start = getattr(session, "start_datetime", None)
+        session_end = getattr(session, "end_datetime", None)
+        if None in (start, end, session_start, session_end):
+            return False
+        return session_start >= start and session_end <= end
+
+    def _summarize_gap_fill_candidates(
+        self,
+        gap_windows: list[dict[str, datetime]],
+        candidates: list[tuple],
+    ) -> list[dict[str, Any]]:
+        summaries = self._summarize_gap_windows(gap_windows)
+        for summary, window in zip(summaries, gap_windows, strict=False):
+            matching_candidates = [
+                session.id
+                for session, _ in candidates
+                if self._session_fits_gap_window(session, window)
+            ]
+            summary["candidate_count"] = len(matching_candidates)
+            summary["candidate_session_ids"] = matching_candidates
+        return summaries
+
+    @staticmethod
+    def _gap_window_key(window: dict[str, datetime]) -> tuple[datetime | None, datetime | None]:
+        return window.get("start"), window.get("end")
+
+    def _select_gap_fill_windows(
+        self,
+        gap_windows: list[dict[str, datetime]],
+        attempted_gap_keys: set[tuple[datetime | None, datetime | None]],
+    ) -> list[dict[str, datetime]]:
+        ranked_gap_windows = sorted(
+            gap_windows,
+            key=lambda window: (
+                -self._gap_window_duration_minutes(window),
+                window.get("start") or datetime.min,
+                window.get("end") or datetime.min,
+            ),
+        )
+        return [
+            window
+            for window in ranked_gap_windows
+            if self._gap_window_key(window) not in attempted_gap_keys
+        ]
+
+    @staticmethod
+    def _supports_semantic_gap_fill(params: RecommendationQueryParams) -> bool:
+        return bool(params.query or params.accepted_ids)
+
+    def _select_sessions_for_gap(
+        self,
+        recommendations: list[tuple],
+        gap_window: dict[str, datetime],
+        min_break_minutes: int,
+        max_gap_minutes: int | None,
+        limit: int,
+    ) -> list[tuple]:
+        return self._optimize_session_plan(
+            recommendations=recommendations,
+            limit=limit,
+            time_windows=[gap_window],
+            min_break_minutes=min_break_minutes,
+            max_gap_minutes=max_gap_minutes,
+        )
+
+    async def _collect_semantic_gap_fill_recommendations(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        planned: list[tuple],
+        gap_window: dict[str, datetime],
+        candidate_limit: int,
+        query_embeddings: list[list[float]],
+        semantic_similarity_enabled: bool,
+    ) -> list[tuple]:
+        planned_ids = [session.id for session, _ in planned]
+        seen_ids = set(params.accepted_ids + params.rejected_ids + planned_ids)
+        gap_params = replace(params, time_windows=[gap_window])
+        recommendations, _ = await self._recommend_with_semantic_search(
+            db=db,
+            params=gap_params,
+            seen_ids=seen_ids,
+            candidate_limit=candidate_limit,
+            query_embeddings=query_embeddings,
+            semantic_similarity_enabled=semantic_similarity_enabled,
+        )
+        return recommendations
+
+    async def _collect_gap_fill_recommendations(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        planned: list[tuple],
+        gap_window: dict[str, datetime],
+        candidate_limit: int,
+    ) -> tuple[list[tuple], str]:
+        planned_ids = [session.id for session, _ in planned]
+        gap_params = replace(params, time_windows=[gap_window])
+        fallback_params = replace(
+            gap_params,
+            accepted_ids=list(dict.fromkeys(params.accepted_ids + planned_ids)),
+            rejected_ids=list(dict.fromkeys(params.rejected_ids)),
+        )
+        recommendations = await self._recommend_fallback(
+            db=db,
+            params=fallback_params,
+            limit=candidate_limit,
+        )
+        return recommendations, "fallback"
+
+    @staticmethod
+    def _merge_recommendation_lists(
+        existing_recommendations: list[tuple],
+        new_recommendations: list[tuple],
+    ) -> list[tuple]:
+        merged_by_session_id: dict[int, tuple] = {
+            session.id: (session, scores) for session, scores in existing_recommendations
+        }
+        for session, scores in new_recommendations:
+            current = merged_by_session_id.get(session.id)
+            if current is None or scores["overall_score"] > current[1]["overall_score"]:
+                merged_by_session_id[session.id] = (session, scores)
+        return sorted(
+            merged_by_session_id.values(),
+            key=lambda item: (item[0].start_datetime, item[0].id),
         )
 
     async def _collect_base_recommendations(
@@ -457,12 +618,17 @@ class RecommendationService:
             max_gap_minutes=max_gap_minutes,
         )
         gap_window_ms = round((perf_counter() - gap_window_start) * 1000, 2)
+        gap_fill_window_summary = self._summarize_gap_windows(gap_fill_windows)
+        gap_fill_min_minutes = self._get_gap_fill_min_minutes(max_gap_minutes)
         if not gap_fill_windows:
             logger.debug(
                 "recommendation_plan_gap_fill_skipped_no_oversized_gaps",
                 planned_size=len(planned),
                 requested_limit=limit,
                 max_gap_minutes=max_gap_minutes,
+                min_gap_fill_minutes=gap_fill_min_minutes,
+                gap_count=0,
+                gap_windows=[],
             )
             logger.debug(
                 "recommendation_benchmark_plan_mode",
@@ -475,25 +641,177 @@ class RecommendationService:
             )
             return planned, search_debug
 
-        planned_ids = [session.id for session, _ in planned]
-        gap_fill_rejected = list(dict.fromkeys(params.rejected_ids))
-        gap_fill_accepted = list(dict.fromkeys(params.accepted_ids + planned_ids))
-        gap_fill_limit = max(limit * plan_candidate_multiplier, limit)
+        logger.debug(
+            "recommendation_plan_gap_fill_windows_detected",
+            planned_size=len(planned),
+            requested_limit=limit,
+            min_gap_fill_minutes=gap_fill_min_minutes,
+            gap_count=len(gap_fill_windows),
+            total_gap_minutes=round(
+                sum(summary["duration_minutes"] for summary in gap_fill_window_summary),
+                2,
+            ),
+            gap_windows=gap_fill_window_summary,
+        )
 
-        gap_fill_params = replace(
-            params,
-            accepted_ids=gap_fill_accepted,
-            rejected_ids=gap_fill_rejected,
-            time_windows=gap_fill_windows,
+        gap_fill_fetch_ms_total = 0.0
+        attempted_gap_keys: set[tuple[datetime | None, datetime | None]] = set()
+        gap_fill_attempt_summaries: list[dict[str, Any]] = []
+        gap_fill_candidates_total = 0
+        gap_filled_sessions_total = 0
+        replanned = list(planned)
+        candidate_gap_windows = self._select_gap_fill_windows(
+            gap_windows=gap_fill_windows,
+            attempted_gap_keys=attempted_gap_keys,
+        )[: self.MAX_GAP_FILL_ATTEMPTS]
+        cached_query_embeddings: list[list[float]] | None = None
+        cached_semantic_similarity_enabled: bool | None = None
+        cached_query_embedding_ms = 0.0
+        semantic_rerank_count = 0
+
+        for target_gap in candidate_gap_windows:
+            if len(replanned) >= limit:
+                break
+
+            attempted_gap_keys.add(self._gap_window_key(target_gap))
+            remaining_slots = limit - len(replanned)
+            gap_candidate_limit = max(remaining_slots * plan_candidate_multiplier, remaining_slots)
+
+            gap_fill_start = perf_counter()
+            gap_fill_candidates, retrieval_mode = await self._collect_gap_fill_recommendations(
+                db=db,
+                params=params,
+                planned=replanned,
+                gap_window=target_gap,
+                candidate_limit=gap_candidate_limit,
+            )
+            gap_fill_fetch_ms = round((perf_counter() - gap_fill_start) * 1000, 2)
+            gap_fill_fetch_ms_total += gap_fill_fetch_ms
+
+            gap_fill_candidates_total += len(gap_fill_candidates)
+
+            fallback_feasible_for_gap = self._select_sessions_for_gap(
+                recommendations=gap_fill_candidates,
+                gap_window=target_gap,
+                min_break_minutes=min_break_minutes,
+                max_gap_minutes=max_gap_minutes,
+                limit=len(gap_fill_candidates),
+            )
+            selected_for_gap = self._select_sessions_for_gap(
+                recommendations=gap_fill_candidates,
+                gap_window=target_gap,
+                min_break_minutes=min_break_minutes,
+                max_gap_minutes=max_gap_minutes,
+                limit=remaining_slots,
+            )
+            semantic_rerank_triggered = False
+            semantic_candidate_count = 0
+
+            if (
+                self._supports_semantic_gap_fill(params)
+                and len(gap_fill_candidates) > 3
+                and len(fallback_feasible_for_gap) > 0
+                and len(fallback_feasible_for_gap) < len(gap_fill_candidates)
+            ):
+                semantic_rerank_triggered = True
+                semantic_rerank_count += 1
+                if cached_query_embeddings is None or cached_semantic_similarity_enabled is None:
+                    query_embedding_start = perf_counter()
+                    (
+                        cached_query_embeddings,
+                        cached_semantic_similarity_enabled,
+                    ) = await self._determine_query_embeddings(
+                        query=params.query,
+                        accepted_ids=params.accepted_ids,
+                        rejected_ids=params.rejected_ids,
+                    )
+                    cached_query_embedding_ms = round(
+                        (perf_counter() - query_embedding_start) * 1000,
+                        2,
+                    )
+
+                semantic_gap_fill_start = perf_counter()
+                semantic_gap_fill_candidates = (
+                    await self._collect_semantic_gap_fill_recommendations(
+                        db=db,
+                        params=params,
+                        planned=replanned,
+                        gap_window=target_gap,
+                        candidate_limit=gap_candidate_limit,
+                        query_embeddings=cached_query_embeddings,
+                        semantic_similarity_enabled=cached_semantic_similarity_enabled,
+                    )
+                )
+                semantic_gap_fill_ms = round(
+                    (perf_counter() - semantic_gap_fill_start) * 1000,
+                    2,
+                )
+                gap_fill_fetch_ms_total += semantic_gap_fill_ms
+                semantic_candidate_count = len(semantic_gap_fill_candidates)
+                retrieval_mode = "fallback_plus_semantic_rerank"
+                if semantic_gap_fill_candidates:
+                    selected_for_gap = self._select_sessions_for_gap(
+                        recommendations=semantic_gap_fill_candidates,
+                        gap_window=target_gap,
+                        min_break_minutes=min_break_minutes,
+                        max_gap_minutes=max_gap_minutes,
+                        limit=remaining_slots,
+                    )
+
+            gap_filled_sessions_total += len(selected_for_gap)
+            if selected_for_gap:
+                replanned = self._merge_recommendation_lists(replanned, selected_for_gap)
+
+            gap_summary = {
+                **self._summarize_gap_windows([target_gap])[0],
+                "candidate_limit": gap_candidate_limit,
+                "candidate_count": len(gap_fill_candidates),
+                "candidate_session_ids": [session.id for session, _ in gap_fill_candidates],
+                "feasible_candidate_count": len(fallback_feasible_for_gap),
+                "selected_count": len(selected_for_gap),
+                "selected_session_ids": [session.id for session, _ in selected_for_gap],
+                "semantic_rerank_triggered": semantic_rerank_triggered,
+                "semantic_candidate_count": semantic_candidate_count,
+                "retrieval_mode": retrieval_mode,
+                "fetch_ms": gap_fill_fetch_ms,
+            }
+            gap_fill_attempt_summaries.append(gap_summary)
+            logger.debug("recommendation_plan_gap_fill_attempt", **gap_summary)
+
+        if self._supports_semantic_gap_fill(params):
+            logger.debug(
+                "recommendation_plan_gap_fill_semantic_rerank",
+                attempted_gap_count=len(candidate_gap_windows),
+                semantic_rerank_count=semantic_rerank_count,
+                query_embedding_ms=cached_query_embedding_ms,
+                gap_fill_fetch_ms=round(gap_fill_fetch_ms_total, 2),
+            )
+
+        logger.debug(
+            "recommendation_plan_gap_fill_candidate_coverage",
+            gap_count=len(gap_fill_windows),
+            attempted_gap_count=len(gap_fill_attempt_summaries),
+            gap_fill_candidates=gap_fill_candidates_total,
+            gap_fill_selected_sessions=gap_filled_sessions_total,
+            covered_gap_count=sum(
+                1 for summary in gap_fill_attempt_summaries if summary["candidate_count"] > 0
+            ),
+            uncovered_gap_count=sum(
+                1 for summary in gap_fill_attempt_summaries if summary["candidate_count"] == 0
+            ),
+            gap_windows=gap_fill_attempt_summaries,
         )
-        gap_fill_start = perf_counter()
-        gap_fill_candidates = await self._recommend_fallback(
-            db=db,
-            params=gap_fill_params,
-            limit=gap_fill_limit,
-        )
-        gap_fill_fetch_ms = round((perf_counter() - gap_fill_start) * 1000, 2)
-        if not gap_fill_candidates:
+
+        if gap_fill_candidates_total == 0:
+            logger.debug(
+                "recommendation_plan_gap_fill_remaining_gaps",
+                remaining_gap_count=len(gap_fill_windows),
+                remaining_total_gap_minutes=round(
+                    sum(summary["duration_minutes"] for summary in gap_fill_window_summary),
+                    2,
+                ),
+                remaining_gap_windows=gap_fill_window_summary,
+            )
             logger.debug(
                 "recommendation_benchmark_plan_mode",
                 candidate_limit=candidate_limit,
@@ -501,56 +819,44 @@ class RecommendationService:
                 base_collect_ms=base_collect_ms,
                 initial_plan_ms=initial_plan_ms,
                 gap_window_ms=gap_window_ms,
-                gap_fill_fetch_ms=gap_fill_fetch_ms,
+                gap_fill_fetch_ms=round(gap_fill_fetch_ms_total, 2),
                 total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
             )
             return planned, search_debug
 
-        merged_by_session_id: dict[int, tuple] = {}
-        for session, scores in recommendations + gap_fill_candidates:
-            current = merged_by_session_id.get(session.id)
-            if current is None or scores["overall_score"] > current[1]["overall_score"]:
-                merged_by_session_id[session.id] = (session, scores)
-
-        # Compute diversity scores for merged candidates for use in second planning pass
-        # This single pass on merged candidates ensures gap-fill selections are diverse wrt planned sessions
-        diversity_scores: dict[int, float] | None = None
         diversity_ms = 0.0
-        if params.diversity_weight > 0:
-            diversity_start = perf_counter()
-            merged_candidates = list(merged_by_session_id.values())
-            reranked = self.diversity_optimizer.diversify_results(
-                candidates=merged_candidates,
-                limit=len(merged_candidates),
-                diversity_weight=params.diversity_weight,
-                session_format=params.session_format,
-                tags=params.tags,
-                language=params.language,
-            )
-            # Extract diversity scores from reranked results
-            diversity_scores = {}
-            for session, scores in reranked:
-                if scores.get("diversity_score") is not None:
-                    diversity_scores[session.id] = scores["diversity_score"]
-            diversity_ms = round((perf_counter() - diversity_start) * 1000, 2)
-
-        replan_start = perf_counter()
-        replanned = self._optimize_session_plan(
-            recommendations=list(merged_by_session_id.values()),
-            limit=limit,
+        replan_ms = 0.0
+        remaining_gap_windows = self._derive_gap_fill_windows(
+            planned=replanned,
             time_windows=params.time_windows,
-            min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
-            diversity_scores=diversity_scores,
-            diversity_weight=params.diversity_weight,
         )
-        replan_ms = round((perf_counter() - replan_start) * 1000, 2)
+        remaining_gap_summary = self._summarize_gap_windows(remaining_gap_windows)
+
+        logger.debug(
+            "recommendation_plan_gap_fill_remaining_gaps",
+            initial_gap_count=len(gap_fill_windows),
+            initial_total_gap_minutes=round(
+                sum(summary["duration_minutes"] for summary in gap_fill_window_summary),
+                2,
+            ),
+            remaining_gap_count=len(remaining_gap_windows),
+            remaining_total_gap_minutes=round(
+                sum(summary["duration_minutes"] for summary in remaining_gap_summary),
+                2,
+            ),
+            remaining_gap_windows=remaining_gap_summary,
+        )
 
         logger.debug(
             "recommendation_plan_gap_fill_completed",
             initial_plan_size=len(planned),
-            gap_fill_candidates=len(gap_fill_candidates),
+            initial_gap_count=len(gap_fill_windows),
+            attempted_gap_count=len(gap_fill_attempt_summaries),
+            gap_fill_candidates=gap_fill_candidates_total,
+            gap_fill_selected_sessions=gap_filled_sessions_total,
             final_plan_size=len(replanned),
+            remaining_gap_count=len(remaining_gap_windows),
             requested_limit=limit,
         )
         logger.debug(
@@ -560,7 +866,7 @@ class RecommendationService:
             base_collect_ms=base_collect_ms,
             initial_plan_ms=initial_plan_ms,
             gap_window_ms=gap_window_ms,
-            gap_fill_fetch_ms=gap_fill_fetch_ms,
+            gap_fill_fetch_ms=round(gap_fill_fetch_ms_total, 2),
             diversity_ms=diversity_ms,
             replan_ms=replan_ms,
             total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
@@ -710,15 +1016,19 @@ class RecommendationService:
         params: RecommendationQueryParams,
         seen_ids: set[int],
         candidate_limit: int,
+        query_embeddings: list[list[float]] | None = None,
+        semantic_similarity_enabled: bool | None = None,
     ) -> tuple[list[tuple], dict[str, Any]]:
         benchmark_start = perf_counter()
-        query_embedding_start = perf_counter()
-        query_embeddings, semantic_similarity_enabled = await self._determine_query_embeddings(
-            query=params.query,
-            accepted_ids=params.accepted_ids,
-            rejected_ids=params.rejected_ids,
-        )
-        query_embedding_ms = round((perf_counter() - query_embedding_start) * 1000, 2)
+        query_embedding_ms = 0.0
+        if query_embeddings is None or semantic_similarity_enabled is None:
+            query_embedding_start = perf_counter()
+            query_embeddings, semantic_similarity_enabled = await self._determine_query_embeddings(
+                query=params.query,
+                accepted_ids=params.accepted_ids,
+                rejected_ids=params.rejected_ids,
+            )
+            query_embedding_ms = round((perf_counter() - query_embedding_start) * 1000, 2)
 
         soft = self._get_effective_soft_filters(params)
         has_soft = bool(soft)
