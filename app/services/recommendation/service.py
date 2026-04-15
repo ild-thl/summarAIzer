@@ -44,6 +44,7 @@ class RecommendationQueryParams:
     filter_margin_weight: float = 0.5
     diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
+    exclude_parallel_accepted_sessions: bool = False
 
 
 class RecommendationService:
@@ -278,6 +279,128 @@ class RecommendationService:
     @staticmethod
     def _build_min_gap_delta(max_gap_minutes: int | None) -> timedelta | None:
         return timedelta(minutes=max_gap_minutes) if max_gap_minutes is not None else None
+
+    @staticmethod
+    def _subtract_interval_from_window(
+        window: dict[str, datetime],
+        occupied_start: datetime,
+        occupied_end: datetime,
+    ) -> list[dict[str, datetime]]:
+        window_start = window["start"]
+        window_end = window["end"]
+        overlap_start = max(window_start, occupied_start)
+        overlap_end = min(window_end, occupied_end)
+        if overlap_end <= overlap_start:
+            return [window]
+
+        remaining_windows: list[dict[str, datetime]] = []
+        if window_start < overlap_start:
+            remaining_windows.append({"start": window_start, "end": overlap_start})
+        if overlap_end < window_end:
+            remaining_windows.append({"start": overlap_end, "end": window_end})
+        return remaining_windows
+
+    @staticmethod
+    def _merge_time_ranges(
+        ranges: list[tuple[datetime, datetime]],
+    ) -> list[tuple[datetime, datetime]]:
+        if not ranges:
+            return []
+
+        sorted_ranges = sorted(ranges, key=lambda value: (value[0], value[1]))
+        merged_ranges: list[tuple[datetime, datetime]] = [sorted_ranges[0]]
+        for start, end in sorted_ranges[1:]:
+            current_start, current_end = merged_ranges[-1]
+            if start <= current_end:
+                merged_ranges[-1] = (current_start, max(current_end, end))
+                continue
+            merged_ranges.append((start, end))
+        return merged_ranges
+
+    def _subtract_occupied_ranges_from_time_windows(
+        self,
+        time_windows: list[Any],
+        occupied_ranges: list[tuple[datetime, datetime]],
+    ) -> list[dict[str, datetime]]:
+        remaining_windows: list[dict[str, datetime]] = []
+        for window in time_windows:
+            window_start, window_end = self._extract_window_bounds(window)
+            if window_start is None or window_end is None or window_end <= window_start:
+                continue
+
+            window_segments = [{"start": window_start, "end": window_end}]
+            for occupied_start, occupied_end in occupied_ranges:
+                next_segments: list[dict[str, datetime]] = []
+                for segment in window_segments:
+                    next_segments.extend(
+                        self._subtract_interval_from_window(segment, occupied_start, occupied_end)
+                    )
+                window_segments = next_segments
+                if not window_segments:
+                    break
+            remaining_windows.extend(window_segments)
+
+        return remaining_windows
+
+    def _apply_accepted_session_time_window_exclusions(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+    ) -> RecommendationQueryParams:
+        if (
+            not params.exclude_parallel_accepted_sessions
+            or not params.accepted_ids
+            or not params.time_windows
+        ):
+            return params
+
+        accepted_sessions = session_crud.read_many_by_ids(db, params.accepted_ids)
+        occupied_ranges = self._merge_time_ranges(
+            [
+                (session.start_datetime, session.end_datetime)
+                for session in accepted_sessions.values()
+                if getattr(session, "start_datetime", None) is not None
+                and getattr(session, "end_datetime", None) is not None
+                and session.end_datetime > session.start_datetime
+            ]
+        )
+        if not occupied_ranges:
+            return params
+
+        original_time_window_summary = self._summarize_gap_windows(
+            [
+                {"start": start, "end": end}
+                for start, end in [
+                    self._extract_window_bounds(window) for window in params.time_windows or []
+                ]
+                if start is not None and end is not None and end > start
+            ]
+        )
+        occupied_range_summary = [
+            {
+                "index": index,
+                "start": start,
+                "end": end,
+                "duration_minutes": round((end - start).total_seconds() / 60, 2),
+            }
+            for index, (start, end) in enumerate(occupied_ranges)
+        ]
+
+        adjusted_time_windows = self._subtract_occupied_ranges_from_time_windows(
+            time_windows=params.time_windows,
+            occupied_ranges=occupied_ranges,
+        )
+        adjusted_time_window_summary = self._summarize_gap_windows(adjusted_time_windows)
+
+        logger.debug(
+            "recommendation_time_windows_excluding_accepted_sessions",
+            accepted_ids=params.accepted_ids,
+            accepted_sessions_found=len(accepted_sessions),
+            original_time_windows=original_time_window_summary,
+            occupied_ranges=occupied_range_summary,
+            adjusted_time_windows=adjusted_time_window_summary,
+        )
+        return replace(params, time_windows=adjusted_time_windows)
 
     @classmethod
     def _get_gap_fill_min_minutes(cls, max_gap_minutes: int | None) -> int:
@@ -912,6 +1035,7 @@ class RecommendationService:
         min_break_minutes: int = 0,
         max_gap_minutes: int | None = None,
         plan_candidate_multiplier: int = 2,
+        exclude_parallel_accepted_sessions: bool = False,
     ) -> list[tuple]:
         request_start = perf_counter()
         accepted_ids = accepted_ids or []
@@ -934,7 +1058,9 @@ class RecommendationService:
             filter_margin_weight=filter_margin_weight,
             diversity_weight=diversity_weight,
             time_windows=time_windows,
+            exclude_parallel_accepted_sessions=exclude_parallel_accepted_sessions,
         )
+        params = self._apply_accepted_session_time_window_exclusions(db=db, params=params)
         requested_soft_filters = params.soft_filters
         effective_soft = self._get_effective_soft_filters(params)
         params = replace(params, soft_filters=sorted(effective_soft))
@@ -962,7 +1088,21 @@ class RecommendationService:
             diversity_weight=params.diversity_weight,
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
+            exclude_parallel_accepted_sessions=params.exclude_parallel_accepted_sessions,
         )
+
+        if time_windows is not None and not params.time_windows:
+            logger.info(
+                "recommendation_completed",
+                hard_pass_results=0,
+                soft_pass_results=0,
+                final_recommendations=0,
+                limit=limit,
+                soft_pass_triggered=False,
+                goal_mode=goal_mode,
+                elapsed_ms=round((perf_counter() - request_start) * 1000, 2),
+            )
+            return []
 
         try:
             if goal_mode == "plan":

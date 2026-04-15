@@ -522,6 +522,7 @@ async def recommend_sessions(
         sessions = await recommendation_service.recommend_sessions(
             db=db,
             accepted_ids=recommend_req.accepted_ids,
+            exclude_parallel_accepted_sessions=recommend_req.exclude_parallel_accepted_sessions,
             rejected_ids=recommend_req.rejected_ids,
             query=effective_query,
             limit=recommend_req.limit,

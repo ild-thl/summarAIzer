@@ -1265,6 +1265,102 @@ class TestPlanModeOptimization:
         assert result[0][0].id == 1
         search_service._recommend_fallback.assert_not_called()
 
+
+class TestAcceptedSessionWindowExclusion:
+    """Tests for subtracting accepted session times from requested time windows."""
+
+    @pytest.fixture
+    def search_service(self):
+        service = AsyncMock(spec=EmbeddingService)
+        service.embedding_dimension = 768
+        return RecommendationService(service)
+
+    @staticmethod
+    def _make_session(sid: int, start: datetime, end: datetime):
+        session = Mock()
+        session.id = sid
+        session.start_datetime = start
+        session.end_datetime = end
+        return session
+
+    @pytest.mark.asyncio
+    async def test_recommendation_excludes_parallel_to_accepted_sessions(self, search_service):
+        """Accepted session times should be subtracted from user time windows before search."""
+        base = datetime(2026, 3, 20, 8, 0, 0)
+        accepted_session = self._make_session(
+            11,
+            base + timedelta(hours=1),
+            base + timedelta(hours=2),
+        )
+
+        search_service._recommend_default_mode = AsyncMock(
+            return_value=(
+                [],
+                {
+                    "hard_pass_results": 0,
+                    "soft_pass_results": 0,
+                    "soft_pass_triggered": False,
+                },
+            )
+        )
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.read_many_by_ids.return_value = {11: accepted_session}
+
+            await search_service.recommend_sessions(
+                db=MagicMock(spec=Session),
+                accepted_ids=[11],
+                query="climate ai",
+                time_windows=[
+                    {
+                        "start": base,
+                        "end": base + timedelta(hours=4),
+                    }
+                ],
+                exclude_parallel_accepted_sessions=True,
+            )
+
+        passed_params = search_service._recommend_default_mode.call_args.kwargs["params"]
+        assert passed_params.time_windows == [
+            {
+                "start": base,
+                "end": base + timedelta(hours=1),
+            },
+            {
+                "start": base + timedelta(hours=2),
+                "end": base + timedelta(hours=4),
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_recommendation_returns_empty_when_accepted_sessions_consume_windows(
+        self, search_service
+    ):
+        """If accepted sessions consume all requested windows, recommendation should short-circuit."""
+        base = datetime(2026, 3, 20, 8, 0, 0)
+        accepted_session = self._make_session(11, base, base + timedelta(hours=2))
+
+        search_service._recommend_default_mode = AsyncMock()
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.read_many_by_ids.return_value = {11: accepted_session}
+
+            results = await search_service.recommend_sessions(
+                db=MagicMock(spec=Session),
+                accepted_ids=[11],
+                query="climate ai",
+                time_windows=[
+                    {
+                        "start": base,
+                        "end": base + timedelta(hours=2),
+                    }
+                ],
+                exclude_parallel_accepted_sessions=True,
+            )
+
+        assert results == []
+        search_service._recommend_default_mode.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_gap_fill_uses_fallback_when_candidates_fit_without_conflict(
         self, search_service

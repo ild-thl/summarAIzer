@@ -426,6 +426,13 @@ class RecommendRequest(BaseModel):
         default_factory=list,
         description="Session IDs the user has liked (for centroid-based or query refinement)",
     )
+    exclude_parallel_accepted_sessions: bool = Field(
+        default=False,
+        description=(
+            "If true and time_windows are provided, subtract the time occupied by accepted_ids "
+            "from those windows so parallel sessions are excluded from recommendation."
+        ),
+    )
     rejected_ids: list[int] = Field(
         default_factory=list,
         description="Session IDs to exclude from results",
