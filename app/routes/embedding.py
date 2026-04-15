@@ -268,7 +268,7 @@ async def search_similar_sessions(
     event_id: int | None = Query(None, description="Filter by event ID"),
     session_format: str | None = Query(
         None,
-        description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
+        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
     tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
     location_cities: str | None = Query(
@@ -299,7 +299,7 @@ async def search_similar_sessions(
     - **query**: Text to search (will be embedded and matched semantically)
     - **limit**: Maximum number of results (1-100)
     - **event_id**: Optional filter by event ID (applied at DB level)
-    - **session_format**: Optional filter by format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
+    - **session_format**: Optional filter by format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training, lab, other) - OR logic
     - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
     - **location**: Optional filter by location (comma-separated, OR logic - matches any location)
     - **language**: Optional filter by language code - comma-separated (e.g., en, de, fr) - OR logic

@@ -54,7 +54,7 @@ async def create_session(
     - **location**: Session location (optional)
     - **recording_url**: Recording URL (optional)
     - **status**: Session status - draft or published (default: draft)
-    - **session_format**: Format like Input, Lighting Talk, Diskussion, workshop, Training (optional)
+    - **session_format**: Format like input, lighting talk, diskussion, workshop, training, lab, other (optional, default: other)
     - **duration**: Duration in minutes (optional, or auto-calculated from times)
     - **language**: ISO 639-1 language code (default: en)
     - **event_id**: Associated event ID (optional)
@@ -170,7 +170,7 @@ async def list_sessions(
     event_id: int = Query(None, description="Filter by event ID"),
     session_format: str = Query(
         None,
-        description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
+        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
     tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
     location_cities: str | None = Query(
@@ -205,7 +205,7 @@ async def list_sessions(
     - **limit**: Maximum records to return (default: 100, max: 1000)
     - **status**: Filter by status - comma-separated (draft, published) - OR logic
     - **event_id**: Filter by event ID
-    - **session_format**: Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
+    - **session_format**: Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic
     - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
     - **location_cities**: Filter by city - comma-separated list (OR logic)
     - **location_names**: Filter by location names (stage/room/venue) - comma-separated list (OR logic)

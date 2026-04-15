@@ -168,7 +168,9 @@ class SessionBase(BaseModel):
     end_datetime: datetime = Field(..., description="Session end datetime")
     recording_url: HttpUrl | None = Field(None, description="Recording URL")
     status: SessionStatus = Field(default=SessionStatus.DRAFT, description="Session status")
-    session_format: SessionFormat | None = Field(None, description="Session format type")
+    session_format: SessionFormat = Field(
+        default=SessionFormat.OTHER, description="Session format type"
+    )
     duration: int | None = Field(None, ge=0, le=1440, description="Duration in minutes")
     language: str = Field(
         default="en", min_length=2, max_length=10, description="ISO 639-1 language code"

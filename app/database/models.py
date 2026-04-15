@@ -37,6 +37,8 @@ class SessionFormat(str, Enum):
     DISCUSSION = "diskussion"
     WORKSHOP = "workshop"
     TRAINING = "training"
+    LAB = "lab"
+    OTHER = "other"
 
 
 class EventStatus(str, Enum):
@@ -117,7 +119,7 @@ class Session(Base):
     end_datetime = Column(DateTime, nullable=False)
     recording_url = Column(String(500), nullable=True)
     status = Column(SQLEnum(SessionStatus), default=SessionStatus.DRAFT, index=True)
-    session_format = Column(SQLEnum(SessionFormat), nullable=True)
+    session_format = Column(SQLEnum(SessionFormat), default=SessionFormat.OTHER, nullable=False)
     duration = Column(Integer, nullable=True)  # Duration in minutes
     language = Column(String(10), default="en", nullable=False)  # ISO 639-1 code
     uri = Column(String(255), nullable=False, index=True)

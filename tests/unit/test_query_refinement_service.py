@@ -107,15 +107,17 @@ class TestQueryRefinementService:
             "diskussion",
             "workshop",
             "training",
+            "lab",
+            "other",
         ]
 
     async def test_system_prompt_includes_available_value_constraints(self):
         prompt = QueryRefinementService._build_system_prompt()
 
-        assert (
-            "Allowed session formats: input, lightning talk, diskussion, workshop, training."
-            in prompt
-        )
+        # comma seperated list of allowed session formats from enum
+        formats = QueryRefinementService._get_allowed_session_formats()
+
+        assert ("Allowed session formats: " + ", ".join(formats)) in prompt
         assert "you may only choose values from the provided available lists" in prompt
 
     async def test_human_payload_omits_duration_and_time_windows(self):
