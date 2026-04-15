@@ -168,7 +168,9 @@ class SessionBase(BaseModel):
     end_datetime: datetime = Field(..., description="Session end datetime")
     recording_url: HttpUrl | None = Field(None, description="Recording URL")
     status: SessionStatus = Field(default=SessionStatus.DRAFT, description="Session status")
-    session_format: SessionFormat | None = Field(None, description="Session format type")
+    session_format: SessionFormat = Field(
+        default=SessionFormat.OTHER, description="Session format type"
+    )
     duration: int | None = Field(None, ge=0, le=1440, description="Duration in minutes")
     language: str = Field(
         default="en", min_length=2, max_length=10, description="ISO 639-1 language code"
@@ -325,6 +327,57 @@ class SessionResponse(SessionBase):
         return data
 
 
+class SessionListResponse(BaseModel):
+    """
+    Minimal response for list/search/recommend endpoints.
+
+    Only includes fields relevant for session discovery and browsing:
+    - No owner_id (privacy)
+    - No available_content_identifiers (implementation detail)
+    - No created_at/updated_at (admin only)
+    - Truncated short_description (200 chars max)
+    """
+
+    id: int = Field(..., description="Session ID")
+    title: str = Field(..., description="Session title")
+    speakers: list[str] | None = Field(default=None, description="List of speaker names")
+    tags: list[str] | None = Field(default=None, description="Session tags")
+    short_description: str | None = Field(
+        None, description="Short description (truncated to 200 chars)"
+    )
+    location: SessionLocationResponse | None = Field(
+        None, description="Structured session location"
+    )
+    start_datetime: datetime = Field(..., description="Session start datetime")
+    end_datetime: datetime = Field(..., description="Session end datetime")
+    recording_url: HttpUrl | None = Field(None, description="Recording URL")
+    status: str = Field(..., description="Session status")
+    session_format: str | None = Field(None, description="Session format type")
+    duration: int | None = Field(None, description="Duration in minutes")
+    language: str = Field(default="en", description="ISO 639-1 language code")
+    uri: str = Field(..., description="URL-safe identifier")
+    event_id: int | None = Field(None, description="Associated event ID")
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_location_rel(cls, data: object) -> object:
+        """Map ORM location_rel -> location for serialization."""
+        if hasattr(data, "location_rel"):
+            obj = dict(data.__dict__) if hasattr(data, "__dict__") else data
+            obj["location"] = data.location_rel
+            return obj
+        return data
+
+    @model_validator(mode="after")
+    def truncate_description(self):
+        """Truncate short_description to 200 chars for bandwidth efficiency."""
+        if self.short_description and len(self.short_description) > 200:
+            self.short_description = self.short_description[:200] + "…"
+        return self
+
+
 class SessionWithEvent(SessionResponse):
     """Schema for Session response with associated event."""
 
@@ -372,6 +425,13 @@ class RecommendRequest(BaseModel):
     accepted_ids: list[int] = Field(
         default_factory=list,
         description="Session IDs the user has liked (for centroid-based or query refinement)",
+    )
+    exclude_parallel_accepted_sessions: bool = Field(
+        default=False,
+        description=(
+            "If true and time_windows are provided, subtract the time occupied by accepted_ids "
+            "from those windows so parallel sessions are excluded from recommendation."
+        ),
     )
     rejected_ids: list[int] = Field(
         default_factory=list,
@@ -698,7 +758,7 @@ class SearchIntentRefinementResponse(BaseModel):
 class SessionWithScore(BaseModel):
     """Session response with recommendation/search metrics."""
 
-    session: SessionResponse
+    session: SessionListResponse
     overall_score: float = Field(..., ge=0, le=1, description="Overall recommendation score (0-1)")
     semantic_similarity: float | None = Field(
         None, ge=0, le=1, description="Semantic similarity to query (0-1, None if no query)"

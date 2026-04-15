@@ -22,7 +22,7 @@ async def test_step_execute_generates_and_persists(mock_db_session):
     """Test that execute() generates content AND persists it."""
     step = create_mock_step(
         identifier="test_step",
-        dependencies=[],
+        context_requirements=[],
         generate_result={
             "content": "Generated content",
             "content_type": "plain_text",
@@ -82,7 +82,7 @@ async def test_step_context_chaining(mock_db_session):
     """Test that steps can access context from previous steps."""
     step = create_mock_step(
         identifier="dependent_step",
-        dependencies=["previous_step"],
+        context_requirements=["previous_step"],
     )
 
     step._save_to_db = Mock()
@@ -110,13 +110,13 @@ def test_step_identifier_property():
     assert step.identifier == "my_step"
 
 
-def test_step_dependencies_property():
-    """Test that step dependencies property works."""
+def test_step_context_requirements_property():
+    """Test that step context_requirements property works."""
     step = create_mock_step(
         identifier="my_step",
-        dependencies=["step1", "step2"],
+        context_requirements=["step1", "step2"],
     )
-    assert step.dependencies == ["step1", "step2"]
+    assert step.context_requirements == ["step1", "step2"]
 
 
 def test_step_get_model_config():
@@ -200,7 +200,7 @@ async def test_step_with_callable_generate():
 @pytest.mark.asyncio
 async def test_basic_workflow_creation(mock_db_session, mock_session_model, clean_registries):
     """Test basic workflow record creation."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()
@@ -289,8 +289,8 @@ async def test_execution_failure_marking(mock_db_session, clean_registries):
 async def test_workflow_with_dependencies(mock_db_session, mock_session_model, clean_registries):
     """Test workflow with step dependencies."""
     # Create workflow with dependencies: step1 -> step2
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -309,8 +309,8 @@ async def test_workflow_with_dependencies(mock_db_session, mock_session_model, c
 @pytest.mark.asyncio
 async def test_step_dependency_chain(clean_registries):
     """Test that workflow respects step dependencies."""
-    step1 = create_mock_step(identifier="step1", dependencies=[])
-    step2 = create_mock_step(identifier="step2", dependencies=["step1"])
+    step1 = create_mock_step(identifier="step1", context_requirements=[])
+    step2 = create_mock_step(identifier="step2", context_requirements=["step1"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)

@@ -31,8 +31,8 @@ async def test_trigger_workflow_full_workflow(
 ):
     """Test triggering full workflow via API."""
     # Setup
-    step1 = create_mock_step(identifier="summary", dependencies=[])
-    step2 = create_mock_step(identifier="key_takeaways", dependencies=["summary"])
+    step1 = create_mock_step(identifier="summary", context_requirements=[])
+    step2 = create_mock_step(identifier="key_takeaways", context_requirements=["summary"])
 
     StepRegistry.register(step1)
     StepRegistry.register(step2)
@@ -78,7 +78,7 @@ async def test_trigger_workflow_individual_step(
 ):
     """Test triggering individual step via API."""
     # Setup
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     # Mock database
@@ -181,7 +181,7 @@ async def test_trigger_workflow_creates_execution_record(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that triggering workflow creates execution record."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     # Track database calls
@@ -216,7 +216,7 @@ async def test_trigger_workflow_creates_execution_record(
 @pytest.mark.asyncio
 async def test_trigger_workflow_queues_task(mock_db_session, mock_session_model, clean_registries):
     """Test that workflow trigger queues async task."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()
@@ -252,7 +252,7 @@ async def test_trigger_workflow_returns_execution_id(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that trigger workflow returns execution ID."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()
@@ -285,7 +285,7 @@ async def test_trigger_workflow_returns_execution_id(
 @pytest.mark.asyncio
 async def test_invalid_target_error_message(mock_db_session, mock_session_model, clean_registries):
     """Test error message for invalid target."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.query = Mock(
@@ -311,7 +311,7 @@ async def test_concurrent_workflow_executions(
     mock_db_session, mock_session_model, clean_registries
 ):
     """Test that multiple workflows can be triggered concurrently."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()
@@ -356,7 +356,7 @@ async def test_workflow_with_special_characters_in_target(
 ):
     """Test triggering workflow with special characters in target name."""
     # Register workflow with dash in name
-    step = create_mock_step(identifier="my-step", dependencies=[])
+    step = create_mock_step(identifier="my-step", context_requirements=[])
     StepRegistry.register(step)
 
     mock_db_session.add = Mock()
@@ -387,7 +387,7 @@ async def test_workflow_with_special_characters_in_target(
 @pytest.mark.asyncio
 async def test_workflow_execution_preserves_session_context(mock_db_session, clean_registries):
     """Test that execution preserves session context."""
-    step = create_mock_step(identifier="summary", dependencies=[])
+    step = create_mock_step(identifier="summary", context_requirements=[])
     StepRegistry.register(step)
 
     mock_session = Mock(

@@ -34,7 +34,7 @@ class WorkflowExecutionService:
         Get step identifiers that execute first in a target.
 
         For a single step target, returns that step.
-        For a workflow, finds all steps with no dependencies.
+        For a workflow, finds all steps with no context_requirements (can start independently).
 
         Args:
             target: Workflow name or step identifier
@@ -48,12 +48,13 @@ class WorkflowExecutionService:
         if not is_workflow_target(target):
             return [target]
 
-        # For workflows, find all steps with no dependencies
+        # For workflows, find all steps with no context requirements
+        # (i.e., steps that don't depend on output from other steps to start)
         from app.workflows.execution_context import StepRegistry as SR
 
         first_stage = []
-        for step_id, dependencies in SR._step_dependencies.items():
-            if not dependencies:  # No dependencies = first-stage step
+        for step_id, context_requirements in SR._step_context_requirements.items():
+            if not context_requirements:  # No context requirements = first-stage step
                 first_stage.append(step_id)
 
         return first_stage

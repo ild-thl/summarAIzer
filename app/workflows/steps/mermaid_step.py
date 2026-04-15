@@ -9,12 +9,12 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
 
-class MermaidStep(PromptTemplate):
+class MermaidStep(LLMStep):
     """
     Creates structured Mermaid mindmaps from event content.
 
@@ -27,8 +27,8 @@ class MermaidStep(PromptTemplate):
         return "mermaid"
 
     @property
-    def dependencies(self) -> list[str]:
-        """Depends on summary for context."""
+    def context_requirements(self) -> list[str]:
+        """Requires 'summary' key in context for diagram generation."""
         return ["summary"]
 
     def get_model_config(self) -> ChatModelConfig:

@@ -17,6 +17,7 @@ from app.database.models import Session as SessionModel
 from app.database.models import User
 from app.schemas.session import (
     SessionCreate,
+    SessionListResponse,
     SessionResponse,
     SessionUpdate,
     SessionWithEvent,
@@ -53,7 +54,7 @@ async def create_session(
     - **location**: Session location (optional)
     - **recording_url**: Recording URL (optional)
     - **status**: Session status - draft or published (default: draft)
-    - **session_format**: Format like Input, Lighting Talk, Diskussion, workshop, Training (optional)
+    - **session_format**: Format like input, lighting talk, diskussion, workshop, training, lab, other (optional, default: other)
     - **duration**: Duration in minutes (optional, or auto-calculated from times)
     - **language**: ISO 639-1 language code (default: en)
     - **event_id**: Associated event ID (optional)
@@ -159,7 +160,7 @@ def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> li
     return values_list
 
 
-@router.get("", response_model=list[SessionResponse])
+@router.get("", response_model=list[SessionListResponse])
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
@@ -169,7 +170,7 @@ async def list_sessions(
     event_id: int = Query(None, description="Filter by event ID"),
     session_format: str = Query(
         None,
-        description="Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic",
+        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
     tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
     location_cities: str | None = Query(
@@ -204,7 +205,7 @@ async def list_sessions(
     - **limit**: Maximum records to return (default: 100, max: 1000)
     - **status**: Filter by status - comma-separated (draft, published) - OR logic
     - **event_id**: Filter by event ID
-    - **session_format**: Filter by session format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training) - OR logic
+    - **session_format**: Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic
     - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
     - **location_cities**: Filter by city - comma-separated list (OR logic)
     - **location_names**: Filter by location names (stage/room/venue) - comma-separated list (OR logic)
@@ -334,7 +335,7 @@ async def delete_session(
     return None
 
 
-@router.get("/event/{event_id}/sessions", response_model=list[SessionResponse])
+@router.get("/event/{event_id}/sessions", response_model=list[SessionListResponse])
 async def list_event_sessions(
     event_id: int,
     skip: int = Query(0, ge=0, description="Number of records to skip"),

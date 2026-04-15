@@ -9,17 +9,17 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.steps.prompt_template import PromptTemplate
+from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
 
-class KeyTakeawaysStep(PromptTemplate):
+class KeyTakeawaysStep(LLMStep):
     """
     Extracts 6-8 actionable key takeaways from the session.
 
-    Depends on: SummaryStep (uses summary for context)
-    Input: Session metadata + transcription + summary
+    Depends on: Session transcription
+    Input: Session metadata + transcription
     Output: JSON array of actionable takeaway strings
     """
 
@@ -29,9 +29,9 @@ class KeyTakeawaysStep(PromptTemplate):
         return "key_takeaways"
 
     @property
-    def dependencies(self) -> list[str]:
-        """Depends on summary for better context."""
-        return ["summary"]
+    def context_requirements(self) -> list[str]:
+        """Requires transcription to extract key takeaways."""
+        return ["transcription"]
 
     def get_model_config(self) -> ChatModelConfig:
         """Key takeaways need nuanced understanding - use well-rounded model."""
@@ -62,9 +62,6 @@ Gib AUSSCHLIESSLICH ein JSON-Array von Strings zurück, nichts anderes. Beispiel
             HumanMessage(
                 content=f"""Veranstaltungstitel: {session.title}
 Referent:innen: {speakers}
-
-Generierte Zusammenfassung:
-{context.get('summary', '')}
 
 Transkript:
 {context.get('transcription', '')}

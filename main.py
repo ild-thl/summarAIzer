@@ -17,9 +17,12 @@ from app.database.connection import engine
 from app.database.models import Base
 from app.routes.v2 import build_api_v2_router
 
+# Get settings first to configure logging with correct level
+settings = get_settings()
+
 # Configure Python's standard logging (required for structlog.stdlib.LoggerFactory)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level.upper()),
     format="%(name)s - %(levelname)s - %(message)s",
 )
 
@@ -46,9 +49,6 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
-
-# Get settings
-settings = get_settings()
 
 # Note: Table creation is handled by migrations (Alembic) in production
 # and by conftest.py fixtures in tests. Do NOT create tables here.

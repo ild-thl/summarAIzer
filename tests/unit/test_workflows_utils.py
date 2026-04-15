@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from app.workflows.execution_context import GenerationState
 from app.workflows.steps.base_step import WorkflowStep
 
 
@@ -15,7 +14,7 @@ class MockStep(WorkflowStep):
     """Mock step for testing."""
 
     _identifier: str = "mock_step"
-    _dependencies: ClassVar[list[str]] = []
+    _context_requirements: ClassVar[list[str]] = []
     _generate_result: ClassVar[dict[str, Any]] = {}
 
     @property
@@ -23,8 +22,8 @@ class MockStep(WorkflowStep):
         return self._identifier
 
     @property
-    def dependencies(self) -> list[str]:
-        return self._dependencies
+    def context_requirements(self) -> list[str]:
+        return self._context_requirements
 
     async def _generate(self, session_id: int, _, context: dict[str, Any]) -> dict[str, Any]:
         """Return predefined result or raise error if configured."""
@@ -35,7 +34,7 @@ class MockStep(WorkflowStep):
 
 def create_mock_step(
     identifier: str,
-    dependencies: list[str] | None = None,
+    context_requirements: list[str] | None = None,
     generate_result: dict[str, Any] | None = None,
 ) -> MockStep:
     """
@@ -43,7 +42,7 @@ def create_mock_step(
 
     Args:
         identifier: Step identifier
-        dependencies: List of dependencies
+        context_requirements: List of required context keys this step needs
         generate_result: Dict with "content", "content_type", "meta_info"
 
     Returns:
@@ -51,7 +50,7 @@ def create_mock_step(
     """
     step = MockStep()
     step._identifier = identifier
-    step._dependencies = dependencies or []
+    step._context_requirements = context_requirements or []
     step._generate_result = generate_result or {
         "content": f"Mock content from {identifier}",
         "content_type": "plain_text",
@@ -92,7 +91,7 @@ def create_test_workflow(workflow_name: str, step_ids: list[str]):
             return workflow_name
 
         def build_graph(self):
-            builder = StateGraph(GenerationState)
+            builder = StateGraph(dict)
             # Add all steps as nodes
             for step_id in step_ids:
                 builder.add_node(step_id, create_step_node(step_id))
@@ -117,9 +116,9 @@ def create_generation_state(
     db_session: Session = None,
     transcription: str = "Test transcription",
     **kwargs,
-) -> GenerationState:
+) -> dict[str, Any]:
     """
-    Create a test GenerationState.
+    Create a test workflow state dict.
 
     Args:
         session_id: Session ID
@@ -129,17 +128,17 @@ def create_generation_state(
         **kwargs: Additional state fields
 
     Returns:
-        GenerationState dict
+        State dict for workflow execution
     """
     if db_session is None:
         db_session = Mock(spec=Session)
 
-    state: GenerationState = GenerationState(
-        session_id=session_id,
-        execution_id=execution_id,
-        db=db_session,
-        transcription=transcription,
-    )
+    state: dict[str, Any] = {
+        "session_id": session_id,
+        "execution_id": execution_id,
+        "db": db_session,
+        "transcription": transcription,
+    }
 
     # Add any additional kwargs
     for key, value in kwargs.items():
