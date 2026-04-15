@@ -369,8 +369,13 @@ class TestRecommendFallback:
             Mock(id=3, status=SessionStatus.PUBLISHED, event_id=100),
         ]
 
+        def mock_list_with_filters(*args, **kwargs):
+            # Filter out sessions that are in exclude_ids
+            exclude_ids = kwargs.get("exclude_ids", [])
+            return [s for s in mock_sessions if s.id not in exclude_ids]
+
         with patch("app.services.recommendation.service.session_crud") as mock_crud:
-            mock_crud.list_with_filters.return_value = mock_sessions
+            mock_crud.list_with_filters.side_effect = mock_list_with_filters
 
             results = await search_service._recommend_fallback(
                 db=mock_db_session,

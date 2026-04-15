@@ -340,6 +340,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         speaker: str | None = None,
         time_windows: list[Any] | None = None,
         search: str | None = None,
+        exclude_ids: list[int] | None = None,
     ) -> list[SessionModel]:
         """List sessions with advanced filtering and full-text search."""
         limit = min(limit, 1000)
@@ -365,6 +366,9 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         for filter_condition in filters:
             query = query.filter(filter_condition)
+
+        if exclude_ids:
+            query = query.filter(self.model.id.notin_(exclude_ids))
 
         return query.offset(skip).limit(limit).all()
 

@@ -475,13 +475,14 @@ class RecommendationService:
             )
             return planned, search_debug
 
-        existing_ids = [session.id for session, _ in recommendations]
         planned_ids = [session.id for session, _ in planned]
-        gap_fill_rejected = list(dict.fromkeys(params.rejected_ids + existing_ids + planned_ids))
+        gap_fill_rejected = list(dict.fromkeys(params.rejected_ids))
+        gap_fill_accepted = list(dict.fromkeys(params.accepted_ids + planned_ids))
         gap_fill_limit = max(limit * plan_candidate_multiplier, limit)
 
         gap_fill_params = replace(
             params,
+            accepted_ids=gap_fill_accepted,
             rejected_ids=gap_fill_rejected,
             time_windows=gap_fill_windows,
         )
@@ -1090,9 +1091,10 @@ class RecommendationService:
     ) -> list[tuple]:
         try:
             soft = self._get_effective_soft_filters(params)
+            exclude_ids = params.accepted_ids + params.rejected_ids
             sessions = session_crud.list_with_filters(
                 db=db,
-                limit=limit + len(params.rejected_ids),
+                limit=limit,
                 status=SessionStatus.PUBLISHED,
                 event_id=params.event_id,
                 session_format=None if "session_format" in soft else params.session_format,
@@ -1103,13 +1105,11 @@ class RecommendationService:
                 duration_min=None if "duration" in soft else params.duration_min,
                 duration_max=None if "duration" in soft else params.duration_max,
                 time_windows=None if "time_windows" in soft else params.time_windows,
+                exclude_ids=exclude_ids,
             )
 
             recommendations: list[tuple] = []
             for session in sessions:
-                if session.id in params.rejected_ids:
-                    continue
-
                 soft_compliance = self._compute_soft_filter_compliance(session, params)
                 scores = {
                     "overall_score": soft_compliance if soft_compliance is not None else 1.0,
