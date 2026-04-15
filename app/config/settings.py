@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")
     debug: bool = os.getenv("DEBUG", "False").lower() == "true"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     # Security
     secret_key: str = os.getenv("SECRET_KEY", "dev-key-change-in-production-do-not-use")
