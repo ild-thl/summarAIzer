@@ -46,8 +46,9 @@ def get_embedding_service() -> EmbeddingService | None:
             embedding_api_key=settings.embedding_api_key,
             embedding_api_base_url=settings.embedding_api_base_url,
             embedding_model_name=settings.embedding_model_name,
-            chroma_host=settings.chroma_host,
-            chroma_port=settings.chroma_port,
+            embedding_query_cache_url=settings.embedding_query_cache_url,
+            embedding_query_cache_ttl_seconds=settings.embedding_query_cache_ttl_seconds,
+            chroma_url=settings.chroma_url,
             chroma_tenant=settings.chroma_tenant,
             chroma_credentials=settings.chroma_credentials,
             chroma_provider=settings.chroma_provider,
@@ -57,7 +58,7 @@ def get_embedding_service() -> EmbeddingService | None:
         logger.info(
             "embedding_service_created",
             provider=settings.embedding_provider,
-            chroma_url=f"{settings.chroma_host}:{settings.chroma_port}",
+            chroma_url=settings.chroma_url,
         )
 
         return service

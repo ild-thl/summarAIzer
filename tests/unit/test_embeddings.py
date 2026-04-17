@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.database.models import SessionStatus
+from app.services.embedding.query_cache import EmbeddingQueryCache
 from app.services.embedding.search_service import EmbeddingSearchService
 from app.services.embedding.service import EmbeddingService
 
@@ -47,8 +48,7 @@ class TestEmbeddingService:
                 embedding_provider="huggingface",
                 embedding_api_key="test-key",
                 embedding_api_base_url="http://test",
-                chroma_host="localhost",
-                chroma_port=8000,
+                chroma_url="http://localhost:8000",
                 chroma_tenant="test_tenant",
                 embedding_dimension=768,
             )
@@ -66,6 +66,65 @@ class TestEmbeddingService:
         assert result == test_embedding
         assert len(result) == 768
         embedding_service.embeddings.aembed_query.assert_called_once_with("test query")
+
+    @pytest.mark.asyncio
+    async def test_embed_query_uses_cache_hit(self, mock_chroma_client):
+        """Test cached query embeddings bypass backend generation."""
+        mock_cache = AsyncMock(spec=EmbeddingQueryCache)
+        mock_cache.get.return_value = [0.5] * 768
+
+        with (
+            patch("chromadb.HttpClient", return_value=mock_chroma_client),
+            patch("app.services.embedding.service.create_embeddings_backend"),
+        ):
+            service = EmbeddingService(
+                embedding_provider="huggingface",
+                embedding_api_key="test-key",
+                embedding_api_base_url="http://test",
+                chroma_url="http://localhost:8000",
+                chroma_tenant="test_tenant",
+                embedding_dimension=768,
+                embedding_query_cache=mock_cache,
+            )
+
+        service.embeddings.aembed_query = AsyncMock(return_value=[0.1] * 768)
+
+        result = await service.embed_query("test query")
+
+        assert result == [0.5] * 768
+        mock_cache.get.assert_awaited_once_with("test query")
+        service.embeddings.aembed_query.assert_not_called()
+        mock_cache.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_embed_query_caches_backend_result(self, embedding_service):
+        """Test backend-generated query embeddings are stored in cache."""
+        test_embedding = [0.1] * 768
+        mock_cache = AsyncMock(spec=EmbeddingQueryCache)
+        mock_cache.get.return_value = None
+        embedding_service.query_cache = mock_cache
+        embedding_service.embeddings.aembed_query = AsyncMock(return_value=test_embedding)
+
+        result = await embedding_service.embed_query("test query")
+
+        assert result == test_embedding
+        mock_cache.get.assert_awaited_once_with("test query")
+        mock_cache.set.assert_awaited_once_with("test query", test_embedding)
+        embedding_service.embeddings.aembed_query.assert_awaited_once_with("test query")
+
+    @pytest.mark.asyncio
+    async def test_embed_query_continues_when_cache_get_fails(self, embedding_service):
+        """Test cache read failures do not block embedding generation."""
+        test_embedding = [0.1] * 768
+        mock_cache = AsyncMock(spec=EmbeddingQueryCache)
+        mock_cache.get.side_effect = RuntimeError("redis unavailable")
+        embedding_service.query_cache = mock_cache
+        embedding_service.embeddings.aembed_query = AsyncMock(return_value=test_embedding)
+
+        result = await embedding_service.embed_query("test query")
+
+        assert result == test_embedding
+        embedding_service.embeddings.aembed_query.assert_awaited_once_with("test query")
 
     @pytest.mark.asyncio
     async def test_embed_query_empty_text(self, embedding_service):

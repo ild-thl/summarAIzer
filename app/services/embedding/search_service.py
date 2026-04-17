@@ -76,12 +76,16 @@ class EmbeddingSearchService:
 
     @staticmethod
     def _build_simple_conditions(
+        event_id: int | None,
         session_format: list[str] | str | None,
         language: list[str] | str | None,
         duration_min: int | None,
         duration_max: int | None,
     ) -> list[dict]:
         conditions = []
+
+        if event_id is not None:
+            conditions.append({"event_id": event_id})
         if session_format:
             if isinstance(session_format, list):
                 if len(session_format) == 1:
@@ -106,6 +110,7 @@ class EmbeddingSearchService:
 
     def _build_chroma_conditions(
         self,
+        event_id: int | None = None,
         session_format: list[str] | str | None = None,
         tags: list[str] | None = None,
         location_cities: list[str] | None = None,
@@ -118,7 +123,9 @@ class EmbeddingSearchService:
         """Build Chroma WHERE filter conditions from search parameters."""
         all_conditions = []
         all_conditions.extend(
-            self._build_simple_conditions(session_format, language, duration_min, duration_max)
+            self._build_simple_conditions(
+                event_id, session_format, language, duration_min, duration_max
+            )
         )
 
         location_condition = self._build_location_condition(location_cities, location_names)
@@ -216,6 +223,7 @@ class EmbeddingSearchService:
         try:
             query_embedding = await self.embedding_service.embed_query(query)
             chroma_where = self._build_chroma_conditions(
+                event_id=event_id,
                 session_format=session_format,
                 tags=tags,
                 location_cities=location_cities,
@@ -226,14 +234,9 @@ class EmbeddingSearchService:
                 time_windows=time_windows,
             )
 
-            if chroma_where:
-                chroma_results = await self.embedding_service.search_similar_sessions(
-                    query_embedding, limit=limit, where=chroma_where
-                )
-            else:
-                chroma_results = await self.embedding_service.search_similar_sessions(
-                    query_embedding, limit=limit
-                )
+            chroma_results = await self.embedding_service.search_similar_sessions(
+                query_embedding, limit=limit, where=chroma_where
+            )
 
             results = []
             for session_id, chroma_similarity, _ in chroma_results:
@@ -241,6 +244,11 @@ class EmbeddingSearchService:
                 if not session or session.status != SessionStatus.PUBLISHED:
                     continue
                 if event_id and session.event_id != event_id:
+                    logger.debug(
+                        "session_search_skipped",
+                        session_id=session_id,
+                        reason="event_id mismatch",
+                    )
                     continue
 
                 scores = {

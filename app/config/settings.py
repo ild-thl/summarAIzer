@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "")
     embedding_api_base_url: str = os.getenv("EMBEDDING_API_BASE_URL", "")
     embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+    embedding_query_cache_url: str = os.getenv(
+        "EMBEDDING_QUERY_CACHE_URL",
+        os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+    )
+    embedding_query_cache_ttl_seconds: int = int(
+        os.getenv("EMBEDDING_QUERY_CACHE_TTL_SECONDS", "600")
+    )
     embedding_sync_enabled: bool = os.getenv("EMBEDDING_SYNC_ENABLED", "true").lower() == "true"
     embedding_sync_interval_minutes: int = int(os.getenv("EMBEDDING_SYNC_INTERVAL_MINUTES", "30"))
     embedding_sync_batch_size: int = int(os.getenv("EMBEDDING_SYNC_BATCH_SIZE", "200"))
@@ -73,8 +80,7 @@ class Settings(BaseSettings):
     )
 
     # Chroma Configuration for vector storage
-    chroma_host: str = os.getenv("CHROMA_HOST", "localhost")
-    chroma_port: int = int(os.getenv("CHROMA_PORT", "8000"))
+    chroma_url: str = os.getenv("CHROMA_URL", "http://localhost:8000")
     chroma_credentials: str = os.getenv("CHROMA_CREDENTIALS", "")
     chroma_provider: str = os.getenv("CHROMA_PROVIDER", "")
     chroma_tenant: str = os.getenv("CHROMA_TENANT", "default_tenant")

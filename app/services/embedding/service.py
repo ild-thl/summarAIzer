@@ -16,6 +16,7 @@ from app.services.embedding.protocols import (
     VectorStoreProtocol,
 )
 from app.services.embedding.providers.factory import create_embeddings_backend
+from app.services.embedding.query_cache import EmbeddingQueryCache
 from app.services.embedding.text import EmbeddingTextHelper
 from app.services.embedding.vector_db.chroma import ChromaInitializer
 from app.services.embedding.vector_db.store import ChromaSessionVectorStore
@@ -32,12 +33,14 @@ class EmbeddingService:
         embedding_api_key: str | None = None,
         embedding_api_base_url: str | None = None,
         embedding_model_name: str | None = None,
-        chroma_host: str = "localhost",
-        chroma_port: int = 8000,
+        chroma_url: str = "http://localhost:8000",
         chroma_tenant: str = "default_tenant",
         chroma_credentials: str | None = None,
         chroma_provider: str | None = None,
         embedding_dimension: int = 768,
+        embedding_query_cache_url: str | None = None,
+        embedding_query_cache_ttl_seconds: int = 600,
+        embedding_query_cache: EmbeddingQueryCache | None = None,
     ):
         """
         Initialize embedding service with configurable embeddings backend and Chroma vector storage.
@@ -47,8 +50,7 @@ class EmbeddingService:
             embedding_api_key: API key for the embedding service
             embedding_api_base_url: Base URL for the embedding API
             embedding_model_name: Model name (used for OpenAI provider)
-            chroma_host: Chroma server host
-            chroma_port: Chroma server port
+            chroma_url: Chroma server host
             chroma_tenant: Chroma tenant name
             chroma_credentials: Optional Chroma authentication token
             chroma_provider: Optional Chroma authentication provider
@@ -58,6 +60,10 @@ class EmbeddingService:
         self.embedding_dimension = embedding_dimension
         self.text_helper = EmbeddingTextHelper()
         self.metadata_builder = EmbeddingMetadataBuilder()
+        self.query_cache = embedding_query_cache or EmbeddingQueryCache(
+            redis_url=embedding_query_cache_url,
+            ttl_seconds=embedding_query_cache_ttl_seconds,
+        )
 
         try:
             # Initialize embeddings backend based on provider
@@ -99,8 +105,7 @@ class EmbeddingService:
 
             # Initialize Chroma client
             self.chroma_client: ChromaClientProtocol = ChromaInitializer.create_client(
-                chroma_host=chroma_host,
-                chroma_port=chroma_port,
+                chroma_url=chroma_url,
                 chroma_tenant=chroma_tenant,
                 chroma_credentials=chroma_credentials,
                 chroma_provider=chroma_provider,
@@ -120,8 +125,7 @@ class EmbeddingService:
                 "embedding_service_initialization_failed",
                 error=str(e),
                 provider=embedding_provider,
-                chroma_host=chroma_host,
-                chroma_port=chroma_port,
+                chroma_url=chroma_url,
             )
             raise
 
@@ -158,15 +162,26 @@ class EmbeddingService:
         if not text or not text.strip():
             raise ValueError("Cannot embed empty text")
 
+        normalized_text = EmbeddingQueryCache.normalize_query_text(text)
+
+        cached_embedding = await self._get_cached_query_embedding(normalized_text)
+        if cached_embedding is not None:
+            logger.debug(
+                "embedding_query_cache_hit",
+                text_length=len(normalized_text),
+                provider=self.provider,
+            )
+            return cached_embedding
+
         try:
             logger.debug(
                 "embedding_query_start",
-                text_length=len(text),
+                text_length=len(normalized_text),
                 provider=self.provider,
             )
 
             # Use async embedding
-            embedding = await self.embeddings.aembed_query(text)
+            embedding = await self.embeddings.aembed_query(normalized_text)
 
             # Validate embedding dimension
             if len(embedding) != self.embedding_dimension:
@@ -183,16 +198,33 @@ class EmbeddingService:
                 provider=self.provider,
             )
 
+            await self._cache_query_embedding(normalized_text, embedding)
+
             return embedding
 
         except Exception as e:
             logger.error(
                 "embedding_query_failed",
                 error=str(e),
-                text_length=len(text) if text else 0,
+                text_length=len(normalized_text),
                 provider=self.provider,
             )
             raise
+
+    async def _get_cached_query_embedding(self, normalized_text: str) -> list[float] | None:
+        """Read a cached query embedding without letting cache failures break requests."""
+        try:
+            return await self.query_cache.get(normalized_text)
+        except Exception as exc:
+            logger.warning("embedding_query_cache_read_failed", error=str(exc))
+            return None
+
+    async def _cache_query_embedding(self, normalized_text: str, embedding: list[float]) -> None:
+        """Persist a query embedding without letting cache failures break requests."""
+        try:
+            await self.query_cache.set(normalized_text, embedding)
+        except Exception as exc:
+            logger.warning("embedding_query_cache_write_failed", error=str(exc))
 
     def _prepare_text(self, title: str, fields: list[str | None] | None = None) -> str:
         """
