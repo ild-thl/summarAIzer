@@ -42,9 +42,11 @@ class RecommendationQueryParams:
     duration_min: int | None = None
     duration_max: int | None = None
     liked_embedding_weight: float = 0.3
+    preference_dominance_margin: float = 0.02
     disliked_embedding_weight: float = 0.2
     soft_filters: list[str] | None = None
     filter_margin_weight: float = 0.5
+    min_overall_score: float | None = 0.5
     diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
     exclude_parallel_accepted_sessions: bool = False
@@ -287,6 +289,45 @@ class RecommendationService:
             for filter_key in requested_soft
             if self._has_effective_filter_value(filter_key, params)
         }
+
+    def _uses_accepted_centroid_retrieval(self, params: RecommendationQueryParams) -> bool:
+        return not self._normalize_query_list(params.query) and bool(params.accepted_ids)
+
+    def _apply_score_threshold(
+        self,
+        recommendations: list[tuple],
+        min_overall_score: float | None,
+    ) -> list[tuple]:
+        if min_overall_score is None:
+            return recommendations
+
+        return [
+            (session, scores)
+            for session, scores in recommendations
+            if scores["overall_score"] >= min_overall_score
+        ]
+
+    @staticmethod
+    def _passes_preference_dominance_check(
+        scores: dict[str, Any],
+        preference_dominance_margin: float,
+    ) -> bool:
+        liked_similarity = scores.get("liked_cluster_similarity")
+        disliked_similarity = scores.get("disliked_similarity")
+        if liked_similarity is None or disliked_similarity is None:
+            return True
+        return disliked_similarity <= liked_similarity + preference_dominance_margin
+
+    def _apply_preference_dominance_filter(
+        self,
+        recommendations: list[tuple],
+        preference_dominance_margin: float,
+    ) -> list[tuple]:
+        return [
+            (session, scores)
+            for session, scores in recommendations
+            if self._passes_preference_dominance_check(scores, preference_dominance_margin)
+        ]
 
     def _optimize_session_plan(
         self,
@@ -1226,9 +1267,11 @@ class RecommendationService:
         duration_min: int | None = None,
         duration_max: int | None = None,
         liked_embedding_weight: float = 0.3,
+        preference_dominance_margin: float = 0.02,
         disliked_embedding_weight: float = 0.2,
         soft_filters: list[str] | None = None,
         filter_margin_weight: float = 0.5,
+        min_overall_score: float | None = 0.5,
         diversity_weight: float = 0.3,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
@@ -1254,8 +1297,10 @@ class RecommendationService:
             duration_max=duration_max,
             liked_embedding_weight=liked_embedding_weight,
             disliked_embedding_weight=disliked_embedding_weight,
+            preference_dominance_margin=preference_dominance_margin,
             soft_filters=soft_filters,
             filter_margin_weight=filter_margin_weight,
+            min_overall_score=min_overall_score,
             diversity_weight=diversity_weight,
             time_windows=time_windows,
             exclude_parallel_accepted_sessions=exclude_parallel_accepted_sessions,
@@ -1285,6 +1330,8 @@ class RecommendationService:
             time_windows_count=len(params.time_windows or []),
             requested_soft_filters=requested_soft_filters,
             effective_soft_filters=sorted(effective_soft),
+            preference_dominance_margin=params.preference_dominance_margin,
+            min_overall_score=params.min_overall_score,
             diversity_weight=params.diversity_weight,
             min_break_minutes=min_break_minutes,
             max_gap_minutes=max_gap_minutes,
@@ -1393,17 +1440,11 @@ class RecommendationService:
         chroma_search_start = perf_counter()
         for query_embedding in query_embeddings:
             try:
-                if where_condition:
-                    results = await self.embedding_service.search_similar_sessions(
-                        query_embedding,
-                        limit=search_limit,
-                        where=where_condition,
-                    )
-                else:
-                    results = await self.embedding_service.search_similar_sessions(
-                        query_embedding,
-                        limit=search_limit,
-                    )
+                results = await self.embedding_service.search_similar_sessions(
+                    query_embedding,
+                    limit=search_limit,
+                    where=where_condition,
+                )
                 chroma_results.extend(results)
             except Exception as e:
                 logger.error("recommendation_chroma_search_failed", error=str(e))
@@ -1519,7 +1560,7 @@ class RecommendationService:
                 for i, value in enumerate(emb):
                     centroid[i] += value
             centroid = [value / len(accepted_embeddings) for value in centroid]
-            return centroid, False
+            return centroid, True
 
         return self._get_default_embedding(), False
 
@@ -1534,6 +1575,13 @@ class RecommendationService:
         if accepted_ids:
             try:
                 liked_embeddings = await self.embedding_service.get_session_embeddings(accepted_ids)
+                if not isinstance(liked_embeddings, dict):
+                    logger.warning(
+                        "liked_embeddings_prefetch_invalid_result",
+                        result_type=type(liked_embeddings).__name__,
+                        accepted_ids_count=len(accepted_ids),
+                    )
+                    liked_embeddings = {}
             except Exception as e:
                 logger.warning(
                     "liked_embeddings_prefetch_failed",
@@ -1546,6 +1594,13 @@ class RecommendationService:
                 disliked_embeddings = await self.embedding_service.get_session_embeddings(
                     rejected_ids
                 )
+                if not isinstance(disliked_embeddings, dict):
+                    logger.warning(
+                        "disliked_embeddings_prefetch_invalid_result",
+                        result_type=type(disliked_embeddings).__name__,
+                        rejected_ids_count=len(rejected_ids),
+                    )
+                    disliked_embeddings = {}
             except Exception as e:
                 logger.warning(
                     "disliked_embeddings_prefetch_failed",
@@ -1558,6 +1613,33 @@ class RecommendationService:
     def _get_default_embedding(self) -> list[float]:
         return [0.0] * self.embedding_service.embedding_dimension
 
+    async def _fetch_embeddings_for_session_ids(
+        self,
+        session_ids: list[int],
+    ) -> dict[str, list[float]]:
+        chroma_id_to_embedding: dict[str, list[float]] = {}
+        if not session_ids:
+            return chroma_id_to_embedding
+
+        try:
+            embeddings_dict = await self.embedding_service.get_session_embeddings(session_ids)
+            if not isinstance(embeddings_dict, dict):
+                logger.warning(
+                    "batch_embedding_retrieval_invalid_result",
+                    result_type=type(embeddings_dict).__name__,
+                    sessions_count=len(session_ids),
+                )
+                return {}
+            for session_id, embedding in embeddings_dict.items():
+                chroma_id_to_embedding[f"session_{session_id}"] = embedding
+        except Exception as e:
+            logger.warning(
+                "batch_embedding_retrieval_failed",
+                error=str(e),
+                sessions_count=len(session_ids),
+            )
+        return chroma_id_to_embedding
+
     async def _batch_fetch_embeddings(
         self,
         chroma_results_hard: list[tuple] | None,
@@ -1568,29 +1650,7 @@ class RecommendationService:
             *(chroma_results_soft or []),
         ]
         all_session_ids = list(dict.fromkeys(session_id for session_id, _, _ in combined_results))
-
-        chroma_id_to_embedding: dict[str, list[float]] = {}
-        if all_session_ids:
-            try:
-                embeddings_dict = await self.embedding_service.get_session_embeddings(
-                    all_session_ids
-                )
-                if not isinstance(embeddings_dict, dict):
-                    logger.warning(
-                        "batch_embedding_retrieval_invalid_result",
-                        result_type=type(embeddings_dict).__name__,
-                        sessions_count=len(all_session_ids),
-                    )
-                    return {}
-                for session_id, embedding in embeddings_dict.items():
-                    chroma_id_to_embedding[f"session_{session_id}"] = embedding
-            except Exception as e:
-                logger.warning(
-                    "batch_embedding_retrieval_failed",
-                    error=str(e),
-                    sessions_count=len(all_session_ids),
-                )
-        return chroma_id_to_embedding
+        return await self._fetch_embeddings_for_session_ids(all_session_ids)
 
     def _compute_soft_filter_compliance(
         self,
@@ -1638,6 +1698,11 @@ class RecommendationService:
         limit: int,
         params: RecommendationQueryParams,
     ) -> list[tuple]:
+        recommendations = self._apply_preference_dominance_filter(
+            recommendations,
+            params.preference_dominance_margin,
+        )
+        recommendations = self._apply_score_threshold(recommendations, params.min_overall_score)
         recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
 
         if params.diversity_weight > 0:
@@ -1680,6 +1745,7 @@ class RecommendationService:
             db=db, chroma_results=chroma_results
         )
         bulk_session_load_ms = round((perf_counter() - bulk_load_start) * 1000, 2)
+        uses_accepted_centroid_retrieval = self._uses_accepted_centroid_retrieval(params)
 
         scoring_start = perf_counter()
         for session_id, chroma_similarity, _ in chroma_results:
@@ -1702,6 +1768,7 @@ class RecommendationService:
                 session_embedding=session_embedding,
                 chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
+                uses_accepted_centroid_retrieval=uses_accepted_centroid_retrieval,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
                 liked_embedding_weight=params.liked_embedding_weight,
@@ -1742,6 +1809,7 @@ class RecommendationService:
         limit: int = 10,
     ) -> list[tuple]:
         try:
+            benchmark_start = perf_counter()
             soft = self._get_effective_soft_filters(params)
             exclude_ids = params.accepted_ids + params.rejected_ids
             sessions = session_crud.list_with_filters(
@@ -1760,22 +1828,54 @@ class RecommendationService:
                 exclude_ids=exclude_ids,
             )
 
-            recommendations: list[tuple] = []
-            for session in sessions:
-                soft_compliance = self._compute_soft_filter_compliance(session, params)
-                scores = {
-                    "overall_score": soft_compliance if soft_compliance is not None else 1.0,
-                    "semantic_similarity": None,
-                    "liked_cluster_similarity": None,
-                    "disliked_similarity": None,
-                    "filter_compliance_score": soft_compliance,
-                    "diversity_score": None,
-                }
-                recommendations.append((session, scores))
+            preference_prefetch_start = perf_counter()
+            preference_embeddings = await self._prefetch_preference_embeddings(
+                accepted_ids=params.accepted_ids,
+                rejected_ids=params.rejected_ids,
+            )
+            preference_prefetch_ms = round((perf_counter() - preference_prefetch_start) * 1000, 2)
 
-            if soft:
-                recommendations.sort(key=lambda x: x[1]["overall_score"], reverse=True)
-            recommendations = recommendations[:limit]
+            embedding_fetch_start = perf_counter()
+            sessions_by_embedding_id = await self._fetch_embeddings_for_session_ids(
+                [session.id for session in sessions]
+            )
+            embedding_fetch_ms = round((perf_counter() - embedding_fetch_start) * 1000, 2)
+            embedding_required = bool(preference_embeddings["liked"]) or bool(
+                preference_embeddings["disliked"]
+            )
+
+            recommendations: list[tuple] = []
+            scoring_start = perf_counter()
+            for session in sessions:
+                session_embedding = sessions_by_embedding_id.get(f"session_{session.id}")
+                if session_embedding is None:
+                    if embedding_required:
+                        logger.debug("session_embedding_not_found", session_id=session.id)
+                    session_embedding = self._get_default_embedding()
+
+                soft_compliance = self._compute_soft_filter_compliance(session, params)
+                scores = await self._compute_recommendation_scores(
+                    session_embedding=session_embedding,
+                    chroma_similarity=0.0,
+                    semantic_similarity_enabled=False,
+                    uses_accepted_centroid_retrieval=False,
+                    liked_embeddings=preference_embeddings["liked"],
+                    disliked_embeddings=preference_embeddings["disliked"],
+                    liked_embedding_weight=params.liked_embedding_weight,
+                    disliked_embedding_weight=params.disliked_embedding_weight,
+                    filter_compliance_score=soft_compliance,
+                    filter_margin_weight=params.filter_margin_weight,
+                )
+                recommendations.append((session, scores))
+            scoring_ms = round((perf_counter() - scoring_start) * 1000, 2)
+
+            post_process_start = perf_counter()
+            recommendations = self._finalize_recommendations(
+                recommendations=recommendations,
+                limit=limit,
+                params=params,
+            )
+            post_process_ms = round((perf_counter() - post_process_start) * 1000, 2)
 
             logger.debug(
                 "recommendation_crud_completed",
@@ -1783,6 +1883,11 @@ class RecommendationService:
                 recommendations=len(recommendations),
                 limit=limit,
                 soft_filters=list(soft),
+                preference_prefetch_ms=preference_prefetch_ms,
+                embedding_fetch_ms=embedding_fetch_ms,
+                scoring_ms=scoring_ms,
+                post_process_ms=post_process_ms,
+                total_ms=round((perf_counter() - benchmark_start) * 1000, 2),
             )
             return recommendations
         except Exception as e:
@@ -1843,6 +1948,7 @@ class RecommendationService:
         session_embedding: list[float],
         chroma_similarity: float,
         semantic_similarity_enabled: bool,
+        uses_accepted_centroid_retrieval: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float,
@@ -1852,6 +1958,9 @@ class RecommendationService:
     ) -> dict[str, float | None]:
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
+        if uses_accepted_centroid_retrieval:
+            semantic_sim = None
+            liked_cluster_sim = chroma_similarity
         disliked_sim = self._compute_disliked_similarity(session_embedding, disliked_embeddings)
 
         components, component_weights = self.score_engine.build_components(
