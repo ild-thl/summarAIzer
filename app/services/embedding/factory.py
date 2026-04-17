@@ -14,6 +14,9 @@ from app.services.embedding.exceptions import ChromaConnectionError
 from app.services.embedding.query_refinement_service import QueryRefinementService
 from app.services.embedding.search_service import EmbeddingSearchService
 from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.semantic_circuit_breaker import (
+    RecommendationSemanticCircuitBreaker,
+)
 from app.services.recommendation.service import RecommendationService
 
 logger = structlog.get_logger()
@@ -101,9 +104,15 @@ def get_recommendation_service() -> RecommendationService:
         raise ChromaConnectionError("Embeddings are disabled")
 
     settings = get_settings()
+    semantic_circuit_breaker = RecommendationSemanticCircuitBreaker(
+        redis_url=settings.recommendation_semantic_circuit_breaker_url,
+        failure_threshold=settings.recommendation_semantic_circuit_breaker_threshold,
+        cooldown_minutes=settings.recommendation_semantic_circuit_breaker_cooldown_minutes,
+    )
     return RecommendationService(
         embedding_service,
         semantic_fallback_enabled=settings.recommendation_semantic_fallback_enabled,
+        semantic_circuit_breaker=semantic_circuit_breaker,
     )
 
 

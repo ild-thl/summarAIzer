@@ -84,6 +84,19 @@ class Settings(BaseSettings):
     recommendation_semantic_fallback_enabled: bool = (
         os.getenv("RECOMMENDATION_SEMANTIC_FALLBACK_ENABLED", "true").lower() == "true"
     )
+    recommendation_semantic_circuit_breaker_url: str = os.getenv(
+        "RECOMMENDATION_SEMANTIC_CIRCUIT_BREAKER_URL",
+        os.getenv(
+            "EMBEDDING_QUERY_CACHE_URL",
+            os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
+        ),
+    )
+    recommendation_semantic_circuit_breaker_threshold: int = int(
+        os.getenv("RECOMMENDATION_SEMANTIC_CIRCUIT_BREAKER_THRESHOLD", "3")
+    )
+    recommendation_semantic_circuit_breaker_cooldown_minutes: int = int(
+        os.getenv("RECOMMENDATION_SEMANTIC_CIRCUIT_BREAKER_COOLDOWN_MINUTES", "1")
+    )
 
     # Chroma Configuration for vector storage
     chroma_url: str = os.getenv("CHROMA_URL", "http://localhost:8000")

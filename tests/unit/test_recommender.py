@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from app.schemas.session import RecommendRequest, SessionStatus
 from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.semantic_circuit_breaker import (
+    RecommendationSemanticCircuitBreaker,
+)
 from app.services.recommendation.service import RecommendationQueryParams, RecommendationService
 
 
@@ -583,8 +586,15 @@ class TestSemanticFallbackDegradation:
     """Test graceful degradation from semantic search to CRUD fallback."""
 
     @pytest.fixture
-    def search_service(self):
-        return RecommendationService(AsyncMock(spec=EmbeddingService))
+    def circuit_breaker(self):
+        return AsyncMock(spec=RecommendationSemanticCircuitBreaker)
+
+    @pytest.fixture
+    def search_service(self, circuit_breaker):
+        return RecommendationService(
+            AsyncMock(spec=EmbeddingService),
+            semantic_circuit_breaker=circuit_breaker,
+        )
 
     @pytest.fixture
     def params(self):
@@ -597,9 +607,11 @@ class TestSemanticFallbackDegradation:
 
     @pytest.mark.asyncio
     async def test_collect_base_recommendations_degrades_to_fallback(
-        self, search_service, mock_db_session, params
+        self, search_service, circuit_breaker, mock_db_session, params
     ):
         fallback_results = [(SimpleNamespace(id=1), {"overall_score": 1.0})]
+        circuit_breaker.is_open.return_value = (False, None, 0)
+        circuit_breaker.record_failure.return_value = (1, None)
         search_service._recommend_with_semantic_search = AsyncMock(
             side_effect=EmbeddingSearchError("hf backend timeout")
         )
@@ -615,6 +627,7 @@ class TestSemanticFallbackDegradation:
         assert recommendations == fallback_results
         assert debug["degraded_to_fallback"] is True
         assert debug["degradation_reason"] == "EmbeddingSearchError"
+        circuit_breaker.record_failure.assert_awaited_once_with("EmbeddingSearchError")
         search_service._recommend_fallback.assert_awaited_once_with(
             db=mock_db_session,
             params=params,
@@ -623,8 +636,9 @@ class TestSemanticFallbackDegradation:
 
     @pytest.mark.asyncio
     async def test_collect_base_recommendations_keeps_invalid_query_error(
-        self, search_service, mock_db_session, params
+        self, search_service, circuit_breaker, mock_db_session, params
     ):
+        circuit_breaker.is_open.return_value = (False, None, 0)
         search_service._recommend_with_semantic_search = AsyncMock(
             side_effect=InvalidEmbeddingTextError("invalid query")
         )
@@ -638,6 +652,56 @@ class TestSemanticFallbackDegradation:
                 candidate_limit=5,
             )
 
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_fallback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_bypasses_semantic_when_circuit_is_open(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        fallback_results = [(SimpleNamespace(id=1), {"overall_score": 1.0})]
+        circuit_breaker.is_open.return_value = (True, datetime.utcnow() + timedelta(minutes=3), 2)
+        search_service._recommend_with_semantic_search = AsyncMock()
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_results)
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == fallback_results
+        assert debug["degraded_to_fallback"] is True
+        assert debug["degradation_reason"] == "semantic_circuit_open"
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_with_semantic_search.assert_not_called()
+        search_service._recommend_fallback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_retries_semantic_after_cooldown(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        circuit_breaker.is_open.return_value = (False, None, 0)
+        expected_debug = search_service._build_recommendation_debug_payload(hard_pass_results=4)
+        expected_results = [(SimpleNamespace(id=3), {"overall_score": 0.8})]
+        search_service._recommend_with_semantic_search = AsyncMock(
+            return_value=(expected_results, expected_debug)
+        )
+        search_service._recommend_fallback = AsyncMock()
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == expected_results
+        assert debug == expected_debug
+        circuit_breaker.record_success.assert_awaited_once()
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_with_semantic_search.assert_awaited_once()
         search_service._recommend_fallback.assert_not_called()
 
 

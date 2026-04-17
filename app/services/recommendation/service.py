@@ -19,6 +19,9 @@ from app.services.recommendation.diversity import RecommendationDiversityOptimiz
 from app.services.recommendation.filters import RecommendationFilterEvaluator
 from app.services.recommendation.planning import RecommendationPlanner
 from app.services.recommendation.scoring import RecommendationScoreEngine
+from app.services.recommendation.semantic_circuit_breaker import (
+    RecommendationSemanticCircuitBreaker,
+)
 
 logger = structlog.get_logger()
 
@@ -94,10 +97,12 @@ class RecommendationService:
         self,
         embedding_service: EmbeddingService,
         semantic_fallback_enabled: bool = True,
+        semantic_circuit_breaker: RecommendationSemanticCircuitBreaker | None = None,
     ):
         self.embedding_service = embedding_service
         self.recommendation_planner = RecommendationPlanner()
         self.semantic_fallback_enabled = semantic_fallback_enabled
+        self.semantic_circuit_breaker = semantic_circuit_breaker
         self.filter_evaluator = RecommendationFilterEvaluator(self.recommendation_planner)
         self.score_engine = RecommendationScoreEngine()
         self.diversity_optimizer = RecommendationDiversityOptimizer()
@@ -119,6 +124,10 @@ class RecommendationService:
             "degraded_to_fallback": degraded_to_fallback,
             "degradation_reason": degradation_reason,
         }
+
+    def _semantic_circuit_breaker_enabled(self) -> bool:
+        """Return whether semantic circuit breaker protection is active."""
+        return self.semantic_fallback_enabled and self.semantic_circuit_breaker is not None
 
     @staticmethod
     def _extract_window_bounds(window: Any) -> tuple[datetime | None, datetime | None]:
@@ -682,6 +691,28 @@ class RecommendationService:
         float,
     ]:
         """Try semantic gap-fill reranking and degrade gracefully on transient failures."""
+        circuit_is_open = False
+        circuit_open_until: datetime | None = None
+        if self._semantic_circuit_breaker_enabled():
+            circuit_is_open, circuit_open_until, _ = await self.semantic_circuit_breaker.is_open()
+
+        if circuit_is_open:
+            logger.warning(
+                "recommendation_gap_fill_semantic_bypassed_circuit_open",
+                gap_window=self._summarize_gap_windows([target_gap])[0],
+                candidate_limit=gap_candidate_limit,
+                circuit_open_until=circuit_open_until,
+            )
+            return (
+                None,
+                0,
+                "fallback_semantic_circuit_open",
+                0.0,
+                cached_query_embeddings,
+                cached_semantic_similarity_enabled,
+                0.0,
+            )
+
         query_embedding_ms = 0.0
         if cached_query_embeddings is None or cached_semantic_similarity_enabled is None:
             query_embedding_start = perf_counter()
@@ -737,12 +768,20 @@ class RecommendationService:
         except InvalidEmbeddingTextError:
             raise
         except Exception as exc:
+            failure_count = 0
+            circuit_open_until = None
+            if self._semantic_circuit_breaker_enabled():
+                failure_count, circuit_open_until = (
+                    await self.semantic_circuit_breaker.record_failure(type(exc).__name__)
+                )
             logger.warning(
                 "recommendation_gap_fill_semantic_rerank_degraded",
                 error=str(exc),
                 error_type=type(exc).__name__,
                 gap_window=self._summarize_gap_windows([target_gap])[0],
                 candidate_limit=gap_candidate_limit,
+                consecutive_failures=failure_count,
+                circuit_open_until=circuit_open_until,
             )
             return (
                 None,
@@ -808,16 +847,52 @@ class RecommendationService:
             )
             return recommendations, self._build_recommendation_debug_payload()
 
+        circuit_is_open = False
+        circuit_open_until: datetime | None = None
+        consecutive_failures = 0
+        if self._semantic_circuit_breaker_enabled():
+            (
+                circuit_is_open,
+                circuit_open_until,
+                consecutive_failures,
+            ) = await self.semantic_circuit_breaker.is_open()
+
+        if circuit_is_open:
+            logger.warning(
+                "recommendation_semantic_bypassed_circuit_open",
+                candidate_limit=candidate_limit,
+                circuit_open_until=circuit_open_until,
+                consecutive_failures=consecutive_failures,
+            )
+            recommendations = await self._recommend_fallback(
+                db=db,
+                params=params,
+                limit=candidate_limit,
+            )
+            return recommendations, self._build_recommendation_debug_payload(
+                degraded_to_fallback=True,
+                degradation_reason="semantic_circuit_open",
+            )
+
         try:
-            return await self._recommend_with_semantic_search(
+            recommendations, debug = await self._recommend_with_semantic_search(
                 db=db,
                 params=params,
                 seen_ids=seen_ids,
                 candidate_limit=candidate_limit,
             )
+            if self._semantic_circuit_breaker_enabled():
+                await self.semantic_circuit_breaker.record_success()
+            return recommendations, debug
         except InvalidEmbeddingTextError:
             raise
         except Exception as exc:
+            failure_count = 0
+            circuit_open_until = None
+            if self._semantic_circuit_breaker_enabled():
+                failure_count, circuit_open_until = (
+                    await self.semantic_circuit_breaker.record_failure(type(exc).__name__)
+                )
             if not self.semantic_fallback_enabled:
                 raise
 
@@ -829,6 +904,8 @@ class RecommendationService:
                 accepted_ids_count=len(params.accepted_ids),
                 rejected_ids_count=len(params.rejected_ids),
                 query_count=len(self._normalize_query_list(params.query)),
+                consecutive_failures=failure_count,
+                circuit_open_until=circuit_open_until,
             )
             recommendations = await self._recommend_fallback(
                 db=db,
@@ -839,13 +916,6 @@ class RecommendationService:
                 degraded_to_fallback=True,
                 degradation_reason=type(exc).__name__,
             )
-
-        return await self._recommend_with_semantic_search(
-            db=db,
-            params=params,
-            seen_ids=seen_ids,
-            candidate_limit=candidate_limit,
-        )
 
     async def _recommend_plan_mode(
         self,
