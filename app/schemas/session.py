@@ -457,18 +457,27 @@ class RecommendRequest(BaseModel):
 
     # Phase 2: Tuning parameters for re-ranking
     liked_embedding_weight: float = Field(
-        default=0.3,
+        default=0.5,
         ge=0.0,
         le=1.0,
         description="Weight (a) to boost sessions similar to liked sessions (0-1). "
         "Higher = more influence from liked session similarities. Default 0.3",
     )
     disliked_embedding_weight: float = Field(
-        default=0.2,
+        default=0.1,
         ge=0.0,
         le=1.0,
         description="Weight (b) to penalize sessions similar to disliked sessions (0-1). "
         "Higher = stronger penalty from disliked similarities. Default 0.2",
+    )
+    preference_dominance_margin: float = Field(
+        default=0.02,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Margin allowed before a disliked similarity is treated as dominant over liked similarity. "
+            "Recommendations are excluded only when disliked_similarity exceeds liked_cluster_similarity by more than this margin."
+        ),
     )
 
     # Phase 3: Soft filter margins
@@ -501,6 +510,15 @@ class RecommendRequest(BaseModel):
         description=(
             "Weight to blend filter_compliance_score into overall_score when soft_filters are active (0-1). "
             "Default 0.5 means filter compliance contributes 50% to final score."
+        ),
+    )
+    min_overall_score: float | None = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum overall_score required for recommendations. "
+            "Set to null to disable thresholding."
         ),
     )
     # Phase 4: Plan optimization mode (non-overlapping schedule curation)
@@ -761,7 +779,10 @@ class SessionWithScore(BaseModel):
     session: SessionListResponse
     overall_score: float = Field(..., ge=0, le=1, description="Overall recommendation score (0-1)")
     semantic_similarity: float | None = Field(
-        None, ge=0, le=1, description="Semantic similarity to query (0-1, None if no query)"
+        None,
+        ge=0,
+        le=1,
+        description="Semantic similarity to the user query (0-1, None when ranking is driven by liked-session centroid or fallback logic)",
     )
     liked_cluster_similarity: float | None = Field(
         None,

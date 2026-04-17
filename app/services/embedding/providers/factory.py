@@ -37,13 +37,15 @@ class OpenAIEmbeddingsBackend:
 class HuggingFaceInferenceEmbeddingsBackend:
     """HuggingFace Inference API embeddings backend."""
 
-    def __init__(self, api_key: str, api_base_url: str):
+    def __init__(self, api_key: str, api_base_url: str, request_timeout_seconds: float = 10.0):
         """Initialize HuggingFace embeddings."""
         self.api_key = api_key
         self.api_base_url = api_base_url
+        self.request_timeout_seconds = max(request_timeout_seconds, 1.0)
         logger.info(
             "huggingface_embeddings_initialized",
             api_base_url=api_base_url,
+            request_timeout_seconds=self.request_timeout_seconds,
         )
 
     async def aembed_query(self, text: str) -> list[float]:
@@ -59,7 +61,7 @@ class HuggingFaceInferenceEmbeddingsBackend:
             self.api_base_url,
             json={"inputs": [text]},
             headers=headers,
-            timeout=30,
+            timeout=self.request_timeout_seconds,
         )
         response.raise_for_status()
         result = response.json()
@@ -106,6 +108,7 @@ def create_embeddings_backend(provider: str, **kwargs) -> EmbeddingsBackendProto
         return HuggingFaceInferenceEmbeddingsBackend(
             api_key=kwargs["api_key"],
             api_base_url=kwargs["api_base_url"],
+            request_timeout_seconds=kwargs.get("request_timeout_seconds", 10.0),
         )
     else:
         raise ValueError(f"Unknown embeddings provider: {provider}. Use 'openai' or 'huggingface'")

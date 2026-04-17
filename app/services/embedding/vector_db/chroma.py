@@ -19,54 +19,49 @@ class ChromaInitializer:
 
     @staticmethod
     def create_client(
-        chroma_host: str,
-        chroma_port: int,
+        chroma_url: str,
         chroma_tenant: str,
         chroma_credentials: str | None,
         chroma_provider: str | None,
     ) -> ChromaClientProtocol:
-        if chroma_credentials and chroma_provider:
-            logger.info(
-                "chroma_client_auth_enabled",
-                provider=chroma_provider,
-                host=chroma_host,
-                port=chroma_port,
-            )
-            client = chromadb.HttpClient(
-                host=chroma_host,
-                port=chroma_port,
-                settings=ChromaSettings(
-                    chroma_client_auth_provider=chroma_provider,
-                    chroma_client_auth_credentials=chroma_credentials,
-                    chroma_auth_token_transport_header="Authorization",
-                    anonymized_telemetry=False,
-                ),
-                tenant=chroma_tenant,
-            )
-            logger.info(
-                "chroma_client_initialized",
-                host=chroma_host,
-                port=chroma_port,
-                auth_enabled=True,
-            )
-            return client
 
-        logger.info(
-            "chroma_client_no_auth",
-            host=chroma_host,
-            port=chroma_port,
+        chroma_settings = ChromaInitializer._init_chroma_settings(
+            chroma_credentials=chroma_credentials,
+            chroma_provider=chroma_provider,
         )
+
         client = chromadb.HttpClient(
-            host=chroma_host,
-            port=chroma_port,
+            host=chroma_url,
+            settings=chroma_settings,
+            tenant=chroma_tenant,
         )
         logger.info(
             "chroma_client_initialized",
-            host=chroma_host,
-            port=chroma_port,
-            auth_enabled=False,
+            url=chroma_url,
         )
         return client
+
+    @staticmethod
+    def _init_chroma_settings(
+        chroma_credentials: str | None,
+        chroma_provider: str | None,
+    ) -> ChromaSettings:
+        if chroma_credentials and chroma_provider:
+            logger.info(
+                "chroma_settings_auth_enabled",
+                provider=chroma_provider,
+            )
+            return ChromaSettings(
+                chroma_client_auth_provider=chroma_provider,
+                chroma_client_auth_credentials=chroma_credentials,
+                chroma_auth_token_transport_header="Authorization",
+                anonymized_telemetry=False,
+            )
+        else:
+            logger.info("chroma_settings_no_auth")
+            return ChromaSettings(
+                anonymized_telemetry=False,
+            )
 
     @staticmethod
     def init_collection(

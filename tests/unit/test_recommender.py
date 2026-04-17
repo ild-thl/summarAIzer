@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from app.schemas.session import RecommendRequest, SessionStatus
 from app.services.embedding.exceptions import EmbeddingSearchError, InvalidEmbeddingTextError
 from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.semantic_circuit_breaker import (
+    RecommendationSemanticCircuitBreaker,
+)
 from app.services.recommendation.service import RecommendationQueryParams, RecommendationService
 
 
@@ -61,7 +64,7 @@ class TestQueryEmbeddingDetermination:
         # Result should be [0.25]*768
         assert len(embedding) == 768
         assert all(0.2 <= x <= 0.3 for x in embedding)
-        assert semantic_enabled is False
+        assert semantic_enabled is True
         mock_embedding_service.get_session_embeddings.assert_called_once_with([1, 2])
 
     @pytest.mark.asyncio
@@ -184,6 +187,7 @@ class TestRecommendationScoring:
             session_embedding=[0.5] * 768,
             chroma_similarity=0.85,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={},
             disliked_embeddings={},
             liked_embedding_weight=0.3,
@@ -203,6 +207,7 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,  # Similar to liked session [0.2]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={},
             liked_embedding_weight=0.3,
@@ -222,6 +227,7 @@ class TestRecommendationScoring:
             session_embedding=[0.3] * 768,  # Similar to disliked [0.3]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.3,
@@ -239,6 +245,7 @@ class TestRecommendationScoring:
             session_embedding=[0.25] * 768,  # Midpoint between liked and disliked
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.2,  # Weight for liked component
@@ -257,6 +264,7 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,
             chroma_similarity=0.6,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.0,  # Disabled
@@ -274,6 +282,7 @@ class TestRecommendationScoring:
             session_embedding=[1.0] * 768,  # Perfect match
             chroma_similarity=0.9,
             semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={},
             liked_embedding_weight=0.5,  # Large boost
@@ -282,6 +291,75 @@ class TestRecommendationScoring:
 
         # Should be clamped to 1.0 even if formula produces > 1
         assert 0 <= scores["overall_score"] <= 1
+
+    @pytest.mark.asyncio
+    async def test_centroid_retrieval_reuses_chroma_similarity_as_liked_cluster(
+        self, search_service
+    ):
+        """Accepted-id centroid retrieval should reuse Chroma similarity as liked cluster score."""
+        scores = await search_service._compute_recommendation_scores(
+            session_embedding=[0.5] * 768,
+            chroma_similarity=0.85,
+            semantic_similarity_enabled=True,
+            uses_accepted_centroid_retrieval=True,
+            liked_embeddings={1: [0.1] * 768},
+            disliked_embeddings={},
+            liked_embedding_weight=0.3,
+            disliked_embedding_weight=0.2,
+        )
+
+        assert scores["semantic_similarity"] is None
+        assert scores["liked_cluster_similarity"] == 0.85
+        assert 0 <= scores["overall_score"] <= 1
+
+    def test_preference_dominance_filter_removes_disliked_dominant_sessions(self, search_service):
+        """Sessions more similar to disliked than liked preferences should be excluded."""
+        kept_session = SimpleNamespace(id=1)
+        removed_session = SimpleNamespace(id=2)
+
+        filtered = search_service._apply_preference_dominance_filter(
+            [
+                (
+                    kept_session,
+                    {
+                        "overall_score": 0.7,
+                        "liked_cluster_similarity": 0.8,
+                        "disliked_similarity": 0.4,
+                    },
+                ),
+                (
+                    removed_session,
+                    {
+                        "overall_score": 0.9,
+                        "liked_cluster_similarity": 0.5,
+                        "disliked_similarity": 0.7,
+                    },
+                ),
+            ],
+            preference_dominance_margin=0.05,
+        )
+
+        assert [session.id for session, _ in filtered] == [1]
+
+    def test_preference_dominance_filter_keeps_sessions_within_margin(self, search_service):
+        """Small disliked-over-liked differences inside the margin should be tolerated."""
+        kept_session = SimpleNamespace(id=1)
+
+        filtered = search_service._apply_preference_dominance_filter(
+            [
+                (
+                    kept_session,
+                    {
+                        "overall_score": 0.7,
+                        "liked_cluster_similarity": 0.5,
+                        "disliked_similarity": 0.53,
+                    },
+                ),
+            ],
+            preference_dominance_margin=0.05,
+        )
+
+        assert [session.id for session, _ in filtered] == [1]
 
 
 class TestCosineSimilarity:
@@ -471,6 +549,44 @@ class TestRecommendFallback:
             assert session == mock_session
             assert isinstance(scores, dict)
             assert "overall_score" in scores
+            assert "liked_cluster_similarity" in scores
+            assert "disliked_similarity" in scores
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_fallback_computes_preference_similarity_scores(
+        self, search_service, mock_db_session
+    ):
+        """Fallback should compute liked/disliked similarity when embeddings are available."""
+        liked_session_id = 11
+        disliked_session_id = 12
+        candidate_session = Mock(id=21, status=SessionStatus.PUBLISHED)
+        search_service.embedding_service.get_session_embeddings = AsyncMock(
+            side_effect=[
+                {liked_session_id: [0.2] * 768},
+                {disliked_session_id: [0.4] * 768},
+                {candidate_session.id: [0.3] * 768},
+            ]
+        )
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.list_with_filters.return_value = [candidate_session]
+
+            results = await search_service._recommend_fallback(
+                db=mock_db_session,
+                params=RecommendationQueryParams(
+                    query=None,
+                    accepted_ids=[liked_session_id],
+                    rejected_ids=[disliked_session_id],
+                ),
+                limit=10,
+            )
+
+            assert len(results) == 1
+            _, scores = results[0]
+            assert scores["semantic_similarity"] is None
+            assert scores["liked_cluster_similarity"] is not None
+            assert scores["disliked_similarity"] is not None
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
@@ -517,6 +633,7 @@ class TestRecommendFallback:
                     duration_max=90,
                     soft_filters=["session_format", "language", "tags", "location", "duration"],
                     filter_margin_weight=0.2,
+                    min_overall_score=None,
                 ),
                 limit=10,
             )
@@ -566,6 +683,7 @@ class TestRecommendFallback:
                     rejected_ids=[],
                     soft_filters=["time_windows"],
                     time_windows=[{"start": now, "end": now + timedelta(hours=1)}],
+                    min_overall_score=None,
                 ),
                 limit=10,
             )
@@ -577,6 +695,129 @@ class TestRecommendFallback:
             assert (
                 results[0][1]["filter_compliance_score"] > results[1][1]["filter_compliance_score"]
             )
+
+
+class TestSemanticFallbackDegradation:
+    """Test graceful degradation from semantic search to CRUD fallback."""
+
+    @pytest.fixture
+    def circuit_breaker(self):
+        return AsyncMock(spec=RecommendationSemanticCircuitBreaker)
+
+    @pytest.fixture
+    def search_service(self, circuit_breaker):
+        return RecommendationService(
+            AsyncMock(spec=EmbeddingService),
+            semantic_circuit_breaker=circuit_breaker,
+        )
+
+    @pytest.fixture
+    def params(self):
+        return RecommendationQueryParams(
+            query="ml ops",
+            accepted_ids=[],
+            rejected_ids=[99],
+            event_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_degrades_to_fallback(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        fallback_results = [(SimpleNamespace(id=1), {"overall_score": 1.0})]
+        circuit_breaker.is_open.return_value = (False, None, 0)
+        circuit_breaker.record_failure.return_value = (1, None)
+        search_service._recommend_with_semantic_search = AsyncMock(
+            side_effect=EmbeddingSearchError("hf backend timeout")
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_results)
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == fallback_results
+        assert debug["degraded_to_fallback"] is True
+        assert debug["degradation_reason"] == "EmbeddingSearchError"
+        circuit_breaker.record_failure.assert_awaited_once_with("EmbeddingSearchError")
+        search_service._recommend_fallback.assert_awaited_once_with(
+            db=mock_db_session,
+            params=params,
+            limit=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_keeps_invalid_query_error(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        circuit_breaker.is_open.return_value = (False, None, 0)
+        search_service._recommend_with_semantic_search = AsyncMock(
+            side_effect=InvalidEmbeddingTextError("invalid query")
+        )
+        search_service._recommend_fallback = AsyncMock()
+
+        with pytest.raises(InvalidEmbeddingTextError, match="invalid query"):
+            await search_service._collect_base_recommendations(
+                db=mock_db_session,
+                params=params,
+                seen_ids=set(),
+                candidate_limit=5,
+            )
+
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_fallback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_bypasses_semantic_when_circuit_is_open(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        fallback_results = [(SimpleNamespace(id=1), {"overall_score": 1.0})]
+        circuit_breaker.is_open.return_value = (True, datetime.utcnow() + timedelta(minutes=3), 2)
+        search_service._recommend_with_semantic_search = AsyncMock()
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_results)
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == fallback_results
+        assert debug["degraded_to_fallback"] is True
+        assert debug["degradation_reason"] == "semantic_circuit_open"
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_with_semantic_search.assert_not_called()
+        search_service._recommend_fallback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_retries_semantic_after_cooldown(
+        self, search_service, circuit_breaker, mock_db_session, params
+    ):
+        circuit_breaker.is_open.return_value = (False, None, 0)
+        expected_debug = search_service._build_recommendation_debug_payload(hard_pass_results=4)
+        expected_results = [(SimpleNamespace(id=3), {"overall_score": 0.8})]
+        search_service._recommend_with_semantic_search = AsyncMock(
+            return_value=(expected_results, expected_debug)
+        )
+        search_service._recommend_fallback = AsyncMock()
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == expected_results
+        assert debug == expected_debug
+        circuit_breaker.record_success.assert_awaited_once()
+        circuit_breaker.record_failure.assert_not_called()
+        search_service._recommend_with_semantic_search.assert_awaited_once()
+        search_service._recommend_fallback.assert_not_called()
 
 
 class TestFullRecommendationPipeline:
@@ -668,6 +909,7 @@ class TestFullRecommendationPipeline:
                 accepted_ids=[],
                 rejected_ids=[],
                 limit=10,
+                min_overall_score=None,
             )
 
             assert search_service.embedding_service.search_similar_sessions.await_count == 2
@@ -708,11 +950,61 @@ class TestFullRecommendationPipeline:
             )
 
             assert len(results) == 2
-            # When using centroid (no query), semantic_similarity should be None
-            # because semantic_similarity_enabled=False
             for _, scores in results:
                 assert scores["semantic_similarity"] is None
-                assert "liked_cluster_similarity" in scores
+                assert scores["liked_cluster_similarity"] is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_full_pipeline_applies_threshold_to_semantic_results(
+        self, search_service, mock_db_session
+    ):
+        """Semantic recommendations below min_overall_score should be filtered out."""
+        mock_sessions = {
+            1: Mock(id=1, status=SessionStatus.PUBLISHED, event_id=100),
+            2: Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
+        }
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.read.side_effect = lambda _, sid: mock_sessions[sid]
+
+            results = await search_service.recommend_sessions(
+                query="machine learning",
+                db=mock_db_session,
+                accepted_ids=[],
+                rejected_ids=[],
+                limit=10,
+                min_overall_score=0.9,
+            )
+
+            assert len(results) == 1
+            assert results[0][0].id == 1
+            assert results[0][1]["overall_score"] >= 0.9
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("mock_embedding_service")
+    async def test_full_pipeline_keeps_fallback_results_when_threshold_is_set(
+        self, search_service, mock_db_session
+    ):
+        """CRUD fallback should also be filtered by min_overall_score once scored."""
+        mock_sessions = [
+            Mock(id=1, status=SessionStatus.PUBLISHED, event_id=100),
+            Mock(id=2, status=SessionStatus.PUBLISHED, event_id=100),
+        ]
+
+        with patch("app.services.recommendation.service.session_crud") as mock_crud:
+            mock_crud.list_with_filters.return_value = mock_sessions
+
+            results = await search_service.recommend_sessions(
+                query=None,
+                db=mock_db_session,
+                accepted_ids=[],
+                rejected_ids=[],
+                limit=10,
+                min_overall_score=0.9,
+            )
+
+            assert len(results) == 0
 
     @pytest.mark.asyncio
     async def test_full_pipeline_with_filters(
@@ -783,6 +1075,7 @@ class TestFullRecommendationPipeline:
                 time_windows=[{"start": now, "end": now + timedelta(hours=1)}],
                 filter_margin_weight=0.5,
                 limit=10,
+                min_overall_score=None,
             )
 
             call_kwargs = mock_embedding_service.search_similar_sessions.call_args[1]

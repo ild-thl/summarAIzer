@@ -14,6 +14,9 @@ from app.services.embedding.exceptions import ChromaConnectionError
 from app.services.embedding.query_refinement_service import QueryRefinementService
 from app.services.embedding.search_service import EmbeddingSearchService
 from app.services.embedding.service import EmbeddingService
+from app.services.recommendation.semantic_circuit_breaker import (
+    RecommendationSemanticCircuitBreaker,
+)
 from app.services.recommendation.service import RecommendationService
 
 logger = structlog.get_logger()
@@ -46,8 +49,10 @@ def get_embedding_service() -> EmbeddingService | None:
             embedding_api_key=settings.embedding_api_key,
             embedding_api_base_url=settings.embedding_api_base_url,
             embedding_model_name=settings.embedding_model_name,
-            chroma_host=settings.chroma_host,
-            chroma_port=settings.chroma_port,
+            embedding_request_timeout_seconds=settings.embedding_request_timeout_seconds,
+            embedding_query_cache_url=settings.embedding_query_cache_url,
+            embedding_query_cache_ttl_seconds=settings.embedding_query_cache_ttl_seconds,
+            chroma_url=settings.chroma_url,
             chroma_tenant=settings.chroma_tenant,
             chroma_credentials=settings.chroma_credentials,
             chroma_provider=settings.chroma_provider,
@@ -57,7 +62,7 @@ def get_embedding_service() -> EmbeddingService | None:
         logger.info(
             "embedding_service_created",
             provider=settings.embedding_provider,
-            chroma_url=f"{settings.chroma_host}:{settings.chroma_port}",
+            chroma_url=settings.chroma_url,
         )
 
         return service
@@ -98,7 +103,17 @@ def get_recommendation_service() -> RecommendationService:
     if embedding_service is None:
         raise ChromaConnectionError("Embeddings are disabled")
 
-    return RecommendationService(embedding_service)
+    settings = get_settings()
+    semantic_circuit_breaker = RecommendationSemanticCircuitBreaker(
+        redis_url=settings.recommendation_semantic_circuit_breaker_url,
+        failure_threshold=settings.recommendation_semantic_circuit_breaker_threshold,
+        cooldown_minutes=settings.recommendation_semantic_circuit_breaker_cooldown_minutes,
+    )
+    return RecommendationService(
+        embedding_service,
+        semantic_fallback_enabled=settings.recommendation_semantic_fallback_enabled,
+        semantic_circuit_breaker=semantic_circuit_breaker,
+    )
 
 
 @lru_cache(maxsize=1)
