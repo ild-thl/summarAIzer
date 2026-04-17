@@ -546,7 +546,7 @@ class RecommendRequest(BaseModel):
         default=2,
         ge=1,
         le=10,
-        description="Multiplier for candidate pool size before plan optimization (limit * multiplier)",
+        description="Multiplier for candidate pool oversampling before recommendation selection (limit * multiplier)",
     )
 
     # Phase 3.5: Diversity optimization

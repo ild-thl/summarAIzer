@@ -1243,13 +1243,16 @@ class RecommendationService:
         params: RecommendationQueryParams,
         seen_ids: set[int],
         limit: int,
+        plan_candidate_multiplier: int,
     ) -> tuple[list[tuple], dict[str, Any]]:
-        return await self._collect_base_recommendations(
+        candidate_limit = limit * plan_candidate_multiplier
+        recommendations, search_debug = await self._collect_base_recommendations(
             db=db,
             params=params,
             seen_ids=seen_ids,
-            candidate_limit=limit,
+            candidate_limit=candidate_limit,
         )
+        return recommendations[:limit], search_debug
 
     async def recommend_sessions(
         self,
@@ -1368,6 +1371,7 @@ class RecommendationService:
                     params=params,
                     seen_ids=seen_ids,
                     limit=limit,
+                    plan_candidate_multiplier=plan_candidate_multiplier,
                 )
 
             logger.info(
