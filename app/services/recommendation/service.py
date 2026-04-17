@@ -90,12 +90,35 @@ class RecommendationService:
         results.sort(key=lambda item: item[1], reverse=True)
         return results
 
-    def __init__(self, embedding_service: EmbeddingService):
+    def __init__(
+        self,
+        embedding_service: EmbeddingService,
+        semantic_fallback_enabled: bool = True,
+    ):
         self.embedding_service = embedding_service
         self.recommendation_planner = RecommendationPlanner()
+        self.semantic_fallback_enabled = semantic_fallback_enabled
         self.filter_evaluator = RecommendationFilterEvaluator(self.recommendation_planner)
         self.score_engine = RecommendationScoreEngine()
         self.diversity_optimizer = RecommendationDiversityOptimizer()
+
+    @staticmethod
+    def _build_recommendation_debug_payload(
+        *,
+        hard_pass_results: int = 0,
+        soft_pass_results: int = 0,
+        soft_pass_triggered: bool = False,
+        degraded_to_fallback: bool = False,
+        degradation_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a consistent debug payload for recommendation execution paths."""
+        return {
+            "hard_pass_results": hard_pass_results,
+            "soft_pass_results": soft_pass_results,
+            "soft_pass_triggered": soft_pass_triggered,
+            "degraded_to_fallback": degraded_to_fallback,
+            "degradation_reason": degradation_reason,
+        }
 
     @staticmethod
     def _extract_window_bounds(window: Any) -> tuple[datetime | None, datetime | None]:
@@ -637,6 +660,100 @@ class RecommendationService:
         )
         return recommendations
 
+    async def _try_semantic_gap_fill_rerank(
+        self,
+        db: Session,
+        params: RecommendationQueryParams,
+        replanned: list[tuple],
+        target_gap: dict[str, datetime],
+        gap_candidate_limit: int,
+        cached_query_embeddings: list[list[float]] | None,
+        cached_semantic_similarity_enabled: bool | None,
+        remaining_slots: int,
+        min_break_minutes: int,
+        max_gap_minutes: int | None,
+    ) -> tuple[
+        list[tuple] | None,
+        int,
+        str,
+        float,
+        list[list[float]] | None,
+        bool | None,
+        float,
+    ]:
+        """Try semantic gap-fill reranking and degrade gracefully on transient failures."""
+        query_embedding_ms = 0.0
+        if cached_query_embeddings is None or cached_semantic_similarity_enabled is None:
+            query_embedding_start = perf_counter()
+            (
+                cached_query_embeddings,
+                cached_semantic_similarity_enabled,
+            ) = await self._determine_query_embeddings(
+                query=params.query,
+                accepted_ids=params.accepted_ids,
+                rejected_ids=params.rejected_ids,
+            )
+            query_embedding_ms = round((perf_counter() - query_embedding_start) * 1000, 2)
+
+        try:
+            semantic_gap_fill_start = perf_counter()
+            semantic_gap_fill_candidates = await self._collect_semantic_gap_fill_recommendations(
+                db=db,
+                params=params,
+                planned=replanned,
+                gap_window=target_gap,
+                candidate_limit=gap_candidate_limit,
+                query_embeddings=cached_query_embeddings,
+                semantic_similarity_enabled=cached_semantic_similarity_enabled,
+            )
+            semantic_gap_fill_ms = round((perf_counter() - semantic_gap_fill_start) * 1000, 2)
+            if not semantic_gap_fill_candidates:
+                return (
+                    [],
+                    0,
+                    "fallback_plus_semantic_rerank",
+                    semantic_gap_fill_ms,
+                    cached_query_embeddings,
+                    cached_semantic_similarity_enabled,
+                    query_embedding_ms,
+                )
+
+            selected_for_gap = self._select_sessions_for_gap(
+                recommendations=semantic_gap_fill_candidates,
+                gap_window=target_gap,
+                min_break_minutes=min_break_minutes,
+                max_gap_minutes=max_gap_minutes,
+                limit=remaining_slots,
+            )
+            return (
+                selected_for_gap,
+                len(semantic_gap_fill_candidates),
+                "fallback_plus_semantic_rerank",
+                semantic_gap_fill_ms,
+                cached_query_embeddings,
+                cached_semantic_similarity_enabled,
+                query_embedding_ms,
+            )
+        except InvalidEmbeddingTextError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "recommendation_gap_fill_semantic_rerank_degraded",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                gap_window=self._summarize_gap_windows([target_gap])[0],
+                candidate_limit=gap_candidate_limit,
+            )
+            return (
+                None,
+                0,
+                "fallback_semantic_rerank_degraded",
+                0.0,
+                cached_query_embeddings,
+                cached_semantic_similarity_enabled,
+                query_embedding_ms,
+            )
+
     async def _collect_gap_fill_recommendations(
         self,
         db: Session,
@@ -689,11 +806,39 @@ class RecommendationService:
                 params=params,
                 limit=candidate_limit,
             )
-            return recommendations, {
-                "hard_pass_results": 0,
-                "soft_pass_results": 0,
-                "soft_pass_triggered": False,
-            }
+            return recommendations, self._build_recommendation_debug_payload()
+
+        try:
+            return await self._recommend_with_semantic_search(
+                db=db,
+                params=params,
+                seen_ids=seen_ids,
+                candidate_limit=candidate_limit,
+            )
+        except InvalidEmbeddingTextError:
+            raise
+        except Exception as exc:
+            if not self.semantic_fallback_enabled:
+                raise
+
+            logger.warning(
+                "recommendation_semantic_degraded_to_fallback",
+                error=str(exc),
+                error_type=type(exc).__name__,
+                candidate_limit=candidate_limit,
+                accepted_ids_count=len(params.accepted_ids),
+                rejected_ids_count=len(params.rejected_ids),
+                query_count=len(self._normalize_query_list(params.query)),
+            )
+            recommendations = await self._recommend_fallback(
+                db=db,
+                params=params,
+                limit=candidate_limit,
+            )
+            return recommendations, self._build_recommendation_debug_payload(
+                degraded_to_fallback=True,
+                degradation_reason=type(exc).__name__,
+            )
 
         return await self._recommend_with_semantic_search(
             db=db,
@@ -838,48 +983,33 @@ class RecommendationService:
             ):
                 semantic_rerank_triggered = True
                 semantic_rerank_count += 1
-                if cached_query_embeddings is None or cached_semantic_similarity_enabled is None:
-                    query_embedding_start = perf_counter()
-                    (
-                        cached_query_embeddings,
-                        cached_semantic_similarity_enabled,
-                    ) = await self._determine_query_embeddings(
-                        query=params.query,
-                        accepted_ids=params.accepted_ids,
-                        rejected_ids=params.rejected_ids,
-                    )
-                    cached_query_embedding_ms = round(
-                        (perf_counter() - query_embedding_start) * 1000,
-                        2,
-                    )
-
-                semantic_gap_fill_start = perf_counter()
-                semantic_gap_fill_candidates = (
-                    await self._collect_semantic_gap_fill_recommendations(
-                        db=db,
-                        params=params,
-                        planned=replanned,
-                        gap_window=target_gap,
-                        candidate_limit=gap_candidate_limit,
-                        query_embeddings=cached_query_embeddings,
-                        semantic_similarity_enabled=cached_semantic_similarity_enabled,
-                    )
+                (
+                    semantic_selected_for_gap,
+                    semantic_candidate_count,
+                    retrieval_mode,
+                    semantic_gap_fill_ms,
+                    cached_query_embeddings,
+                    cached_semantic_similarity_enabled,
+                    semantic_query_embedding_ms,
+                ) = await self._try_semantic_gap_fill_rerank(
+                    db=db,
+                    params=params,
+                    replanned=replanned,
+                    target_gap=target_gap,
+                    gap_candidate_limit=gap_candidate_limit,
+                    cached_query_embeddings=cached_query_embeddings,
+                    cached_semantic_similarity_enabled=cached_semantic_similarity_enabled,
+                    remaining_slots=remaining_slots,
+                    min_break_minutes=min_break_minutes,
+                    max_gap_minutes=max_gap_minutes,
                 )
-                semantic_gap_fill_ms = round(
-                    (perf_counter() - semantic_gap_fill_start) * 1000,
-                    2,
+                cached_query_embedding_ms = max(
+                    cached_query_embedding_ms,
+                    semantic_query_embedding_ms,
                 )
                 gap_fill_fetch_ms_total += semantic_gap_fill_ms
-                semantic_candidate_count = len(semantic_gap_fill_candidates)
-                retrieval_mode = "fallback_plus_semantic_rerank"
-                if semantic_gap_fill_candidates:
-                    selected_for_gap = self._select_sessions_for_gap(
-                        recommendations=semantic_gap_fill_candidates,
-                        gap_window=target_gap,
-                        min_break_minutes=min_break_minutes,
-                        max_gap_minutes=max_gap_minutes,
-                        limit=remaining_slots,
-                    )
+                if semantic_selected_for_gap is not None:
+                    selected_for_gap = semantic_selected_for_gap
 
             gap_filled_sessions_total += len(selected_for_gap)
             if selected_for_gap:
@@ -1130,6 +1260,8 @@ class RecommendationService:
                 final_recommendations=len(recommendations),
                 limit=limit,
                 soft_pass_triggered=search_debug["soft_pass_triggered"],
+                degraded_to_fallback=search_debug.get("degraded_to_fallback", False),
+                degradation_reason=search_debug.get("degradation_reason"),
                 goal_mode=goal_mode,
                 elapsed_ms=round((perf_counter() - request_start) * 1000, 2),
             )
@@ -1255,11 +1387,11 @@ class RecommendationService:
             soft_filters=list(soft),
         )
 
-        return recommendations, {
-            "hard_pass_results": 0 if has_soft else len(chroma_results),
-            "soft_pass_results": len(chroma_results) if has_soft else 0,
-            "soft_pass_triggered": has_soft,
-        }
+        return recommendations, self._build_recommendation_debug_payload(
+            hard_pass_results=0 if has_soft else len(chroma_results),
+            soft_pass_results=len(chroma_results) if has_soft else 0,
+            soft_pass_triggered=has_soft,
+        )
 
     async def _determine_query_embeddings(
         self,

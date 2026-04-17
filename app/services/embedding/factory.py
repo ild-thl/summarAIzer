@@ -46,6 +46,7 @@ def get_embedding_service() -> EmbeddingService | None:
             embedding_api_key=settings.embedding_api_key,
             embedding_api_base_url=settings.embedding_api_base_url,
             embedding_model_name=settings.embedding_model_name,
+            embedding_request_timeout_seconds=settings.embedding_request_timeout_seconds,
             embedding_query_cache_url=settings.embedding_query_cache_url,
             embedding_query_cache_ttl_seconds=settings.embedding_query_cache_ttl_seconds,
             chroma_url=settings.chroma_url,
@@ -99,7 +100,11 @@ def get_recommendation_service() -> RecommendationService:
     if embedding_service is None:
         raise ChromaConnectionError("Embeddings are disabled")
 
-    return RecommendationService(embedding_service)
+    settings = get_settings()
+    return RecommendationService(
+        embedding_service,
+        semantic_fallback_enabled=settings.recommendation_semantic_fallback_enabled,
+    )
 
 
 @lru_cache(maxsize=1)

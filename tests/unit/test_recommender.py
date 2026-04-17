@@ -579,6 +579,68 @@ class TestRecommendFallback:
             )
 
 
+class TestSemanticFallbackDegradation:
+    """Test graceful degradation from semantic search to CRUD fallback."""
+
+    @pytest.fixture
+    def search_service(self):
+        return RecommendationService(AsyncMock(spec=EmbeddingService))
+
+    @pytest.fixture
+    def params(self):
+        return RecommendationQueryParams(
+            query="ml ops",
+            accepted_ids=[],
+            rejected_ids=[99],
+            event_id=7,
+        )
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_degrades_to_fallback(
+        self, search_service, mock_db_session, params
+    ):
+        fallback_results = [(SimpleNamespace(id=1), {"overall_score": 1.0})]
+        search_service._recommend_with_semantic_search = AsyncMock(
+            side_effect=EmbeddingSearchError("hf backend timeout")
+        )
+        search_service._recommend_fallback = AsyncMock(return_value=fallback_results)
+
+        recommendations, debug = await search_service._collect_base_recommendations(
+            db=mock_db_session,
+            params=params,
+            seen_ids={99},
+            candidate_limit=5,
+        )
+
+        assert recommendations == fallback_results
+        assert debug["degraded_to_fallback"] is True
+        assert debug["degradation_reason"] == "EmbeddingSearchError"
+        search_service._recommend_fallback.assert_awaited_once_with(
+            db=mock_db_session,
+            params=params,
+            limit=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_collect_base_recommendations_keeps_invalid_query_error(
+        self, search_service, mock_db_session, params
+    ):
+        search_service._recommend_with_semantic_search = AsyncMock(
+            side_effect=InvalidEmbeddingTextError("invalid query")
+        )
+        search_service._recommend_fallback = AsyncMock()
+
+        with pytest.raises(InvalidEmbeddingTextError, match="invalid query"):
+            await search_service._collect_base_recommendations(
+                db=mock_db_session,
+                params=params,
+                seen_ids=set(),
+                candidate_limit=5,
+            )
+
+        search_service._recommend_fallback.assert_not_called()
+
+
 class TestFullRecommendationPipeline:
     """Integration-style unit tests for full recommend_sessions method."""
 

@@ -33,6 +33,7 @@ class EmbeddingService:
         embedding_api_key: str | None = None,
         embedding_api_base_url: str | None = None,
         embedding_model_name: str | None = None,
+        embedding_request_timeout_seconds: float = 3.0,
         chroma_url: str = "http://localhost:8000",
         chroma_tenant: str = "default_tenant",
         chroma_credentials: str | None = None,
@@ -92,11 +93,13 @@ class EmbeddingService:
                     provider="huggingface",
                     api_key=embedding_api_key,
                     api_base_url=embedding_api_base_url,
+                    request_timeout_seconds=embedding_request_timeout_seconds,
                 )
                 logger.info(
                     "embedding_backend_initialized",
                     provider="huggingface",
                     api_base_url=embedding_api_base_url,
+                    request_timeout_seconds=embedding_request_timeout_seconds,
                 )
             else:
                 raise ValueError(

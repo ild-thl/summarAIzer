@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "")
     embedding_api_base_url: str = os.getenv("EMBEDDING_API_BASE_URL", "")
     embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
+    embedding_request_timeout_seconds: float = float(
+        os.getenv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", "3")
+    )
     embedding_query_cache_url: str = os.getenv(
         "EMBEDDING_QUERY_CACHE_URL",
         os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1"),
@@ -77,6 +80,9 @@ class Settings(BaseSettings):
     )
     embedding_sync_stale_threshold_seconds: int = int(
         os.getenv("EMBEDDING_SYNC_STALE_THRESHOLD_SECONDS", "0")
+    )
+    recommendation_semantic_fallback_enabled: bool = (
+        os.getenv("RECOMMENDATION_SEMANTIC_FALLBACK_ENABLED", "true").lower() == "true"
     )
 
     # Chroma Configuration for vector storage
