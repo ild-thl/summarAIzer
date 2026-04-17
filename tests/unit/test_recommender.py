@@ -854,6 +854,69 @@ class TestFullRecommendationPipeline:
         return RecommendationService(mock_embedding_service)
 
     @pytest.mark.asyncio
+    async def test_default_mode_uses_plan_candidate_multiplier_for_candidate_limit(
+        self, search_service, mock_db_session
+    ):
+        """Similarity mode should oversample candidates before post-filtering."""
+        expected_debug = search_service._build_recommendation_debug_payload(hard_pass_results=6)
+        search_service._collect_base_recommendations = AsyncMock(return_value=([], expected_debug))
+
+        recommendations, debug = await search_service._recommend_default_mode(
+            db=mock_db_session,
+            params=RecommendationQueryParams(
+                query="machine learning",
+                accepted_ids=[],
+                rejected_ids=[],
+            ),
+            seen_ids=set(),
+            limit=5,
+            plan_candidate_multiplier=3,
+        )
+
+        assert recommendations == []
+        assert debug == expected_debug
+        search_service._collect_base_recommendations.assert_awaited_once_with(
+            db=mock_db_session,
+            params=RecommendationQueryParams(
+                query="machine learning",
+                accepted_ids=[],
+                rejected_ids=[],
+            ),
+            seen_ids=set(),
+            candidate_limit=15,
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_mode_trims_oversampled_results_to_requested_limit(
+        self, search_service, mock_db_session
+    ):
+        """Similarity mode should return no more than the requested limit."""
+        expected_debug = search_service._build_recommendation_debug_payload(hard_pass_results=6)
+        oversampled_recommendations = [
+            (SimpleNamespace(id=1), {"overall_score": 0.9}),
+            (SimpleNamespace(id=2), {"overall_score": 0.8}),
+            (SimpleNamespace(id=3), {"overall_score": 0.7}),
+        ]
+        search_service._collect_base_recommendations = AsyncMock(
+            return_value=(oversampled_recommendations, expected_debug)
+        )
+
+        recommendations, debug = await search_service._recommend_default_mode(
+            db=mock_db_session,
+            params=RecommendationQueryParams(
+                query="machine learning",
+                accepted_ids=[],
+                rejected_ids=[],
+            ),
+            seen_ids=set(),
+            limit=2,
+            plan_candidate_multiplier=3,
+        )
+
+        assert [session.id for session, _ in recommendations] == [1, 2]
+        assert debug == expected_debug
+
+    @pytest.mark.asyncio
     @pytest.mark.usefixtures("mock_embedding_service")
     async def test_full_pipeline_with_query(self, search_service, mock_db_session):
         """Test full recommendation pipeline with text query."""
