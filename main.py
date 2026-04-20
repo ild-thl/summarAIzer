@@ -135,10 +135,13 @@ async def general_exception_handler(request, exc):
 if __name__ == "__main__":
     import uvicorn
 
+    worker_count = 1 if settings.debug else settings.uvicorn_workers
+
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=7860,
         reload=settings.debug,
         log_level="info",
+        workers=worker_count,
     )
