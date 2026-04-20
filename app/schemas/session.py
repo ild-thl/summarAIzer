@@ -513,7 +513,7 @@ class RecommendRequest(BaseModel):
         ),
     )
     min_overall_score: float | None = Field(
-        default=0.4,
+        default=None,
         ge=0.0,
         le=1.0,
         description=(

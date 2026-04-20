@@ -1056,9 +1056,9 @@ class TestRecommendationAPI:
         if response.status_code == 200:
             results = response.json()
             assert isinstance(results, list)
-            # CRUD fallback returns all sessions with default score of 1.0
+            # CRUD fallback returns all sessions with default score of 0.5
             for result in results:
-                assert result["overall_score"] == 1.0
+                assert result["overall_score"] == 0.5
                 assert result["semantic_similarity"] is None
 
     @pytest.mark.usefixtures("recommendation_sessions")

@@ -187,7 +187,6 @@ class TestRecommendationScoring:
             session_embedding=[0.5] * 768,
             chroma_similarity=0.85,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={},
             disliked_embeddings={},
             liked_embedding_weight=0.3,
@@ -207,7 +206,6 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,  # Similar to liked session [0.2]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={},
             liked_embedding_weight=0.3,
@@ -227,7 +225,6 @@ class TestRecommendationScoring:
             session_embedding=[0.3] * 768,  # Similar to disliked [0.3]*768
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.3,
@@ -245,7 +242,6 @@ class TestRecommendationScoring:
             session_embedding=[0.25] * 768,  # Midpoint between liked and disliked
             chroma_similarity=0.5,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.2,  # Weight for liked component
@@ -264,7 +260,6 @@ class TestRecommendationScoring:
             session_embedding=[0.2] * 768,
             chroma_similarity=0.6,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={999: [0.3] * 768},
             liked_embedding_weight=0.0,  # Disabled
@@ -282,7 +277,6 @@ class TestRecommendationScoring:
             session_embedding=[1.0] * 768,  # Perfect match
             chroma_similarity=0.9,
             semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=False,
             liked_embeddings={1: [0.2] * 768},
             disliked_embeddings={},
             liked_embedding_weight=0.5,  # Large boost
@@ -290,26 +284,6 @@ class TestRecommendationScoring:
         )
 
         # Should be clamped to 1.0 even if formula produces > 1
-        assert 0 <= scores["overall_score"] <= 1
-
-    @pytest.mark.asyncio
-    async def test_centroid_retrieval_reuses_chroma_similarity_as_liked_cluster(
-        self, search_service
-    ):
-        """Accepted-id centroid retrieval should reuse Chroma similarity as liked cluster score."""
-        scores = await search_service._compute_recommendation_scores(
-            session_embedding=[0.5] * 768,
-            chroma_similarity=0.85,
-            semantic_similarity_enabled=True,
-            uses_accepted_centroid_retrieval=True,
-            liked_embeddings={1: [0.1] * 768},
-            disliked_embeddings={},
-            liked_embedding_weight=0.3,
-            disliked_embedding_weight=0.2,
-        )
-
-        assert scores["semantic_similarity"] is None
-        assert scores["liked_cluster_similarity"] == 0.85
         assert 0 <= scores["overall_score"] <= 1
 
     def test_preference_dominance_filter_removes_disliked_dominant_sessions(self, search_service):
@@ -1014,7 +988,7 @@ class TestFullRecommendationPipeline:
 
             assert len(results) == 2
             for _, scores in results:
-                assert scores["semantic_similarity"] is None
+                assert scores["semantic_similarity"] is not None
                 assert scores["liked_cluster_similarity"] is not None
 
     @pytest.mark.asyncio

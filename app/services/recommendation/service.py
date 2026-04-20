@@ -46,7 +46,7 @@ class RecommendationQueryParams:
     disliked_embedding_weight: float = 0.2
     soft_filters: list[str] | None = None
     filter_margin_weight: float = 0.5
-    min_overall_score: float | None = 0.5
+    min_overall_score: float | None = None
     diversity_weight: float = 0.0
     time_windows: list[Any] | None = None
     exclude_parallel_accepted_sessions: bool = False
@@ -289,9 +289,6 @@ class RecommendationService:
             for filter_key in requested_soft
             if self._has_effective_filter_value(filter_key, params)
         }
-
-    def _uses_accepted_centroid_retrieval(self, params: RecommendationQueryParams) -> bool:
-        return not self._normalize_query_list(params.query) and bool(params.accepted_ids)
 
     def _apply_score_threshold(
         self,
@@ -1274,7 +1271,7 @@ class RecommendationService:
         disliked_embedding_weight: float = 0.2,
         soft_filters: list[str] | None = None,
         filter_margin_weight: float = 0.5,
-        min_overall_score: float | None = 0.5,
+        min_overall_score: float | None = None,
         diversity_weight: float = 0.3,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
@@ -1749,7 +1746,6 @@ class RecommendationService:
             db=db, chroma_results=chroma_results
         )
         bulk_session_load_ms = round((perf_counter() - bulk_load_start) * 1000, 2)
-        uses_accepted_centroid_retrieval = self._uses_accepted_centroid_retrieval(params)
 
         scoring_start = perf_counter()
         for session_id, chroma_similarity, _ in chroma_results:
@@ -1772,7 +1768,6 @@ class RecommendationService:
                 session_embedding=session_embedding,
                 chroma_similarity=chroma_similarity,
                 semantic_similarity_enabled=semantic_similarity_enabled,
-                uses_accepted_centroid_retrieval=uses_accepted_centroid_retrieval,
                 liked_embeddings=liked_embeddings,
                 disliked_embeddings=disliked_embeddings,
                 liked_embedding_weight=params.liked_embedding_weight,
@@ -1862,7 +1857,6 @@ class RecommendationService:
                     session_embedding=session_embedding,
                     chroma_similarity=0.0,
                     semantic_similarity_enabled=False,
-                    uses_accepted_centroid_retrieval=False,
                     liked_embeddings=preference_embeddings["liked"],
                     disliked_embeddings=preference_embeddings["disliked"],
                     liked_embedding_weight=params.liked_embedding_weight,
@@ -1952,7 +1946,6 @@ class RecommendationService:
         session_embedding: list[float],
         chroma_similarity: float,
         semantic_similarity_enabled: bool,
-        uses_accepted_centroid_retrieval: bool,
         liked_embeddings: dict[int, list[float]],
         disliked_embeddings: dict[int, list[float]],
         liked_embedding_weight: float,
@@ -1962,9 +1955,6 @@ class RecommendationService:
     ) -> dict[str, float | None]:
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
-        if uses_accepted_centroid_retrieval:
-            semantic_sim = None
-            liked_cluster_sim = chroma_similarity
         disliked_sim = self._compute_disliked_similarity(session_embedding, disliked_embeddings)
 
         components, component_weights = self.score_engine.build_components(
