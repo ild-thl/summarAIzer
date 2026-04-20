@@ -76,7 +76,7 @@ class EmbeddingService:
                 self.embeddings: EmbeddingsBackendProtocol = create_embeddings_backend(
                     provider="openai",
                     api_key=embedding_api_key,
-                    base_url=embedding_api_base_url,
+                    api_base_url=embedding_api_base_url,
                     model=embedding_model_name,
                 )
                 logger.info(
