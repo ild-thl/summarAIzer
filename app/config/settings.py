@@ -16,11 +16,16 @@ class Settings(BaseSettings):
         "postgresql://postgres:postgres@localhost:5432/summaraizer",
     )
     database_echo: bool = os.getenv("DATABASE_ECHO", "False").lower() == "true"
+    db_pool_size: int = int(os.getenv("DB_POOL_SIZE", "10"))
+    db_max_overflow: int = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+    db_pool_timeout: int = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    db_pool_recycle: int = int(os.getenv("DB_POOL_RECYCLE", "1800"))
 
     # API
     api_title: str = "SummarAIzer API v2"
     api_description: str = "CRUD API for managing sessions and events with secure authentication"
     api_version: str = "2.0.0"
+    uvicorn_workers: int = int(os.getenv("UVICORN_WORKERS", "1"))
 
     # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")

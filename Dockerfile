@@ -80,5 +80,5 @@ HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
 # Expose application port
 EXPOSE 7860
 
-# Production: Run without reload, with proper production settings
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+# Production: Run without reload, with configurable worker count
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 7860 --workers ${UVICORN_WORKERS:-1}"]
