@@ -118,6 +118,20 @@ This shares postgres/redis/chroma with other services.
 
 All mutation endpoints (POST, PATCH, DELETE) require API key authentication via Bearer token:
 
+## 📈 Matomo Usage Tracking
+
+Optional lightweight endpoint usage tracking can be enabled with Matomo.
+
+```bash
+MATOMO_ENABLED=true
+MATOMO_URL=https://matomo.example.com/
+MATOMO_SITE_ID=1
+MATOMO_TOKEN_AUTH=
+MATOMO_REQUEST_TIMEOUT_SECONDS=1.5
+```
+
+When enabled, the API records usage events for selected endpoints such as session recommendations and session listing. Recommendation calls are tracked separately for `similarity` and `plan` mode.
+
 ```bash
 curl -H "Authorization: Bearer YOUR_API_KEY" \
   -X POST http://localhost:7860/api/v2/events \

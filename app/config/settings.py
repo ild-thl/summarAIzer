@@ -103,6 +103,15 @@ class Settings(BaseSettings):
         os.getenv("RECOMMENDATION_SEMANTIC_CIRCUIT_BREAKER_COOLDOWN_MINUTES", "1")
     )
 
+    # Matomo usage tracking
+    matomo_enabled: bool = os.getenv("MATOMO_ENABLED", "false").lower() == "true"
+    matomo_url: str = os.getenv("MATOMO_URL", "")
+    matomo_site_id: int = int(os.getenv("MATOMO_SITE_ID", "1"))
+    matomo_token_auth: str = os.getenv("MATOMO_TOKEN_AUTH", "")
+    matomo_request_timeout_seconds: float = float(
+        os.getenv("MATOMO_REQUEST_TIMEOUT_SECONDS", "1.5")
+    )
+
     # Chroma Configuration for vector storage
     chroma_url: str = os.getenv("CHROMA_URL", "http://localhost:8000")
     chroma_credentials: str = os.getenv("CHROMA_CREDENTIALS", "")

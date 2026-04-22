@@ -145,6 +145,28 @@ class TestSessionAPI:
         # Should include the published session
         assert any(s["id"] == published_session.id for s in data)
 
+    def test_list_sessions_tracks_usage(self, client, published_session, monkeypatch):
+        """Test listing sessions schedules Matomo tracking."""
+        from app.utils import matomo
+
+        tracked_calls: list[tuple[str, str | None]] = []
+
+        def fake_schedule_usage_tracking(background_tasks, endpoint, mode=None):
+            tracked_calls.append((endpoint, mode))
+
+        monkeypatch.setattr(
+            matomo,
+            "schedule_usage_tracking",
+            fake_schedule_usage_tracking,
+        )
+
+        response = client.get("/api/v2/sessions")
+
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        assert any(session["id"] == published_session.id for session in data)
+        assert tracked_calls == [("list_sessions", None)]
+
     def test_list_sessions_by_event(self, client, sample_event, published_session):
         """Test listing sessions for a specific event (public access)."""
         response = client.get(f"/api/v2/sessions/event/{sample_event.id}/sessions")
