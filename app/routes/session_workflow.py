@@ -46,7 +46,7 @@ async def trigger_workflow(
     """
     try:
         # Lazy import to avoid circular imports
-        from app.workflows.services.execution_service import WorkflowExecutionService
+        from app.services.execution_service import WorkflowExecutionService
 
         # Get current user from session dependency (already validated ownership)
         current_user = db.query(User).filter(User.id == session.owner_id).first()
@@ -108,7 +108,7 @@ async def get_workflow_status(
     )
 
     # Lazy import to avoid circular imports
-    from app.workflows.services.execution_service import WorkflowExecutionService
+    from app.services.execution_service import WorkflowExecutionService
 
     # Get execution by ID
     workflow_exec = WorkflowExecutionService.get_execution_status(execution_id, db)

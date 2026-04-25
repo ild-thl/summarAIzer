@@ -50,6 +50,7 @@ async def test_execute_generated_content_stores_created_by_user_id(
     # Setup mock CRUD operations
     with (
         patch("app.async_jobs.tasks.content_crud") as mock_content_crud,
+        patch("app.async_jobs.tasks.audio_file_crud") as mock_audio_file_crud,
         patch("app.async_jobs.tasks.SessionLocal") as mock_session_local,
         patch("app.async_jobs.tasks._resolve_and_build_workflow") as mock_resolve,
         patch("app.async_jobs.tasks._execute_workflow_graph") as mock_execute,
@@ -60,6 +61,7 @@ async def test_execute_generated_content_stores_created_by_user_id(
         mock_session_local.return_value = mock_db_session
         mock_content_crud.get_content_by_identifier.return_value = mock_transcription
         mock_content_crud.get_workflow_execution.return_value = mock_workflow_exec
+        mock_audio_file_crud.get_audio_files_for_session.return_value = []
         mock_resolve.return_value = mock_graph
         mock_execute.return_value = mock_final_state
         mock_track.return_value = [1, 2, 3]  # List of created content IDs
@@ -122,6 +124,7 @@ async def test_execute_generated_content_without_created_by_user_id(
     # Setup mock CRUD operations
     with (
         patch("app.async_jobs.tasks.content_crud") as mock_content_crud,
+        patch("app.async_jobs.tasks.audio_file_crud") as mock_audio_file_crud,
         patch("app.async_jobs.tasks.SessionLocal") as mock_session_local,
         patch("app.async_jobs.tasks._resolve_and_build_workflow") as mock_resolve,
         patch("app.async_jobs.tasks._execute_workflow_graph") as mock_execute,
@@ -132,6 +135,7 @@ async def test_execute_generated_content_without_created_by_user_id(
         mock_session_local.return_value = mock_db_session
         mock_content_crud.get_content_by_identifier.return_value = mock_transcription
         mock_content_crud.get_workflow_execution.return_value = mock_workflow_exec
+        mock_audio_file_crud.get_audio_files_for_session.return_value = []
         mock_resolve.return_value = mock_graph
         mock_execute.return_value = mock_final_state
         mock_track.return_value = [1, 2, 3]
@@ -190,6 +194,7 @@ async def test_execute_generated_content_logs_user_context(mock_db_session, clea
     # Setup mock CRUD operations
     with (
         patch("app.async_jobs.tasks.content_crud") as mock_content_crud,
+        patch("app.async_jobs.tasks.audio_file_crud") as mock_audio_file_crud,
         patch("app.async_jobs.tasks.SessionLocal") as mock_session_local,
         patch("app.async_jobs.tasks._resolve_and_build_workflow") as mock_resolve,
         patch("app.async_jobs.tasks._execute_workflow_graph") as mock_execute,
@@ -201,6 +206,7 @@ async def test_execute_generated_content_logs_user_context(mock_db_session, clea
         mock_session_local.return_value = mock_db_session
         mock_content_crud.get_content_by_identifier.return_value = mock_transcription
         mock_content_crud.get_workflow_execution.return_value = mock_workflow_exec
+        mock_audio_file_crud.get_audio_files_for_session.return_value = []
         mock_resolve.return_value = mock_graph
         mock_execute.return_value = mock_final_state
         mock_track.return_value = [1, 2, 3]
@@ -257,6 +263,7 @@ async def test_execute_generated_content_database_session_closed(mock_db_session
     # Setup mock CRUD operations
     with (
         patch("app.async_jobs.tasks.content_crud") as mock_content_crud,
+        patch("app.async_jobs.tasks.audio_file_crud") as mock_audio_file_crud,
         patch("app.async_jobs.tasks.SessionLocal") as mock_session_local,
         patch("app.async_jobs.tasks._resolve_and_build_workflow") as mock_resolve,
         patch("app.async_jobs.tasks._execute_workflow_graph") as mock_execute,
@@ -267,6 +274,7 @@ async def test_execute_generated_content_database_session_closed(mock_db_session
         mock_session_local.return_value = mock_db_session
         mock_content_crud.get_content_by_identifier.return_value = mock_transcription
         mock_content_crud.get_workflow_execution.return_value = mock_workflow_exec
+        mock_audio_file_crud.get_audio_files_for_session.return_value = []
         mock_resolve.return_value = mock_graph
         mock_execute.return_value = mock_final_state
         mock_track.return_value = []

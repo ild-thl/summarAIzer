@@ -6,12 +6,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from app.database.models import WorkflowExecutionStatus
+from app.services.execution_service import WorkflowExecutionService
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
     is_workflow_target,
 )
-from app.workflows.services.execution_service import WorkflowExecutionService
 
 from .test_workflows_utils import (
     create_mock_step,

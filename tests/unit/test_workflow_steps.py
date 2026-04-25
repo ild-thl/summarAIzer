@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from app.database.models import WorkflowExecutionStatus
+from app.services.execution_service import WorkflowExecutionService
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
 )
-from app.workflows.services.execution_service import WorkflowExecutionService
 
 from .test_workflows_utils import (
     create_generation_state,

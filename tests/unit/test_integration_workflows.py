@@ -1,16 +1,17 @@
 """Integration tests for complete workflow execution."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from app.services.execution_service import WorkflowExecutionService
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
 )
 from app.workflows.flows import TalkWorkflow
 from app.workflows.flows.base_workflow import BaseWorkflow
-from app.workflows.services.execution_service import WorkflowExecutionService
 
 from .test_workflows_utils import (
     create_generation_state,
@@ -88,6 +89,75 @@ async def test_full_workflow_execution_talk_workflow(
     assert workflow_exec.target == "talk_workflow"
     assert celery_task_id is not None
     assert mock_celery.called
+
+
+@pytest.mark.asyncio
+async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
+    mock_db_session, mock_session_model, clean_registries
+):
+    """Test that the talk workflow hydrates transcription into state on the skip path."""
+    WorkflowRegistry.register_workflow_class("talk_workflow", TalkWorkflow)
+
+    transcription_step = create_mock_step(
+        identifier="transcription",
+        context_requirements=[],
+        generate_result=lambda *_: (_ for _ in ()).throw(
+            AssertionError("transcription step should not run when content already exists")
+        ),
+    )
+    key_takeaways_step = create_mock_step(
+        identifier="key_takeaways",
+        context_requirements=["transcription"],
+        generate_result=lambda _session_id, context: {
+            "content": f"takeaways:{context['transcription']}",
+            "content_type": "text",
+            "meta_info": {},
+        },
+    )
+    tags_step = create_mock_step(
+        identifier="tags",
+        context_requirements=[],
+        generate_result={"content": "Tags", "content_type": "text", "meta_info": {}},
+    )
+    summary_step = create_mock_step(
+        identifier="summary",
+        context_requirements=["key_takeaways", "tags"],
+        generate_result=lambda _session_id, context: {
+            "content": f"summary:{context['key_takeaways']}|{context['tags']}",
+            "content_type": "text",
+            "meta_info": {},
+        },
+    )
+
+    for step in [
+        transcription_step,
+        key_takeaways_step,
+        tags_step,
+        summary_step,
+    ]:
+        step._save_to_db = Mock()
+        StepRegistry.register(step)
+
+    mock_db_session.query = Mock(
+        return_value=Mock(
+            filter=Mock(return_value=Mock(first=Mock(return_value=mock_session_model)))
+        )
+    )
+
+    graph = TalkWorkflow().build_graph()
+
+    with (
+        patch("app.workflows.flows.talk_workflow.SessionLocal", return_value=mock_db_session),
+        patch(
+            "app.workflows.flows.talk_workflow.content_crud.get_content_by_identifier",
+            return_value=SimpleNamespace(content="Persisted transcription"),
+        ),
+        patch("app.database.connection.SessionLocal", return_value=mock_db_session),
+    ):
+        final_state = await graph.ainvoke({"session_id": 1, "execution_id": 1})
+
+    assert final_state["transcription"] == "Persisted transcription"
+    assert final_state["key_takeaways"] == "takeaways:Persisted transcription"
 
 
 @pytest.mark.asyncio

@@ -7,10 +7,10 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
+from app.services.image_generation_service import ImageGenerationService
+from app.services.s3_image_service import S3ImageService
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
-from app.workflows.services.image_generation_service import ImageGenerationService
-from app.workflows.services.s3_image_service import S3ImageService
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()

@@ -44,17 +44,14 @@ class WorkflowExecutionService:
         """
         from app.workflows.execution_context import is_workflow_target
 
-        # If it's a single step, that's the first-stage step
         if not is_workflow_target(target):
             return [target]
 
-        # For workflows, find all steps with no context requirements
-        # (i.e., steps that don't depend on output from other steps to start)
         from app.workflows.execution_context import StepRegistry as SR
 
         first_stage = []
         for step_id, context_requirements in SR._step_context_requirements.items():
-            if not context_requirements:  # No context requirements = first-stage step
+            if not context_requirements:
                 first_stage.append(step_id)
 
         return first_stage
@@ -81,7 +78,6 @@ class WorkflowExecutionService:
         Raises:
             ValueError: If validation fails
         """
-        # Validate session exists
         db_session = session_crud.read(db, session_id)
         if not db_session:
             raise ValueError(f"Session {session_id} not found")
@@ -92,7 +88,6 @@ class WorkflowExecutionService:
             target=target,
         )
 
-        # Determine if target is workflow or step
         try:
             is_workflow = is_workflow_target(target)
         except ValueError as e:
@@ -104,7 +99,6 @@ class WorkflowExecutionService:
             )
             raise ValueError(f"Unknown target: '{target}'") from e
 
-        # Determine execution type for logging
         execution_type = "workflow" if is_workflow else "step"
 
         logger.info(
@@ -143,7 +137,6 @@ class WorkflowExecutionService:
         Raises:
             ValueError: If validation fails
         """
-        # Validate and resolve (still need to validate prerequisites)
         is_workflow, execution_type = WorkflowExecutionService.validate_and_prepare(
             session_id, target, db
         )
@@ -156,7 +149,6 @@ class WorkflowExecutionService:
             is_workflow=is_workflow,
         )
 
-        # Validate scheduling requirements for first-stage steps
         first_stage_steps = WorkflowExecutionService._get_first_stage_steps(target)
         logger.info(
             "validating_first_stage_step_requirements",
@@ -185,11 +177,10 @@ class WorkflowExecutionService:
                 )
                 raise
 
-        # Create execution record
         workflow_exec = content_crud.create_workflow_execution(
             db=db,
             session_id=session_id,
-            target=target,  # Store the original target
+            target=target,
             triggered_by=triggered_by,
             created_by_user_id=created_by_user_id,
         )
@@ -202,18 +193,15 @@ class WorkflowExecutionService:
             status=workflow_exec.status,
         )
 
-        # Generate unique task ID
         celery_task_id = f"workflow-{workflow_exec.id}"
 
-        # Lazy import to avoid circular imports
         from app.async_jobs.tasks import execute_generated_content
 
-        # Queue Celery task with target (not step_ids)
         task = execute_generated_content.apply_async(
             (
                 session_id,
                 workflow_exec.id,
-                target,  # Pass target instead of step_ids
+                target,
                 triggered_by,
                 created_by_user_id,
             ),
@@ -229,7 +217,6 @@ class WorkflowExecutionService:
             is_workflow=is_workflow,
         )
 
-        # Update execution record with task ID
         workflow_exec.celery_task_id = celery_task_id
         db.commit()
 
@@ -247,49 +234,21 @@ class WorkflowExecutionService:
 
     @staticmethod
     def get_execution_status(execution_id: int, db: Session) -> WorkflowExecution | None:
-        """
-        Get current status of a workflow execution.
-
-        Args:
-            execution_id: WorkflowExecution ID
-            db: Database session
-
-        Returns:
-            WorkflowExecution record or None if not found
-        """
+        """Get current status of a workflow execution."""
         return content_crud.get_workflow_execution(db, execution_id)
 
     @staticmethod
     def get_execution_by_celery_task_id(task_id: str, db: Session) -> WorkflowExecution | None:
-        """
-        Get workflow execution by Celery task ID.
-
-        Args:
-            task_id: Celery task ID
-            db: Database session
-
-        Returns:
-            WorkflowExecution record or None if not found
-        """
+        """Get workflow execution by Celery task ID."""
         return content_crud.get_workflow_execution_by_task_id(db, task_id)
 
-    @staticmethod
     @staticmethod
     def mark_running(
         execution_id: int,
         db: Session,
         celery_task_id: str | None = None,
     ) -> None:
-        """
-        Mark execution as running.
-
-        Called when Celery task starts.
-
-        Args:
-            execution_id: WorkflowExecution ID
-            db: Database session
-            celery_task_id: Optional Celery task ID assigned by broker
-        """
+        """Mark execution as running."""
         from app.database.models import WorkflowExecutionStatus
 
         workflow_exec = content_crud.get_workflow_execution(db, execution_id)
@@ -317,16 +276,7 @@ class WorkflowExecutionService:
         db: Session,
         created_content_ids: list[int] | None = None,
     ) -> None:
-        """
-        Mark execution as completed.
-
-        Called when all steps successfully complete.
-
-        Args:
-            execution_id: WorkflowExecution ID
-            db: Database session
-            created_content_ids: List of generated content IDs (for logging)
-        """
+        """Mark execution as completed."""
         from app.database.models import WorkflowExecutionStatus
 
         workflow_exec = content_crud.get_workflow_execution(db, execution_id)
@@ -356,16 +306,7 @@ class WorkflowExecutionService:
         db: Session,
         error: str,
     ) -> None:
-        """
-        Mark execution as failed.
-
-        Called when any step fails.
-
-        Args:
-            execution_id: WorkflowExecution ID
-            db: Database session
-            error: Error message explaining the failure
-        """
+        """Mark execution as failed."""
         from app.database.models import WorkflowExecutionStatus
 
         workflow_exec = content_crud.get_workflow_execution(db, execution_id)

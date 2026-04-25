@@ -8,19 +8,22 @@ import structlog
 from sqlalchemy.orm import Session
 
 from app.async_jobs.celery_app import app
+from app.crud import audio_file as audio_file_crud
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
 from app.database.connection import SessionLocal
+from app.database.models import AudioFileProcessingStatus, SessionStatus
 from app.database.models import Session as SessionModel
-from app.database.models import SessionStatus
+from app.services.audio_processing_service import AudioProcessingService
 from app.services.embedding.exceptions import ChromaConnectionError
 from app.services.embedding.factory import get_embedding_service
 from app.services.embedding.service import EmbeddingService
+from app.services.execution_service import WorkflowExecutionService
+from app.services.s3_audio_service import S3AudioService, get_s3_audio_service
 from app.workflows.execution_context import (
     WorkflowRegistry,
     resolve_target_to_workflow_class,
 )
-from app.workflows.services.execution_service import WorkflowExecutionService
 
 logger = structlog.get_logger()
 
@@ -477,10 +480,8 @@ def _track_generated_content(
         List of created content IDs
     """
     # Extract step identifiers from final state (other keys are execution context)
-    # Fixed SIM118: use 'in dict' instead of 'in dict.keys()'
-    step_identifiers = [
-        k for k in final_state if k not in ["session_id", "execution_id", "transcription"]
-    ]
+    _TRANSIENT_STATE_KEYS = {"session_id", "execution_id"}
+    step_identifiers = [k for k in final_state if k not in _TRANSIENT_STATE_KEYS]
 
     for step_id in step_identifiers:
         if final_state.get(step_id):
@@ -594,6 +595,117 @@ def _handle_workflow_error(
 
 
 @app.task(
+    name="app.async_jobs.tasks.process_audio_upload",
+    bind=True,
+    max_retries=0,  # pending files fail immediately — no auto-retry
+    queue="workflows",
+)
+def process_audio_upload(self, audio_file_id: int) -> dict:  # noqa: ARG001
+    """
+    Convert a raw uploaded audio file to FLAC chunks and store them in S3.
+
+    Steps:
+    1. Load SessionAudioFile record (must be in PENDING status).
+    2. Mark as PROCESSING.
+    3. Download raw file from S3.
+    4. Convert to FLAC chunks via ffmpeg.
+    5. Upload chunks to S3 under a stable prefix.
+    6. Mark as PROCESSED and clear s3_raw_key.
+    7. Delete raw file from S3.
+
+    Any failure marks the record FAILED immediately (no retry).
+    """
+    db = None
+    s3: S3AudioService | None = None
+    try:
+        db = SessionLocal()
+        s3 = get_s3_audio_service()
+
+        record = audio_file_crud.get_audio_file(db, audio_file_id)
+        if not record:
+            raise ValueError(f"AudioFile {audio_file_id} not found")
+
+        if record.processing_status != AudioFileProcessingStatus.PENDING:
+            logger.warning(
+                "process_audio_upload_skipped_non_pending",
+                audio_file_id=audio_file_id,
+                status=record.processing_status,
+            )
+            return {"status": "skipped", "audio_file_id": audio_file_id}
+
+        session_id = record.session_id
+        raw_key = record.s3_raw_key
+
+        if not raw_key:
+            audio_file_crud.update_audio_file_status(
+                db, audio_file_id, AudioFileProcessingStatus.FAILED, "Missing s3_raw_key"
+            )
+            raise ValueError(f"AudioFile {audio_file_id} has no s3_raw_key")
+
+        # Mark processing
+        audio_file_crud.update_audio_file_status(
+            db, audio_file_id, AudioFileProcessingStatus.PROCESSING
+        )
+
+        logger.info(
+            "process_audio_upload_started",
+            audio_file_id=audio_file_id,
+            session_id=session_id,
+            s3_raw_key=raw_key,
+        )
+
+        # Download raw file
+        raw_data = s3.download_raw(raw_key)
+
+        # Convert to FLAC chunks via ffmpeg
+        processor = AudioProcessingService()
+        chunks = processor.process(raw_data, record.original_filename)
+
+        # Upload chunks
+        chunk_prefix = s3.chunk_s3_prefix(session_id, audio_file_id)
+        for idx, chunk_bytes in enumerate(chunks):
+            s3.upload_chunk(session_id, audio_file_id, idx, chunk_bytes)
+
+        # Mark processed and clear raw key
+        audio_file_crud.update_audio_file_processed(db, audio_file_id, chunk_prefix, len(chunks))
+
+        # Delete raw file from S3
+        s3.delete_object(raw_key)
+
+        logger.info(
+            "process_audio_upload_completed",
+            audio_file_id=audio_file_id,
+            session_id=session_id,
+            chunk_count=len(chunks),
+        )
+        return {"status": "completed", "audio_file_id": audio_file_id, "chunk_count": len(chunks)}
+
+    except Exception as e:
+        logger.error(
+            "process_audio_upload_failed",
+            audio_file_id=audio_file_id,
+            error=str(e),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        if db:
+            try:
+                audio_file_crud.update_audio_file_status(
+                    db, audio_file_id, AudioFileProcessingStatus.FAILED, str(e)[:1000]
+                )
+            except Exception as db_err:
+                logger.error(
+                    "process_audio_upload_failed_to_mark_failed",
+                    audio_file_id=audio_file_id,
+                    db_error=str(db_err),
+                )
+        raise
+    finally:
+        if db:
+            db.close()
+
+
+@app.task(
     name="app.async_jobs.tasks.execute_generated_content",
     bind=True,
     max_retries=2,
@@ -648,29 +760,11 @@ def execute_generated_content(
                     created_by_user_id=created_by_user_id,
                 )
 
-        # Fetch transcription if available (optional - steps define their own dependencies)
-        tx_content = content_crud.get_content_by_identifier(db, session_id, "transcription")
-        if not tx_content:
-            logger.warning(
-                "content_generation_transcription_not_found",
-                task_id=self.request.id,
-                execution_id=execution_id,
-                session_id=session_id,
-            )
-
-        logger.info(
-            "content_generation_transcription_loaded",
-            task_id=self.request.id,
-            execution_id=execution_id,
-            session_id=session_id,
-            transcription_available=tx_content is not None,
-        )
-
         # Build initial state for LangGraph (free-form dict)
+        # Steps fetch their own dependencies as needed based on context_requirements
         initial_state: dict[str, Any] = {
             "session_id": session_id,
             "execution_id": execution_id,
-            "transcription": tx_content.content if tx_content else None,
         }
 
         logger.info(
@@ -700,9 +794,8 @@ def execute_generated_content(
         WorkflowExecutionService.mark_completed(execution_id, db, created_ids)
 
         # Extract step identifiers for summary logging
-        step_identifiers = [
-            k for k in final_state if k not in ["session_id", "execution_id", "transcription"]
-        ]
+        _transient = {"session_id", "execution_id"}
+        step_identifiers = [k for k in final_state if k not in _transient]
 
         logger.info(
             "content_generation_task_completed",

@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.database.models import AudioFileProcessingStatus
+
 
 class GeneratedContentCreate(BaseModel):
     """Schema for creating new generated content."""
@@ -105,3 +107,28 @@ class ContentPublishRequest(BaseModel):
         None,
         description="Specific generated_content ID to publish (if multiple versions exist)",
     )
+
+
+class AudioFileResponse(BaseModel):
+    """Response schema for a SessionAudioFile."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    session_id: int
+    original_filename: str
+    s3_prefix: str | None = None
+    chunk_count: int | None = None
+    total_size_bytes: int | None = None
+    file_order: int
+    processing_status: AudioFileProcessingStatus
+    processing_error: str | None = None
+    meta_info: dict[str, Any] | None = None
+    created_at: datetime
+    created_by_user_id: int | None = None
+
+
+class AudioFileListResponse(BaseModel):
+    """List of audio files for a session."""
+
+    audio_files: list[AudioFileResponse] = Field(default_factory=list)

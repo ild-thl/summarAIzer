@@ -136,6 +136,20 @@ class Settings(BaseSettings):
         os.getenv("AWS_USE_PATH_STYLE_ENDPOINT", "false").lower() == "true"
     )
 
+    # Audio transcription configuration
+    # FLAC compression level (0=fastest/largest … 8=best/smallest)
+    audio_flac_compression_level: int = int(os.getenv("AUDIO_FLAC_COMPRESSION_LEVEL", "5"))
+    # Duration of each audio segment sent to Whisper (seconds)
+    transcribe_segment_seconds: int = int(os.getenv("TRANSCRIBE_SEGMENT_SECONDS", "170"))
+    # Maximum single file size accepted by the Whisper endpoint (MB)
+    transcribe_max_file_size_mb: int = int(os.getenv("TRANSCRIBE_MAX_FILE_SIZE_MB", "25"))
+    # Whisper model name at the transcription endpoint
+    transcription_model: str = os.getenv("TRANSCRIPTION_MODEL", "whisper-large-v2")
+    # Whisper response format (json|text|srt|verbose_json|vtt)
+    transcription_response_format: str = os.getenv("TRANSCRIPTION_RESPONSE_FORMAT", "text")
+    # Whisper temperature (0.0 = greedy decode)
+    openai_transcribe_temperature: float = float(os.getenv("OPENAI_TRANSCRIBE_TEMPERATURE", "0.4"))
+
     model_config = ConfigDict(env_file=".env", case_sensitive=False)
 
 
