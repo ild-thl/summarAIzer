@@ -53,3 +53,4 @@ requests>=2.31.0
 
 # Utilities
 python-dateutil
+youtube-transcript-api>=0.6.0

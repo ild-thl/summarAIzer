@@ -45,6 +45,7 @@ class MyWorkflow(BaseWorkflow):
 
 # Import base class and workflows from flows package
 # Import execution context components for public API
+from app.services.execution_service import WorkflowExecutionService
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
@@ -52,9 +53,6 @@ from app.workflows.execution_context import (
     resolve_target_to_workflow_class,
 )
 from app.workflows.flows import BaseWorkflow, TalkWorkflow
-
-# Import service layer
-from app.workflows.services.execution_service import WorkflowExecutionService
 
 # Import steps first to trigger auto-registration
 from app.workflows.steps import WorkflowStep

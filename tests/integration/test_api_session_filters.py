@@ -839,15 +839,25 @@ class TestRecommendationAPI:
     def test_recommend_route_forwards_multiple_queries(self, client, monkeypatch):
         """Recommend endpoint should accept and forward a list of queries."""
         from app.services.embedding import factory as embedding_factory
+        from app.utils import matomo
 
         recommendation_service = AsyncMock()
         recommendation_service.recommend_sessions.return_value = []
+        tracked_calls: list[tuple[str, str | None]] = []
+
+        def fake_schedule_usage_tracking(background_tasks, endpoint, mode=None):
+            tracked_calls.append((endpoint, mode))
 
         monkeypatch.setattr(
             embedding_factory,
             "get_recommendation_service",
             lambda: recommendation_service,
             raising=False,
+        )
+        monkeypatch.setattr(
+            matomo,
+            "schedule_usage_tracking",
+            fake_schedule_usage_tracking,
         )
 
         response = client.post(
@@ -866,6 +876,45 @@ class TestRecommendationAPI:
             "kuenstliche intelligenz in der lehre",
             "kritisches denken",
         ]
+        assert tracked_calls == [("recommend", "similarity")]
+
+    def test_recommend_route_tracks_plan_mode_usage(self, client, monkeypatch):
+        """Recommend endpoint should track plan mode separately."""
+        from app.services.embedding import factory as embedding_factory
+        from app.utils import matomo
+
+        recommendation_service = AsyncMock()
+        recommendation_service.recommend_sessions.return_value = []
+        tracked_calls: list[tuple[str, str | None]] = []
+
+        def fake_schedule_usage_tracking(background_tasks, endpoint, mode=None):
+            tracked_calls.append((endpoint, mode))
+
+        monkeypatch.setattr(
+            embedding_factory,
+            "get_recommendation_service",
+            lambda: recommendation_service,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            matomo,
+            "schedule_usage_tracking",
+            fake_schedule_usage_tracking,
+        )
+
+        response = client.post(
+            "/api/v2/sessions/recommend",
+            json={
+                "query": ["machine learning"],
+                "accepted_ids": [],
+                "rejected_ids": [],
+                "goal_mode": "plan",
+                "limit": 5,
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        assert tracked_calls == [("recommend", "plan")]
 
     def test_recommend_route_can_refine_query_before_recommend(
         self, client, monkeypatch, sample_event

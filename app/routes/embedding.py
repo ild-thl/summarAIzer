@@ -17,6 +17,7 @@ from app.schemas.session import (
 )
 from app.security.auth import get_current_user
 from app.utils.helpers import DateTimeUtils
+from app.utils.matomo import track_recommend_usage
 
 logger = structlog.get_logger()
 
@@ -423,7 +424,11 @@ async def search_similar_sessions(
         ) from e
 
 
-@router.post("/recommend", response_model=list[SessionWithScore])
+@router.post(
+    "/recommend",
+    response_model=list[SessionWithScore],
+    dependencies=[Depends(track_recommend_usage)],
+)
 async def recommend_sessions(
     request_body: "RecommendRequest",
     db: Session = Depends(get_db),

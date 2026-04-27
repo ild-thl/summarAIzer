@@ -32,18 +32,7 @@ class ImageGenerationService:
     def _validate_inputs(
         self, prompt: str, width: int, height: int, num_images: int
     ) -> tuple[bool, str | None]:
-        """
-        Validate image generation input parameters.
-
-        Args:
-            prompt: Text description for image generation
-            width: Image width in pixels
-            height: Image height in pixels
-            num_images: Number of images to generate
-
-        Returns:
-            Tuple of (is_valid, error_message) where error_message is None if valid
-        """
+        """Validate image generation input parameters."""
         if not prompt or len(prompt.strip()) == 0:
             return False, "Prompt cannot be empty"
 
@@ -64,15 +53,7 @@ class ImageGenerationService:
         return True, None
 
     def _extract_error_message(self, error_data: dict) -> str:
-        """
-        Extract error message from API response.
-
-        Args:
-            error_data: Parsed JSON response data
-
-        Returns:
-            Error message string
-        """
+        """Extract error message from API response."""
         if "error" in error_data:
             if isinstance(error_data["error"], dict):
                 return error_data["error"].get("message", "Unknown error")
@@ -84,15 +65,7 @@ class ImageGenerationService:
         return str(error_data)
 
     def _parse_images_response(self, response_data: dict) -> tuple[bool, list | None, str | None]:
-        """
-        Parse successful image generation response.
-
-        Args:
-            response_data: Parsed JSON response data
-
-        Returns:
-            Tuple of (success, images, error_message)
-        """
+        """Parse successful image generation response."""
         images = response_data.get("data", [])
 
         if images:
@@ -106,15 +79,7 @@ class ImageGenerationService:
     def _handle_api_error_response(
         self, response: requests.Response
     ) -> tuple[bool, dict[str, Any]]:
-        """
-        Handle non-200 API response.
-
-        Args:
-            response: HTTP response object
-
-        Returns:
-            Tuple of (success, result_dict)
-        """
+        """Handle non-200 API response."""
         try:
             error_data = response.json()
             error_msg = self._extract_error_message(error_data)
@@ -134,40 +99,21 @@ class ImageGenerationService:
         num_images: int = 1,
         quality: str = "standard",
     ) -> dict[str, Any]:
-        """
-        Generate images from a text prompt using Academic Cloud API (OpenAI format).
-
-        Args:
-            prompt: Text description for image generation
-            width: Image width in pixels (converted to size format)
-            height: Image height in pixels (converted to size format)
-            model: Model to use for generation (e.g., "flux")
-            num_images: Number of images to generate (1-10)
-            quality: Quality level - "standard" or "hd"
-
-        Returns:
-            Dict with keys:
-            - success: bool
-            - images: List of image data dicts (with 'b64_json' key) if successful
-            - error: Error message if failed
-        """
+        """Generate images from a text prompt using Academic Cloud API."""
         try:
-            # Validate inputs
             is_valid, error_msg = self._validate_inputs(prompt, width, height, num_images)
             if not is_valid:
                 return {"success": False, "error": error_msg}
 
-            # Prepare request payload (OpenAI/Academic Cloud format)
             payload = {
                 "prompt": prompt.strip(),
-                "size": f"{width}x{height}",  # OpenAI format: "1024x768"
+                "size": f"{width}x{height}",
                 "model": model,
-                "n": num_images,  # OpenAI param name
+                "n": num_images,
                 "quality": quality,
-                "response_format": "b64_json",  # Request base64 encoded images
+                "response_format": "b64_json",
             }
 
-            # Prepare headers with Bearer token
             headers = {
                 "Content-Type": "application/json",
                 "Accept": "application/json",
@@ -176,23 +122,20 @@ class ImageGenerationService:
 
             logger.info(f"Generating {num_images} image(s) with model '{model}': {prompt[:100]}...")
 
-            # Make API request
             response = requests.post(
                 self.api_url,
                 json=payload,
                 headers=headers,
-                timeout=120,  # 2 minutes for image generation
+                timeout=120,
             )
 
             if response.status_code == 200:
-                # Parse successful response
                 data = response.json()
                 success, images, error = self._parse_images_response(data)
                 if success:
                     return {"success": True, "images": images}
                 return {"success": False, "error": error}
 
-            # Handle error response
             _, error_result = self._handle_api_error_response(response)
             return error_result
 
@@ -219,25 +162,8 @@ class ImageGenerationService:
         save_path: Path,
         filename: str,
     ) -> dict[str, Any]:
-        """
-        Save a base64-encoded image to file.
-
-        Academic Cloud API returns images with 'b64_json' key.
-
-        Args:
-            image_data: Image data dict with 'b64_json' key (from Academic Cloud API)
-            save_path: Directory path to save to
-            filename: Filename for the image
-
-        Returns:
-            Dict with keys:
-            - success: bool
-            - file_path: Path to saved file if successful
-            - size: File size in bytes
-            - error: Error message if failed
-        """
+        """Save a base64-encoded image to file."""
         try:
-            # Try to find base64 data (could be "b64_json" or "base64")
             base64_data = image_data.get("b64_json") or image_data.get("base64")
 
             if not base64_data:
@@ -247,19 +173,16 @@ class ImageGenerationService:
                     "error": f"Image data missing base64 content. Available keys: {available_keys}",
                 }
 
-            # Create directory if needed
             save_path.mkdir(parents=True, exist_ok=True)
 
             if not save_path.exists():
                 return {"success": False, "error": f"Failed to create directory {save_path}"}
 
-            # Decode base64
             try:
                 image_bytes = base64.b64decode(base64_data)
             except Exception as e:
                 return {"success": False, "error": f"Failed to decode base64: {e!s}"}
 
-            # Save to file
             file_path = save_path / filename
             try:
                 with open(file_path, "wb") as f:
@@ -284,21 +207,7 @@ class ImageGenerationService:
         save_path: Path,
         base_filename: str = "generated_image",
     ) -> dict[str, Any]:
-        """
-        Save multiple images with numbered filenames.
-
-        Args:
-            images: List of image data dicts
-            save_path: Directory to save to
-            base_filename: Base name for files (will be numbered)
-
-        Returns:
-            Dict with keys:
-            - success: bool
-            - files: List of saved file paths if successful
-            - count: Number of files saved
-            - errors: List of errors if any occurred
-        """
+        """Save multiple images with numbered filenames."""
         try:
             saved_files = []
             errors = []

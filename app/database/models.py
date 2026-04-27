@@ -58,6 +58,15 @@ class WorkflowExecutionStatus(str, Enum):
     FAILED = "failed"
 
 
+class AudioFileProcessingStatus(str, Enum):
+    """Processing status for uploaded audio files."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
 class SessionLocation(Base):
     """Structured location for a session (room, stage, venue, etc.)."""
 
@@ -143,6 +152,12 @@ class Session(Base):
     )
     location_rel = relationship(
         "SessionLocation", back_populates="session", cascade="all, delete-orphan", uselist=False
+    )
+    audio_files = relationship(
+        "SessionAudioFile",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="SessionAudioFile.file_order",
     )
 
 
@@ -260,4 +275,42 @@ class GeneratedContent(Base):
     # Relationships
     session = relationship("Session", back_populates="content_items")
     workflow_execution = relationship("WorkflowExecution", back_populates="generated_contents")
+    created_by = relationship("User")
+
+
+class SessionAudioFile(Base):
+    """Tracks uploaded audio files for a session and their S3 processing state."""
+
+    __tablename__ = "session_audio_files"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    original_filename = Column(String(500), nullable=False)
+    # Raw S3 key: set on upload, cleared (set to None) after processing succeeds.
+    # Retained on failure for debug — may be cleaned up manually.
+    s3_raw_key = Column(String(1000), nullable=True)
+    # Prefix of processed FLAC chunks, e.g. content/summaraizer/session_1/audio_2/
+    s3_prefix = Column(String(1000), nullable=True)
+    chunk_count = Column(Integer, nullable=True)
+    total_size_bytes = Column(Integer, nullable=True)
+    # 1-based ordering used to concatenate chunks from multiple files in the correct sequence
+    file_order = Column(Integer, nullable=False, default=1, index=True)
+    processing_status = Column(
+        SQLEnum(AudioFileProcessingStatus),
+        default=AudioFileProcessingStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
+    processing_error = Column(Text, nullable=True)
+    meta_info = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    # Relationships
+    session = relationship("Session", back_populates="audio_files")
     created_by = relationship("User")

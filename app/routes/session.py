@@ -29,6 +29,7 @@ from app.security.auth import (
     require_session_owner,
 )
 from app.utils.helpers import DateTimeUtils
+from app.utils.matomo import track_list_sessions_usage
 
 logger = structlog.get_logger()
 
@@ -160,7 +161,11 @@ def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> li
     return values_list
 
 
-@router.get("", response_model=list[SessionListResponse])
+@router.get(
+    "",
+    response_model=list[SessionListResponse],
+    dependencies=[Depends(track_list_sessions_usage)],
+)
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),

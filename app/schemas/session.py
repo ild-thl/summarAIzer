@@ -335,16 +335,13 @@ class SessionListResponse(BaseModel):
     - No owner_id (privacy)
     - No available_content_identifiers (implementation detail)
     - No created_at/updated_at (admin only)
-    - Truncated short_description (200 chars max)
     """
 
     id: int = Field(..., description="Session ID")
     title: str = Field(..., description="Session title")
     speakers: list[str] | None = Field(default=None, description="List of speaker names")
     tags: list[str] | None = Field(default=None, description="Session tags")
-    short_description: str | None = Field(
-        None, description="Short description (truncated to 200 chars)"
-    )
+    short_description: str | None = Field(None, description="Short description")
     location: SessionLocationResponse | None = Field(
         None, description="Structured session location"
     )
@@ -369,13 +366,6 @@ class SessionListResponse(BaseModel):
             obj["location"] = data.location_rel
             return obj
         return data
-
-    @model_validator(mode="after")
-    def truncate_description(self):
-        """Truncate short_description to 200 chars for bandwidth efficiency."""
-        if self.short_description and len(self.short_description) > 200:
-            self.short_description = self.short_description[:200] + "…"
-        return self
 
 
 class SessionWithEvent(SessionResponse):

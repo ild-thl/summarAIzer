@@ -8,6 +8,7 @@ from app.workflows.steps.mermaid_step import MermaidStep
 from app.workflows.steps.short_description_step import ShortDescriptionStep
 from app.workflows.steps.summary_step import SummaryStep
 from app.workflows.steps.tags_step import TagsStep
+from app.workflows.steps.transcription_step import TranscriptionStep
 
 # Auto-register steps when imported
 # (Registration happens in each step module)
@@ -21,4 +22,5 @@ __all__ = [
     "ShortDescriptionStep",
     "MermaidStep",
     "ImageStep",
+    "TranscriptionStep",
 ]
