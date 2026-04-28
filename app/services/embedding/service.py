@@ -251,17 +251,19 @@ class EmbeddingService:
     def _prepare_session_text(
         self,
         title: str,
+        description: str | None = None,
         short_description: str | None = None,
         summary: str | None = None,
     ) -> str:
         """
         Prepare text for session embedding.
 
-        Combines title, short_description, and summary (if available).
+        Combines title, description, short_description, and summary (if available).
         Delegates to generic _prepare_text method.
 
         Args:
             title: Session title
+            description: Full description
             short_description: Short description
             summary: Full summary (if available)
 
@@ -269,7 +271,11 @@ class EmbeddingService:
             Combined text for embedding
         """
         summary_truncated = summary[:1000] if summary else None
-        return self._prepare_text(title=title, fields=[short_description, summary_truncated])
+        description = short_description if len(short_description) > 100 else description
+        return self._prepare_text(
+            title=title,
+            fields=[description, summary_truncated],
+        )
 
     def prepare_session_text_with_summary(self, session) -> str:
         """
@@ -305,7 +311,8 @@ class EmbeddingService:
         # Prepare text with fetched summary
         return self._prepare_session_text(
             title=session.title,
-            short_description=session.short_description,
+            description=getattr(session, "description", None),
+            short_description=getattr(session, "short_description", None),
             summary=summary_text,
         )
 

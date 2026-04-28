@@ -162,6 +162,7 @@ class SessionBase(BaseModel):
     title: str = Field(..., min_length=1, max_length=255, description="Session title")
     speakers: list[str] | None = Field(default=None, description="List of speaker names")
     tags: list[str] | None = Field(default=None, description="Session tags")
+    description: str | None = Field(None, description="Full description")
     short_description: str | None = Field(None, description="Short description")
     location: SessionLocationCreate | None = Field(None, description="Structured session location")
     start_datetime: datetime = Field(..., description="Session start datetime")
@@ -249,6 +250,7 @@ class SessionUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     speakers: list[str] | None = None
     tags: list[str] | None = None
+    description: str | None = Field(None)
     short_description: str | None = Field(None)
     location: SessionLocationCreate | None = None
     start_datetime: datetime | None = None

@@ -18,6 +18,7 @@ class TestSessionCRUD:
         now = datetime.utcnow()
         session_create = SessionCreate(
             title="Test Session",
+            description="Longer full description for the test session.",
             short_description="Test description",
             start_datetime=now,
             end_datetime=now + timedelta(hours=1),
@@ -37,6 +38,7 @@ class TestSessionCRUD:
 
         assert session.id is not None
         assert session.title == "Test Session"
+        assert session.description == "Longer full description for the test session."
         assert session.uri == "test-session"
         assert session.status == SessionStatus.DRAFT
         assert session.event_id == sample_event.id

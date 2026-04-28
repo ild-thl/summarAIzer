@@ -123,6 +123,7 @@ class Session(Base):
     title = Column(String(255), nullable=False, index=True)
     speakers = Column(JSON, default=list, nullable=True)  # Array of speaker objects
     tags = Column(JSON, default=list, nullable=True)  # Array of tag strings
+    description = Column(Text, nullable=True)
     short_description = Column(Text, nullable=True)
     start_datetime = Column(DateTime, nullable=False, index=True)
     end_datetime = Column(DateTime, nullable=False)

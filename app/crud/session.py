@@ -37,6 +37,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
     EMBEDDING_REFRESH_FIELDS: ClassVar[set[str]] = {
         "title",
+        "description",
         "short_description",
         "speakers",
         "tags",
@@ -61,6 +62,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 title=obj_in.title,
                 speakers=obj_in.speakers,
                 tags=obj_in.tags,
+                description=obj_in.description,
                 short_description=obj_in.short_description,
                 start_datetime=obj_in.start_datetime,
                 end_datetime=obj_in.end_datetime,
@@ -316,6 +318,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             filters.append(
                 or_(
                     self.model.title.ilike(search_term),
+                    self.model.description.ilike(search_term),
                     self.model.short_description.ilike(search_term),
                     cast(self.model.speakers, String).ilike(search_term),
                 )
