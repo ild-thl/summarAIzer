@@ -54,14 +54,17 @@ class TagsStep(LLMStep):
         """
         Generate tags messages with context injection.
 
-        Uses transcription if available, otherwise falls back to session.short_description.
+        Uses transcription if available, otherwise falls back to session.description
+        and then session.short_description.
         This allows tag generation to work independently of transcription availability.
         """
         existing_tags = ", ".join(session.tags) if session.tags else "General"
         speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
 
-        # Use transcription if available, otherwise fall back to short_description
-        main_content = context.get("transcription") or session.short_description or ""
+        # Use transcription if available, then full description, then short description.
+        main_content = (
+            context.get("transcription") or session.description or session.short_description or ""
+        )
 
         return [
             SystemMessage(

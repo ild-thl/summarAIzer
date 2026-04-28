@@ -130,6 +130,7 @@ class TestSessionCRUDFilters:
             test_db_class,
             SessionCreate(
                 title="Blockchain Basics",
+                description="This session covers zero-knowledge proofs and consensus design.",
                 short_description="Understanding distributed ledgers",
                 start_datetime=now + timedelta(hours=8),
                 end_datetime=now + timedelta(hours=9),
@@ -318,6 +319,13 @@ class TestSessionCRUDFilters:
         results = session_crud.list_with_filters(test_db_class, search="PyTorch")
         assert len(results) == 1
         assert "PyTorch" in results[0].short_description
+
+    @pytest.mark.usefixtures("sessions_dataset")
+    def test_search_by_full_description_field(self, test_db_class):
+        """Test full-text search on the dedicated description field."""
+        results = session_crud.list_with_filters(test_db_class, search="zero-knowledge")
+        assert len(results) == 1
+        assert "zero-knowledge" in results[0].description
 
     @pytest.mark.usefixtures("sessions_dataset")
     def test_search_returns_multiple_results(self, test_db_class):
