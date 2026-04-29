@@ -12,12 +12,13 @@ class _ScoreInputs:
     liked_cluster_sim: float | None
     disliked_sim: float | None
     filter_compliance_score: float | None
+    popularity_score: float | None
 
 
 class RecommendationScoreEngine:
     """Composable scoring engine for recommendation rank strategies."""
 
-    STRATEGY_ORDER = ("semantic", "liked", "disliked", "compliance")
+    STRATEGY_ORDER = ("semantic", "liked", "disliked", "compliance", "popularity")
 
     @staticmethod
     def _semantic_component(score_inputs: _ScoreInputs, _weights: dict[str, float]) -> tuple | None:
@@ -62,6 +63,16 @@ class RecommendationScoreEngine:
             weight,
         )
 
+    @staticmethod
+    def _popularity_component(
+        score_inputs: _ScoreInputs, weights: dict[str, float]
+    ) -> tuple | None:
+        popularity_score = score_inputs.popularity_score
+        weight = weights.get("popularity", 0.0)
+        if popularity_score is None or weight <= 0:
+            return None
+        return (popularity_score, weight)
+
     @classmethod
     def strategy_registry(cls) -> dict[str, Callable]:
         """Return strategy registry keyed by strategy name for easy extension."""
@@ -70,6 +81,7 @@ class RecommendationScoreEngine:
             "liked": cls._liked_component,
             "disliked": cls._disliked_component,
             "compliance": cls._compliance_component,
+            "popularity": cls._popularity_component,
         }
 
     def build_components(
@@ -79,6 +91,7 @@ class RecommendationScoreEngine:
         disliked_sim: float | None,
         filter_compliance_score: float | None,
         weights: dict[str, float],
+        popularity_score: float | None = None,
     ) -> tuple[list, list, list]:
         """Build component vectors for weighted aggregation."""
         components: list[float] = []
@@ -89,6 +102,7 @@ class RecommendationScoreEngine:
             liked_cluster_sim=liked_cluster_sim,
             disliked_sim=disliked_sim,
             filter_compliance_score=filter_compliance_score,
+            popularity_score=popularity_score,
         )
 
         registry = self.strategy_registry()

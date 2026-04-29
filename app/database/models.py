@@ -162,6 +162,33 @@ class Session(Base):
     )
 
 
+class SessionPopularity(Base):
+    """Aggregate acceptance/rejection counts per session per event.
+
+    Kept separate from the sessions table to avoid write contention and to
+    allow per-event resets without touching session data.
+    """
+
+    __tablename__ = "session_popularity"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_id = Column(
+        Integer, ForeignKey("events.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    acceptance_count = Column(Integer, default=0, nullable=False)
+    rejection_count = Column(Integer, default=0, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "event_id", name="uq_session_popularity_per_event"),
+    )
+
+    session = relationship("Session", backref="popularity")
+
+
 class User(Base):
     """Generic user model supporting both API service accounts and human users."""
 

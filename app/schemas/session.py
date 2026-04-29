@@ -551,6 +551,16 @@ class RecommendRequest(BaseModel):
         "Useful when filtering for multiple tags/formats to ensure balanced coverage.",
     )
 
+    # Popularity scoring
+    popularity_weight: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Weight for popularity scoring (0-1). 0 = disabled (default). "
+        "When > 0, sessions accepted more often by other users rank higher. "
+        "Score is log-normalized against the event maximum acceptance count.",
+    )
+
     @field_validator("language", mode="before")
     @classmethod
     def normalize_language(cls, v: list[str] | str | None) -> list[str] | None:
@@ -799,4 +809,10 @@ class SessionWithScore(BaseModel):
         ge=0,
         le=1,
         description="Phase 3.5 - Diversity contribution score (0-1, None if diversity_weight=0)",
+    )
+    popularity_score: float | None = Field(
+        None,
+        ge=0,
+        le=1,
+        description="Experimental - Log-normalized acceptance popularity (0-1, None if popularity_weight=0)",
     )

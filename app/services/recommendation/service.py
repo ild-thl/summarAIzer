@@ -48,6 +48,7 @@ class RecommendationQueryParams:
     filter_margin_weight: float = 0.5
     min_overall_score: float | None = None
     diversity_weight: float = 0.0
+    popularity_weight: float = 0.0
     time_windows: list[Any] | None = None
     exclude_parallel_accepted_sessions: bool = False
 
@@ -882,6 +883,7 @@ class RecommendationService:
                 db,
                 params=params,
                 limit=candidate_limit,
+                popularity_sort=True,
             )
             return recommendations, self._build_recommendation_debug_payload()
 
@@ -1273,6 +1275,7 @@ class RecommendationService:
         filter_margin_weight: float = 0.5,
         min_overall_score: float | None = None,
         diversity_weight: float = 0.3,
+        popularity_weight: float = 0.0,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
         min_break_minutes: int = 0,
@@ -1302,6 +1305,7 @@ class RecommendationService:
             filter_margin_weight=filter_margin_weight,
             min_overall_score=min_overall_score,
             diversity_weight=diversity_weight,
+            popularity_weight=popularity_weight,
             time_windows=time_windows,
             exclude_parallel_accepted_sessions=exclude_parallel_accepted_sessions,
         )
@@ -1747,6 +1751,18 @@ class RecommendationService:
         )
         bulk_session_load_ms = round((perf_counter() - bulk_load_start) * 1000, 2)
 
+        from app.crud.session_popularity import session_popularity_crud
+
+        chroma_session_ids = [sid for sid, _, _ in chroma_results]
+        popularity_map = session_popularity_crud.get_popularity_map(
+            db=db, session_ids=chroma_session_ids, event_id=params.event_id
+        )
+        event_max_acceptance = (
+            session_popularity_crud.get_event_max_acceptance(db=db, event_id=params.event_id)
+            if params.popularity_weight > 0
+            else 0
+        )
+
         scoring_start = perf_counter()
         for session_id, chroma_similarity, _ in chroma_results:
             session = sessions_by_id.get(session_id)
@@ -1763,6 +1779,15 @@ class RecommendationService:
                     logger.debug("session_embedding_not_found", session_id=session_id)
                 session_embedding = self._get_default_embedding()
 
+            pop_data = popularity_map.get(session_id, {})
+            popularity_score = (
+                session_popularity_crud.compute_popularity_score(
+                    pop_data.get("acceptance_count", 0), event_max_acceptance
+                )
+                if params.popularity_weight > 0
+                else None
+            )
+
             soft_compliance = self._compute_soft_filter_compliance(session, params)
             scores = await self._compute_recommendation_scores(
                 session_embedding=session_embedding,
@@ -1774,6 +1799,8 @@ class RecommendationService:
                 disliked_embedding_weight=params.disliked_embedding_weight,
                 filter_compliance_score=soft_compliance,
                 filter_margin_weight=params.filter_margin_weight,
+                popularity_score=popularity_score,
+                popularity_weight=params.popularity_weight,
             )
             recommendations.append((session, scores))
         scoring_ms = round((perf_counter() - scoring_start) * 1000, 2)
@@ -1806,6 +1833,7 @@ class RecommendationService:
         db: Session,
         params: RecommendationQueryParams,
         limit: int = 10,
+        popularity_sort: bool = False,
     ) -> list[tuple]:
         try:
             benchmark_start = perf_counter()
@@ -1826,6 +1854,7 @@ class RecommendationService:
                 time_windows=None if "time_windows" in soft else params.time_windows,
                 exclude_ids=exclude_ids,
                 randomize=True,
+                popularity_sort=popularity_sort,
             )
 
             preference_prefetch_start = perf_counter()
@@ -1844,6 +1873,18 @@ class RecommendationService:
                 preference_embeddings["disliked"]
             )
 
+            from app.crud.session_popularity import session_popularity_crud
+
+            fallback_session_ids = [s.id for s in sessions]
+            popularity_map = session_popularity_crud.get_popularity_map(
+                db=db, session_ids=fallback_session_ids, event_id=params.event_id
+            )
+            event_max_acceptance = (
+                session_popularity_crud.get_event_max_acceptance(db=db, event_id=params.event_id)
+                if params.popularity_weight > 0
+                else 0
+            )
+
             recommendations: list[tuple] = []
             scoring_start = perf_counter()
             for session in sessions:
@@ -1852,6 +1893,15 @@ class RecommendationService:
                     if embedding_required:
                         logger.debug("session_embedding_not_found", session_id=session.id)
                     session_embedding = self._get_default_embedding()
+
+                pop_data = popularity_map.get(session.id, {})
+                popularity_score = (
+                    session_popularity_crud.compute_popularity_score(
+                        pop_data.get("acceptance_count", 0), event_max_acceptance
+                    )
+                    if params.popularity_weight > 0
+                    else None
+                )
 
                 soft_compliance = self._compute_soft_filter_compliance(session, params)
                 scores = await self._compute_recommendation_scores(
@@ -1864,6 +1914,8 @@ class RecommendationService:
                     disliked_embedding_weight=params.disliked_embedding_weight,
                     filter_compliance_score=soft_compliance,
                     filter_margin_weight=params.filter_margin_weight,
+                    popularity_score=popularity_score,
+                    popularity_weight=params.popularity_weight,
                 )
                 recommendations.append((session, scores))
             scoring_ms = round((perf_counter() - scoring_start) * 1000, 2)
@@ -1953,6 +2005,8 @@ class RecommendationService:
         disliked_embedding_weight: float,
         filter_compliance_score: float | None = None,
         filter_margin_weight: float = 0.5,
+        popularity_score: float | None = None,
+        popularity_weight: float = 0.0,
     ) -> dict[str, float | None]:
         semantic_sim = chroma_similarity if semantic_similarity_enabled else None
         liked_cluster_sim = self._compute_liked_similarity(session_embedding, liked_embeddings)
@@ -1963,10 +2017,12 @@ class RecommendationService:
             liked_cluster_sim=liked_cluster_sim,
             disliked_sim=disliked_sim,
             filter_compliance_score=filter_compliance_score,
+            popularity_score=popularity_score,
             weights={
                 "liked": liked_embedding_weight,
                 "disliked": disliked_embedding_weight,
                 "compliance": filter_margin_weight,
+                "popularity": popularity_weight,
             },
         )
         overall_score = self.score_engine.calculate_overall_score(components, component_weights)
@@ -1977,5 +2033,6 @@ class RecommendationService:
             "liked_cluster_similarity": liked_cluster_sim,
             "disliked_similarity": disliked_sim,
             "filter_compliance_score": filter_compliance_score,
+            "popularity_score": popularity_score,
             "diversity_score": None,
         }

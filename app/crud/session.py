@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
-from app.database.models import SessionLocation, SessionStatus
+from app.database.models import SessionLocation, SessionPopularity, SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
 
 logger = structlog.get_logger()
@@ -345,6 +345,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         search: str | None = None,
         exclude_ids: list[int] | None = None,
         randomize: bool = False,
+        popularity_sort: bool = False,
     ) -> list[SessionModel]:
         """List sessions with advanced filtering and full-text search."""
         limit = min(limit, 1000)
@@ -374,7 +375,16 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         if exclude_ids:
             query = query.filter(self.model.id.notin_(exclude_ids))
 
-        if randomize:
+        if popularity_sort:
+            query = query.outerjoin(
+                SessionPopularity,
+                (SessionPopularity.session_id == self.model.id)
+                & (SessionPopularity.event_id == event_id),
+            ).order_by(
+                func.coalesce(SessionPopularity.acceptance_count, 0).desc(),
+                func.random() if randomize else self.model.id,
+            )
+        elif randomize:
             query = query.order_by(func.random())
 
         return query.offset(skip).limit(limit).all()
