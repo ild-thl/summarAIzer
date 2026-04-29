@@ -1825,6 +1825,7 @@ class RecommendationService:
                 duration_max=None if "duration" in soft else params.duration_max,
                 time_windows=None if "time_windows" in soft else params.time_windows,
                 exclude_ids=exclude_ids,
+                randomize=True,
             )
 
             preference_prefetch_start = perf_counter()

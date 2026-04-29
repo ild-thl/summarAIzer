@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from typing import Any, ClassVar
 
 import structlog
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
@@ -344,6 +344,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
         time_windows: list[Any] | None = None,
         search: str | None = None,
         exclude_ids: list[int] | None = None,
+        randomize: bool = False,
     ) -> list[SessionModel]:
         """List sessions with advanced filtering and full-text search."""
         limit = min(limit, 1000)
@@ -372,6 +373,9 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
         if exclude_ids:
             query = query.filter(self.model.id.notin_(exclude_ids))
+
+        if randomize:
+            query = query.order_by(func.random())
 
         return query.offset(skip).limit(limit).all()
 
