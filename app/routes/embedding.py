@@ -424,6 +424,27 @@ async def search_similar_sessions(
         ) from e
 
 
+def _record_popularity_interactions(db, recommend_req) -> None:
+    """Record accept/reject interactions for popularity tracking (best-effort)."""
+    if not (recommend_req.accepted_ids or recommend_req.rejected_ids):
+        return
+    from app.crud.session_popularity import session_popularity_crud
+
+    try:
+        session_popularity_crud.record_interactions(
+            db=db,
+            accepted_ids=recommend_req.accepted_ids,
+            rejected_ids=recommend_req.rejected_ids,
+            event_id=recommend_req.event_id,
+        )
+    except Exception as pop_exc:
+        logger.warning(
+            "popularity_record_skipped",
+            error=str(pop_exc),
+            error_type=type(pop_exc).__name__,
+        )
+
+
 @router.post(
     "/recommend",
     response_model=list[SessionWithScore],
@@ -523,6 +544,9 @@ async def recommend_sessions(
         # Get recommendation service
         recommendation_service = get_recommendation_service()
 
+        # Record popularity interactions (fire-and-forget; never blocks recommendations)
+        _record_popularity_interactions(db=db, recommend_req=recommend_req)
+
         # Call recommender with Phase 2 re-ranking + Phase 3 soft filter parameters
         sessions = await recommendation_service.recommend_sessions(
             db=db,
@@ -546,6 +570,7 @@ async def recommend_sessions(
             filter_margin_weight=recommend_req.filter_margin_weight,
             min_overall_score=recommend_req.min_overall_score,
             diversity_weight=recommend_req.diversity_weight,
+            popularity_weight=recommend_req.popularity_weight,
             goal_mode=recommend_req.goal_mode,
             time_windows=recommend_req.time_windows,
             min_break_minutes=recommend_req.min_break_minutes,
@@ -573,6 +598,7 @@ async def recommend_sessions(
                 disliked_similarity=scores["disliked_similarity"],
                 filter_compliance_score=scores["filter_compliance_score"],
                 diversity_score=scores.get("diversity_score"),
+                popularity_score=scores.get("popularity_score"),
             )
             for session, scores in sessions
         ]
