@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import requests
 import structlog
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, Query
 
 from app.config.settings import get_settings
 from app.schemas.session import RecommendRequest
@@ -55,19 +55,17 @@ def record_usage(endpoint: str, mode: str | None = None) -> None:
         return
 
     try:
-        response = requests.post(
+        # Use a (connect, read) timeout so we don't block waiting for Matomo's
+        # response — the event is recorded as soon as the request is sent.
+        requests.post(
             _get_tracking_url(settings.matomo_url),
             data=_build_payload(endpoint=endpoint, mode=mode),
-            timeout=settings.matomo_request_timeout_seconds,
+            timeout=(settings.matomo_request_timeout_seconds, 0.1),
         )
-        if response.status_code >= 400:
-            logger.warning(
-                "matomo_tracking_non_2xx",
-                endpoint=endpoint,
-                mode=mode,
-                status_code=response.status_code,
-                response_text=response.text[:200],
-            )
+    except requests.exceptions.ReadTimeout:
+        # Expected: request was sent successfully; we just didn't wait for the
+        # response.  Not an error.
+        pass
     except requests.RequestException as exc:
         logger.warning(
             "matomo_tracking_failed",
@@ -98,6 +96,12 @@ def track_recommend_usage(
     )
 
 
-def track_list_sessions_usage(background_tasks: BackgroundTasks) -> None:
-    """Track usage of the session listing endpoint."""
+def track_list_sessions_usage(
+    background_tasks: BackgroundTasks,
+    search: str | None = Query(None),
+) -> None:
+    """Track session listing usage only when an explicit search is performed."""
+    if not search or not search.strip():
+        return
+
     schedule_usage_tracking(background_tasks, endpoint="list_sessions")
