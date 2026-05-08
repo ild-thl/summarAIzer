@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import requests
 import structlog
-from fastapi import BackgroundTasks
+from fastapi import BackgroundTasks, Query
 
 from app.config.settings import get_settings
 from app.schemas.session import RecommendRequest
@@ -96,6 +96,12 @@ def track_recommend_usage(
     )
 
 
-def track_list_sessions_usage(background_tasks: BackgroundTasks) -> None:
-    """Track usage of the session listing endpoint."""
+def track_list_sessions_usage(
+    background_tasks: BackgroundTasks,
+    search: str | None = Query(None),
+) -> None:
+    """Track session listing usage only when an explicit search is performed."""
+    if not search or not search.strip():
+        return
+
     schedule_usage_tracking(background_tasks, endpoint="list_sessions")
