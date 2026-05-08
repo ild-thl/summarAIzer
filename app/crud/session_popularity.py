@@ -107,17 +107,53 @@ class CRUDSessionPopularity:
         return result or 0
 
     @staticmethod
-    def compute_popularity_score(acceptance_count: int, max_acceptance: int) -> float:
-        """Log-normalize acceptance_count against the event maximum.
+    def compute_popularity_score(
+        acceptance_count: int,
+        max_acceptance: int,
+        rejection_count: int = 0,
+        exploration_weight: float = 0.0,
+        exploration_decay_threshold: int = 20,
+    ) -> float:
+        """Blend momentum, acceptance quality, and an optional cold-start exploration bonus.
 
-        score = log(1 + count) / log(1 + max_count)
-
-        Returns 0.5 (neutral) when no popularity data exists for the event yet.
-        Returns a value in [0, 1] otherwise.
+        Components:
+        - momentum: log-normalized acceptance_count against event max
+        - quality: Bayesian acceptance ratio using a neutral Beta(1, 1) prior
+        - exploration bonus (optional): when exploration_weight > 0, sessions with
+          zero interactions return 1.0 (cold-start — all unseen sessions rank at the
+          top equally until they accumulate data). For sessions with interactions the
+          bonus decays toward 0, reaching ~0.01 at exploration_decay_threshold total
+          interactions. Bonuses below 0.01 are skipped entirely.
         """
+        safe_acceptance = max(0, acceptance_count)
+        safe_rejection = max(0, rejection_count)
+        total_interactions = safe_acceptance + safe_rejection
+
+        # No event-level peak established yet: neutral.
         if max_acceptance <= 0:
             return 0.5
-        return math.log1p(acceptance_count) / math.log1p(max_acceptance)
+
+        # Shortcut: event leader with a clean record.
+        if safe_acceptance >= max_acceptance and safe_rejection == 0:
+            return 1.0
+
+        momentum = math.log1p(safe_acceptance) / math.log1p(max_acceptance)
+
+        # Bayesian acceptance ratio: Beta(1,1) prior keeps this neutral at 0.5 when
+        # a session has exactly 1 accept and 1 reject (equal signal), and approaches
+        # the true rate as interactions accumulate.
+        quality = (safe_acceptance + 1.0) / (total_interactions + 2.0)
+
+        score = (0.40 * momentum) + (0.60 * quality)
+
+        if exploration_weight > 0:
+            # decay_k is chosen so the bonus hits exactly ~0.01 at the threshold.
+            decay_k = exploration_decay_threshold / math.log(100)
+            bonus = exploration_weight * math.exp(-total_interactions / decay_k)
+            if bonus >= 0.01:
+                score = score + bonus
+
+        return max(0.0, min(1.0, score))
 
 
 session_popularity_crud = CRUDSessionPopularity()

@@ -1,6 +1,5 @@
 """Unit tests for session popularity CRUD and scoring."""
 
-import math
 from unittest.mock import MagicMock
 
 import pytest
@@ -23,30 +22,74 @@ class TestComputePopularityScore:
         assert score == 0.5
 
     def test_top_session_returns_one(self):
-        score = CRUDSessionPopularity.compute_popularity_score(100, 100)
+        score = CRUDSessionPopularity.compute_popularity_score(100, 100, 0)
         assert score == pytest.approx(1.0)
 
-    def test_zero_count_returns_zero(self):
+    def test_zero_count_unseen_returns_neutral(self):
+        # Without exploration, an unseen session should be exactly neutral.
         score = CRUDSessionPopularity.compute_popularity_score(0, 100)
-        assert score == pytest.approx(0.0)
+        assert score == 0.5
 
-    def test_log_normalized_midpoint(self):
-        # log(1+50) / log(1+100) ≈ 0.855
-        expected = math.log1p(50) / math.log1p(100)
-        score = CRUDSessionPopularity.compute_popularity_score(50, 100)
-        assert score == pytest.approx(expected)
+    def test_exploration_unseen_returns_one(self):
+        # With exploration active, unseen sessions cold-start at 1.0.
+        score = CRUDSessionPopularity.compute_popularity_score(0, 100, exploration_weight=0.3)
+        assert score == 1.0
+
+    def test_exploration_decays_with_interactions(self):
+        # Score should decrease as a session accumulates interactions.
+        s1 = CRUDSessionPopularity.compute_popularity_score(1, 100, 0, exploration_weight=0.5)
+        s5 = CRUDSessionPopularity.compute_popularity_score(5, 100, 0, exploration_weight=0.5)
+        s10 = CRUDSessionPopularity.compute_popularity_score(10, 100, 0, exploration_weight=0.5)
+        assert s1 > s5 > s10
+
+    def test_exploration_bonus_negligible_at_threshold(self):
+        # At the default decay threshold (20), the bonus should be < 0.01
+        # and therefore not added — score equals the base quality score.
+        score_with = CRUDSessionPopularity.compute_popularity_score(
+            20, 100, 0, exploration_weight=0.5, exploration_decay_threshold=20
+        )
+        score_without = CRUDSessionPopularity.compute_popularity_score(20, 100, 0)
+        assert score_with == pytest.approx(score_without, abs=0.011)
+
+    def test_exploration_bounded_between_zero_and_one(self):
+        for n in [0, 1, 5, 10, 20, 30]:
+            score = CRUDSessionPopularity.compute_popularity_score(
+                n, 100, 0, exploration_weight=0.5
+            )
+            assert 0.0 <= score <= 1.0
+
+    def test_exploration_threshold_configurable(self):
+        # A stricter threshold (10) should make the bonus negligible sooner.
+        score_at_10_strict = CRUDSessionPopularity.compute_popularity_score(
+            10, 100, 0, exploration_weight=0.5, exploration_decay_threshold=10
+        )
+        score_at_10_lenient = CRUDSessionPopularity.compute_popularity_score(
+            10, 100, 0, exploration_weight=0.5, exploration_decay_threshold=30
+        )
+        assert score_at_10_lenient > score_at_10_strict
+
+    def test_rejections_reduce_score(self):
+        high_quality = CRUDSessionPopularity.compute_popularity_score(50, 100, 0)
+        low_quality = CRUDSessionPopularity.compute_popularity_score(50, 100, 50)
+        assert high_quality > low_quality
 
     def test_bounded_between_zero_and_one(self):
         for count in range(0, 110, 10):
             score = CRUDSessionPopularity.compute_popularity_score(count, 100)
             assert 0.0 <= score <= 1.0
 
-    def test_log_compression_tail(self):
-        # A session with 1 acceptance should score notably less than 0.5 when max=100
-        score_low = CRUDSessionPopularity.compute_popularity_score(1, 100)
-        score_high = CRUDSessionPopularity.compute_popularity_score(99, 100)
-        assert score_low < 0.5
-        assert score_high > 0.5
+    def test_low_exposure_high_quality_beats_heavily_rejected_legacy(self):
+        # A low-exposure but clean session should outscore a heavily-rejected
+        # high-volume session — quality wins over raw acceptance count.
+        overlooked = CRUDSessionPopularity.compute_popularity_score(10, 300, 0)
+        legacy_rejected = CRUDSessionPopularity.compute_popularity_score(100, 300, 200)
+        assert overlooked > legacy_rejected
+
+    def test_high_volume_high_quality_scores_well(self):
+        # The leading session (even with some rejections) should score clearly above
+        # an unseen session and well above 0.7.
+        top = CRUDSessionPopularity.compute_popularity_score(300, 300, 120)
+        assert top > 0.75
 
 
 # ---------------------------------------------------------------------------
