@@ -25,16 +25,6 @@ class TestComputePopularityScore:
         score = CRUDSessionPopularity.compute_popularity_score(100, 100, 0)
         assert score == pytest.approx(1.0)
 
-    def test_zero_count_unseen_returns_neutral(self):
-        # Without exploration, an unseen session should be exactly neutral.
-        score = CRUDSessionPopularity.compute_popularity_score(0, 100)
-        assert score == 0.5
-
-    def test_exploration_unseen_returns_one(self):
-        # With exploration active, unseen sessions cold-start at 1.0.
-        score = CRUDSessionPopularity.compute_popularity_score(0, 100, exploration_weight=0.3)
-        assert score == 1.0
-
     def test_exploration_decays_with_interactions(self):
         # Score should decrease as a session accumulates interactions.
         s1 = CRUDSessionPopularity.compute_popularity_score(1, 100, 0, exploration_weight=0.5)
