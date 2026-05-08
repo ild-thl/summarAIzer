@@ -49,6 +49,7 @@ class RecommendationQueryParams:
     min_overall_score: float | None = None
     diversity_weight: float = 0.0
     popularity_weight: float = 0.0
+    exploration_weight: float = 0.0
     time_windows: list[Any] | None = None
     exclude_parallel_accepted_sessions: bool = False
 
@@ -1276,6 +1277,7 @@ class RecommendationService:
         min_overall_score: float | None = None,
         diversity_weight: float = 0.3,
         popularity_weight: float = 0.0,
+        exploration_weight: float = 0.0,
         goal_mode: str = "similarity",
         time_windows: list[Any] | None = None,
         min_break_minutes: int = 0,
@@ -1306,6 +1308,7 @@ class RecommendationService:
             min_overall_score=min_overall_score,
             diversity_weight=diversity_weight,
             popularity_weight=popularity_weight,
+            exploration_weight=exploration_weight,
             time_windows=time_windows,
             exclude_parallel_accepted_sessions=exclude_parallel_accepted_sessions,
         )
@@ -1780,9 +1783,14 @@ class RecommendationService:
                 session_embedding = self._get_default_embedding()
 
             pop_data = popularity_map.get(session_id, {})
+            acceptance = pop_data.get("acceptance_count", 0)
+            rejection = pop_data.get("rejection_count", 0)
             popularity_score = (
                 session_popularity_crud.compute_popularity_score(
-                    pop_data.get("acceptance_count", 0), event_max_acceptance
+                    acceptance,
+                    event_max_acceptance,
+                    rejection,
+                    exploration_weight=params.exploration_weight,
                 )
                 if params.popularity_weight > 0
                 else None
@@ -1895,9 +1903,14 @@ class RecommendationService:
                     session_embedding = self._get_default_embedding()
 
                 pop_data = popularity_map.get(session.id, {})
+                acceptance = pop_data.get("acceptance_count", 0)
+                rejection = pop_data.get("rejection_count", 0)
                 popularity_score = (
                     session_popularity_crud.compute_popularity_score(
-                        pop_data.get("acceptance_count", 0), event_max_acceptance
+                        acceptance,
+                        event_max_acceptance,
+                        rejection,
+                        exploration_weight=params.exploration_weight,
                     )
                     if params.popularity_weight > 0
                     else None

@@ -571,6 +571,7 @@ async def recommend_sessions(
             min_overall_score=recommend_req.min_overall_score,
             diversity_weight=recommend_req.diversity_weight,
             popularity_weight=recommend_req.popularity_weight,
+            exploration_weight=recommend_req.exploration_weight,
             goal_mode=recommend_req.goal_mode,
             time_windows=recommend_req.time_windows,
             min_break_minutes=recommend_req.min_break_minutes,

@@ -553,12 +553,24 @@ class RecommendRequest(BaseModel):
 
     # Popularity scoring
     popularity_weight: float = Field(
-        default=0.0,
+        default=0.1,
         ge=0.0,
         le=1.0,
         description="Weight for popularity scoring (0-1). 0 = disabled (default). "
         "When > 0, sessions accepted more often by other users rank higher. "
         "Score is log-normalized against the event maximum acceptance count.",
+    )
+
+    # Exploration boost
+    exploration_weight: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Weight for exploration boost (0-1). 0 = disabled (default). "
+        "When > 0, sessions with very few interactions receive a strong score boost "
+        "so they quickly accumulate engagement data. The boost decays aggressively "
+        "with total interactions and is near-zero for sessions seen 30+ times. "
+        "Useful for bootstrapping newly-added sessions or surfacing overlooked content.",
     )
 
     @field_validator("language", mode="before")

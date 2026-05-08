@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from app.crud.session import session_crud
-from app.database.models import SessionFormat, SessionStatus
+from app.database.models import SessionFormat, SessionPopularity, SessionStatus
 from app.schemas.session import SessionCreate, SessionUpdate
 
 
@@ -184,6 +184,25 @@ class TestSessionCRUD:
 
         assert result is True
         assert session_crud.read(test_db, session_id) is None
+        mock_invalidate.assert_called_once_with({sample_session.event_id})
+
+    def test_delete_session_with_popularity_row(self, test_db, sample_session, sample_event):
+        """Deleting a session with popularity rows should cascade-delete child rows."""
+        popularity = SessionPopularity(
+            session_id=sample_session.id,
+            event_id=sample_event.id,
+            acceptance_count=3,
+            rejection_count=1,
+        )
+        test_db.add(popularity)
+        test_db.commit()
+
+        with patch("app.crud.session._invalidate_query_refinement_cache") as mock_invalidate:
+            result = session_crud.delete(test_db, sample_session.id)
+
+        assert result is True
+        assert session_crud.read(test_db, sample_session.id) is None
+        assert test_db.query(SessionPopularity).filter_by(session_id=sample_session.id).count() == 0
         mock_invalidate.assert_called_once_with({sample_session.event_id})
 
     @pytest.mark.usefixtures("sample_session")

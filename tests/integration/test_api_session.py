@@ -160,7 +160,7 @@ class TestSessionAPI:
             fake_schedule_usage_tracking,
         )
 
-        response = client.get("/api/v2/sessions")
+        response = client.get("/api/v2/sessions?search=test")
 
         assert response.status_code == HTTP_200_OK
         data = response.json()
