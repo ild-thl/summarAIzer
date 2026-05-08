@@ -160,6 +160,12 @@ class Session(Base):
         cascade="all, delete-orphan",
         order_by="SessionAudioFile.file_order",
     )
+    popularity = relationship(
+        "SessionPopularity",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class SessionPopularity(Base):
@@ -186,7 +192,7 @@ class SessionPopularity(Base):
         UniqueConstraint("session_id", "event_id", name="uq_session_popularity_per_event"),
     )
 
-    session = relationship("Session", backref="popularity")
+    session = relationship("Session", back_populates="popularity")
 
 
 class User(Base):
