@@ -142,6 +142,20 @@ def list_content_identifiers(db: SQLSession, session_id: int) -> list[str]:
     return [c[0] for c in contents]
 
 
+def list_all_for_session(db: SQLSession, session_id: int) -> list[GeneratedContent]:
+    """
+    List all generated content for a session, ordered by creation time.
+
+    Used by documentation builder to assemble published artifacts.
+    """
+    return (
+        db.query(GeneratedContent)
+        .filter(GeneratedContent.session_id == session_id)
+        .order_by(GeneratedContent.created_at.asc())
+        .all()
+    )
+
+
 def update_content(
     db: SQLSession,
     content_id: int,

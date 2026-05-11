@@ -140,6 +140,11 @@ class Session(Base):
     available_content_identifiers = Column(
         JSON, default=list, nullable=False
     )  # ["transcription", "summary", "tags"]
+    published_documentation_artifact = Column(
+        JSON,
+        nullable=True,
+        comment="Versioned published session documentation artifact (JSON)",
+    )
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

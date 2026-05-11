@@ -98,15 +98,32 @@ class SessionEventBus:
 
 def _handle_session_published(session_id: int, **kwargs) -> None:
     """
-    Handle session_published event - queue embedding generation.
+    Handle session_published event - build documentation and queue embedding generation.
 
     Args:
         session_id: ID of published session
         **kwargs: Other event data (uri, event_id, etc.)
     """
     try:
+        # Import here to avoid circular imports
         from app.async_jobs.tasks import generate_session_embedding
+        from app.database.connection import SessionLocal
+        from app.services.documentation_builder import DocumentationBuilder
 
+        # Build published documentation artifact synchronously
+        # This is fast (single DB query to fetch content) and needs to happen immediately
+        db = SessionLocal()
+        try:
+            DocumentationBuilder.build_documentation(db, session_id)
+            logger.info(
+                "session_documentation_built_on_publish_event",
+                session_id=session_id,
+                **kwargs,
+            )
+        finally:
+            db.close()
+
+        # Queue embedding generation asynchronously
         generate_session_embedding.delay(session_id)
 
         logger.info(
@@ -116,7 +133,7 @@ def _handle_session_published(session_id: int, **kwargs) -> None:
         )
     except Exception as e:
         logger.error(
-            "failed_to_queue_embedding_on_publish_event",
+            "failed_to_process_publish_event",
             session_id=session_id,
             error=str(e),
             error_type=type(e).__name__,

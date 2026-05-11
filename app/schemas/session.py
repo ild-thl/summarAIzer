@@ -828,3 +828,75 @@ class SessionWithScore(BaseModel):
         le=1,
         description="Experimental - Log-normalized acceptance popularity (0-1, None if popularity_weight=0)",
     )
+
+
+# ============================================================================
+# Published Session Documentation Artifact Schemas
+# ============================================================================
+
+
+class DocumentationSection(BaseModel):
+    """One generated content section in the published documentation."""
+
+    identifier: str = Field(
+        ..., description="Content type identifier (summary, key_takeaways, diagram, etc.)"
+    )
+    type: str = Field(
+        ..., description="Content format: markdown, mermaid, text, resource_link, json"
+    )
+    title: str | None = Field(None, description="Human-readable section title")
+    content: str | None = Field(
+        None, description="Embedded content for text, markdown, mermaid, or json"
+    )
+    resource_url: HttpUrl | None = Field(
+        None, description="External resource link for media or downloads"
+    )
+    order: int = Field(default=0, description="Display order in documentation")
+    source: str | None = Field(
+        None, description="Where content originated: workflow, manual, upload"
+    )
+    meta: dict | None = Field(None, description="Additional metadata (model, tokens, etc.)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SessionDocumentationResponse(BaseModel):
+    """
+    Published session documentation artifact with all generated content sections.
+
+    Represents a published session ready for public consumption. All content sections
+    are optional to support flexible workflows where different sessions may have
+    different generated content. This is the primary read model for public session
+    pages and frontend SSR/SSG.
+    """
+
+    # Core session metadata (always present)
+    id: int = Field(..., description="Session ID")
+    event_id: int | None = Field(None, description="Associated event ID")
+    title: str = Field(..., description="Session title")
+    speakers: list[str] | None = Field(None, description="List of speaker names")
+    tags: list[str] | None = Field(None, description="Session tags")
+    description: str | None = Field(None, description="Full description")
+    short_description: str | None = Field(None, description="Short description")
+    location: SessionLocationResponse | None = Field(
+        None, description="Structured session location"
+    )
+    start_datetime: datetime = Field(..., description="Session start datetime")
+    end_datetime: datetime = Field(..., description="Session end datetime")
+    duration: int | None = Field(None, description="Duration in minutes")
+    language: str = Field(default="en", description="ISO 639-1 language code")
+    uri: str = Field(..., description="URL-safe identifier")
+    session_format: str | None = Field(None, description="Session format type")
+    recording_url: HttpUrl | None = Field(None, description="Recording URL")
+
+    # Generated content sections (all optional and flexible)
+    sections: list[DocumentationSection] = Field(
+        default_factory=list, description="Generated content sections"
+    )
+
+    # Documentation artifact metadata (for versioning and freshness)
+    doc_version: str = Field(default="1.0", description="Documentation schema version")
+    generated_at: datetime = Field(..., description="When the artifact was first generated")
+    updated_at: datetime | None = Field(None, description="When the artifact was last updated")
+
+    model_config = ConfigDict(from_attributes=True)

@@ -17,6 +17,7 @@ from app.database.models import Session as SessionModel
 from app.database.models import User
 from app.schemas.session import (
     SessionCreate,
+    SessionDocumentationResponse,
     SessionListResponse,
     SessionResponse,
     SessionUpdate,
@@ -365,3 +366,75 @@ async def list_event_sessions(
     filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions
+
+
+@router.get("/{session_id}/documentation", response_model=SessionDocumentationResponse)
+async def get_session_documentation(
+    session_id: int,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Get published documentation artifact for a session.
+
+    Returns the pre-built JSON documentation containing session metadata
+    and all generated content sections (summary, transcription, diagrams, etc.).
+
+    - Published sessions: accessible to anyone
+    - Draft sessions: only accessible to owner
+    - Returns 404 if session not found or artifact not yet generated
+    """
+    session = session_crud.read(db, session_id)
+    if not session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Verify access permissions
+    if not can_access_session_content(session, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    # Return artifact if available
+    if not session.published_documentation_artifact:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Documentation artifact not yet generated",
+        )
+
+    return session.published_documentation_artifact
+
+
+@router.get("/by-uri/{uri}/documentation", response_model=SessionDocumentationResponse)
+async def get_session_documentation_by_uri(
+    uri: str,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Get published documentation artifact for a session by URI.
+
+    URI-based variant of documentation endpoint - useful for public-facing
+    session pages that use clean URLs instead of database IDs.
+
+    Returns 404 if session not found or if artifact not yet generated.
+    """
+    session = session_crud.read_by_uri(db, uri)
+    if not session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Verify access permissions
+    if not can_access_session_content(session, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    # Return artifact if available
+    if not session.published_documentation_artifact:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Documentation artifact not yet generated",
+        )
+
+    return session.published_documentation_artifact
