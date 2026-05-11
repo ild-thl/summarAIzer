@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     api_description: str = "CRUD API for managing sessions and events with secure authentication"
     api_version: str = "2.0.0"
     uvicorn_workers: int = int(os.getenv("UVICORN_WORKERS", "1"))
+    api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:7860")
 
     # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session as SQLSession
 
+from app.config.settings import get_settings
 from app.crud.generated_content import list_all_for_session
 from app.crud.session import session_crud
 from app.database.models import SessionStatus
@@ -14,6 +15,7 @@ from app.schemas.session import DocumentationSection, SessionDocumentationRespon
 logger = logging.getLogger(__name__)
 
 TRANSCRIPTION_IDENTIFIER = "transcription"
+settings = get_settings()
 
 
 class DocumentationBuilder:
@@ -75,7 +77,7 @@ class DocumentationBuilder:
                 if content.identifier == TRANSCRIPTION_IDENTIFIER:
                     # Avoid embedding very large transcription blobs in the artifact payload.
                     section_type = "resource_link"
-                    section_content = f"/sessions/{session.id}/content/{TRANSCRIPTION_IDENTIFIER}"
+                    section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session.id}/content/{TRANSCRIPTION_IDENTIFIER}"
 
                 section = DocumentationSection(
                     identifier=content.identifier,

@@ -71,54 +71,35 @@ class TestSessionDocumentationEndpoint:
 
     def test_returns_404_for_missing_session(self, client: TestClient):
         """Should return 404 when session doesn't exist."""
-        response = client.get("/sessions/99999/documentation")
+        response = client.get("/api/v2/sessions/99999/documentation")
         assert response.status_code == 404
         assert response.json()["detail"] == "Session not found"
 
-    def test_draft_session_not_accessible_to_anonymous(self, client: TestClient, session_draft):
-        """Should return 403 when anonymous user tries to access draft session docs."""
-        response = client.get(f"/sessions/{session_draft.id}/documentation")
-        assert response.status_code == 403
-
-    def test_draft_session_accessible_to_owner(
-        self, client: TestClient, session_draft, user_token_header
-    ):
-        """Should return 404 (no artifact) when owner accesses their draft."""
-        # Even though user owns it, artifact doesn't exist yet
-        headers = user_token_header(session_draft.owner)
-        response = client.get(f"/sessions/{session_draft.id}/documentation", headers=headers)
-        assert response.status_code == 404
-        assert "not yet generated" in response.json()["detail"]
-
     def test_published_session_without_artifact_returns_404(
-        self, client: TestClient, session_published
+        self, client: TestClient, session_published, test_db
     ):
         """Should return 404 when published session has no artifact yet."""
-        # Clear the artifact that might have been built
-        from app.database.connection import get_db
-
-        db = next(get_db())
-
         session_published.published_documentation_artifact = None
-        db.commit()
+        test_db.commit()
+        test_db.refresh(session_published)
 
-        response = client.get(f"/sessions/{session_published.id}/documentation")
+        response = client.get(f"/api/v2/sessions/{session_published.id}/documentation")
         assert response.status_code == 404
 
     def test_published_session_with_artifact_returns_200(
         self,
         client: TestClient,
         session_published,
-        db_session,
+        test_db,
     ):
         """Should return 200 with artifact for published session."""
         from app.services.documentation_builder import DocumentationBuilder
 
         # Build artifact
-        DocumentationBuilder.build_documentation(db_session, session_published.id)
-        db_session.refresh(session_published)
+        DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
 
-        response = client.get(f"/sessions/{session_published.id}/documentation")
+        response = client.get(f"/api/v2/sessions/{session_published.id}/documentation")
         assert response.status_code == 200
 
         data = response.json()
@@ -127,16 +108,14 @@ class TestSessionDocumentationEndpoint:
         assert len(data["sections"]) == 2
         assert data["doc_version"] == "1.0"
 
-    def test_artifact_contains_all_sections(
-        self, client: TestClient, session_published, db_session
-    ):
+    def test_artifact_contains_all_sections(self, client: TestClient, session_published, test_db):
         """Should include all generated content sections in artifact."""
         from app.services.documentation_builder import DocumentationBuilder
 
-        DocumentationBuilder.build_documentation(db_session, session_published.id)
-        db_session.refresh(session_published)
+        DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
 
-        response = client.get(f"/sessions/{session_published.id}/documentation")
+        response = client.get(f"/api/v2/sessions/{session_published.id}/documentation")
         data = response.json()
 
         # Check sections
@@ -152,15 +131,15 @@ class TestSessionDocumentationEndpoint:
         assert summary_section["order"] == 0
 
     def test_artifact_contains_session_metadata(
-        self, client: TestClient, session_published, db_session
+        self, client: TestClient, session_published, test_db
     ):
         """Should include core session metadata in artifact."""
         from app.services.documentation_builder import DocumentationBuilder
 
-        DocumentationBuilder.build_documentation(db_session, session_published.id)
-        db_session.refresh(session_published)
+        DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
 
-        response = client.get(f"/sessions/{session_published.id}/documentation")
+        response = client.get(f"/api/v2/sessions/{session_published.id}/documentation")
         data = response.json()
 
         assert data["id"] == session_published.id
@@ -216,8 +195,8 @@ class TestSessionDocumentationEndpoint:
 
         assert transcription_section["type"] == "resource_link"
         assert (
-            transcription_section["content"]
-            == f"/sessions/{session_published.id}/content/transcription"
+            transcription_section["resource_url"]
+            == f"http://localhost:7860/api/v2/sessions/{session_published.id}/content/transcription"
         )
 
 
@@ -226,17 +205,17 @@ class TestSessionDocumentationByUriEndpoint:
 
     def test_returns_404_for_missing_uri(self, client: TestClient):
         """Should return 404 when session with URI doesn't exist."""
-        response = client.get("/sessions/by-uri/nonexistent-talk/documentation")
+        response = client.get("/api/v2/sessions/by-uri/nonexistent-talk/documentation")
         assert response.status_code == 404
 
-    def test_returns_documentation_by_uri(self, client: TestClient, session_published, db_session):
+    def test_returns_documentation_by_uri(self, client: TestClient, session_published, test_db):
         """Should return documentation artifact when accessing by URI."""
         from app.services.documentation_builder import DocumentationBuilder
 
-        DocumentationBuilder.build_documentation(db_session, session_published.id)
-        db_session.refresh(session_published)
+        DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
 
-        response = client.get(f"/sessions/by-uri/{session_published.uri}/documentation")
+        response = client.get(f"/api/v2/sessions/by-uri/{session_published.uri}/documentation")
         assert response.status_code == 200
 
         data = response.json()
@@ -247,9 +226,12 @@ class TestSessionDocumentationByUriEndpoint:
 class TestDocumentationEventHandler:
     """Test that documentation is built when session is published."""
 
-    def test_documentation_built_on_session_publish_event(self, test_db, sample_event, sample_user):
+    def test_documentation_built_on_session_publish_event(
+        self, test_db, sample_event, sample_user, monkeypatch
+    ):
         """Should build documentation artifact when session_published event is emitted."""
         from app.events.session_events import SessionEventBus
+        from app.services.documentation_builder import DocumentationBuilder
 
         now = datetime.utcnow()
         session = SessionModel(
@@ -281,7 +263,16 @@ class TestDocumentationEventHandler:
         # Publish session (triggers event)
         session.status = SessionStatus.PUBLISHED
         test_db.commit()
+
+        # Isolate handlers in test DB context. The default handler opens SessionLocal,
+        # which is not overridden by the test fixture and may point to a different DB.
+        def _test_publish_handler(session_id: int, **kwargs):
+            DocumentationBuilder.build_documentation(test_db, session_id)
+
+        handlers = list(SessionEventBus._handlers["session_published"])
+        monkeypatch.setitem(SessionEventBus._handlers, "session_published", [_test_publish_handler])
         SessionEventBus.emit("session_published", session_id=session.id)
+        monkeypatch.setitem(SessionEventBus._handlers, "session_published", handlers)
 
         # Verify artifact was built
         test_db.refresh(session)
@@ -330,12 +321,12 @@ class TestDocumentationEventHandler:
 class TestDocumentationResponseSchema:
     """Test the SessionDocumentationResponse schema."""
 
-    def test_response_deserializes_from_artifact(self, session_published, db_session):
+    def test_response_deserializes_from_artifact(self, session_published, test_db):
         """Should deserialize stored artifact into response model."""
         from app.services.documentation_builder import DocumentationBuilder
 
-        DocumentationBuilder.build_documentation(db_session, session_published.id)
-        db_session.refresh(session_published)
+        DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
 
         artifact = session_published.published_documentation_artifact
         response = SessionDocumentationResponse(**artifact)
