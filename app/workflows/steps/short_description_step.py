@@ -23,10 +23,6 @@ class ShortDescriptionStep(LLMStep):
     Input: Session with existing short_description
     Output: Concise, keyword-dense description optimized for 768-token embedding model
 
-    Overwrites session.short_description. Because short_description is in
-    EMBEDDING_REFRESH_FIELDS, calling session_crud.update() automatically triggers
-    embedding re-generation.
-
     Independent step (no dependencies) - can run in parallel with other steps.
     Does not require transcription.
     """
@@ -295,8 +291,6 @@ Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Ze
             optimized_text = content.get("content", "")
 
             if optimized_text:
-                # Use session_crud.update() to trigger embedding refresh
-                # (short_description is in EMBEDDING_REFRESH_FIELDS)
                 update_data = SessionUpdate(short_description=optimized_text)
                 updated_session = session_crud.update(db, session_id, update_data)
 

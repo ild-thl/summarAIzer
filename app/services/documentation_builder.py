@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session as SQLSession
 
 from app.config.settings import get_settings
-from app.crud.generated_content import list_all_for_session
+from app.crud.generated_content import list_for_session
 from app.crud.session import session_crud
 from app.database.models import SessionStatus
 from app.schemas.session import DocumentationSection, SessionDocumentationResponse
@@ -55,21 +55,16 @@ class DocumentationBuilder:
                 return None
 
             # Load all generated content for the session
-            content_items = list_all_for_session(db, session_id)
+            content_items = list_for_session(db, session_id)
 
-            # Keep only the most recent item for each identifier to avoid duplicate sections.
-            latest_by_identifier: OrderedDict[str, object] = OrderedDict()
+            # Deduplicate - keep only latest per identifier (by creation time)
+            deduped: OrderedDict[str, any] = OrderedDict()
             for content in content_items:
-                latest_by_identifier[content.identifier] = content
-
-            latest_items = sorted(
-                latest_by_identifier.values(),
-                key=lambda item: (item.created_at or datetime.min, item.id),
-            )
+                deduped[content.identifier] = content
 
             # Transform the deduplicated set into documentation sections.
             sections: list[DocumentationSection] = []
-            for idx, content in enumerate(latest_items):
+            for idx, content in enumerate(deduped.values()):
                 section_type = content.content_type
                 section_content = content.content
                 section_resource_url = None
@@ -78,6 +73,7 @@ class DocumentationBuilder:
                     # Avoid embedding very large transcription blobs in the artifact payload.
                     section_type = "resource_link"
                     section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session.id}/content/{TRANSCRIPTION_IDENTIFIER}"
+                    section_content = None
 
                 section = DocumentationSection(
                     identifier=content.identifier,

@@ -493,7 +493,7 @@ def _track_generated_content(
             )
 
     # Get created content IDs for logging
-    created_content = content_crud.get_content_list(db, session_id)
+    created_content = content_crud.list_for_session(db, session_id)
     created_ids = [c.id for c in created_content if c.workflow_execution_id == execution_id]
 
     logger.info(
@@ -766,6 +766,11 @@ def execute_generated_content(
             "session_id": session_id,
             "execution_id": execution_id,
         }
+
+        # Populate inital state with existing content to enable context-aware generation and updates
+        existing_content = content_crud.list_for_session(db, session_id)
+        for content in existing_content:
+            initial_state[content.identifier] = content.content
 
         logger.info(
             "content_generation_initial_state_built",

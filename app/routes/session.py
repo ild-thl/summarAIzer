@@ -21,7 +21,6 @@ from app.schemas.session import (
     SessionListResponse,
     SessionResponse,
     SessionUpdate,
-    SessionWithEvent,
 )
 from app.security.auth import (
     can_access_session_content,
@@ -94,7 +93,7 @@ async def create_session(
     return db_session
 
 
-@router.get("/{session_id}", response_model=SessionWithEvent)
+@router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: int,
     current_user: User = Depends(get_current_user_optional),
@@ -119,7 +118,7 @@ async def get_session(
     return db_session
 
 
-@router.get("/by-uri/{uri}", response_model=SessionWithEvent)
+@router.get("/by-uri/{uri}", response_model=SessionResponse)
 async def get_session_by_uri(
     uri: str,
     current_user: User = Depends(get_current_user_optional),
@@ -290,7 +289,7 @@ async def list_sessions(
     return filtered_sessions
 
 
-@router.patch("/{session_id}", response_model=SessionWithEvent)
+@router.patch("/{session_id}", response_model=SessionResponse)
 async def update_session(
     session_id: int,
     session_in: SessionUpdate,

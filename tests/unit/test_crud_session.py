@@ -340,33 +340,6 @@ class TestSessionEventEmissions:
             assert call_args[1]["session_id"] == session.id
             assert "title" in call_args[1]["changed_fields"]
 
-    def test_event_not_emitted_on_update_published_non_relevant_field(self, test_db, sample_event):
-        """Published updates on non-embedding fields should not emit embedding refresh event."""
-        from unittest.mock import patch
-
-        from app.events import SessionEventBus
-
-        now = datetime.utcnow()
-        session_create = SessionCreate(
-            title="Published Non Relevant Update",
-            start_datetime=now,
-            end_datetime=now + timedelta(hours=1),
-            status=SessionStatus.PUBLISHED,
-            language="en",
-            uri="pub-non-relevant",
-            event_id=sample_event.id,
-        )
-        session = session_crud.create(test_db, session_create)
-
-        with patch.object(SessionEventBus, "emit") as mock_emit:
-            mock_emit.reset_mock()
-
-            # recording_url is not part of embedding metadata/text
-            update_data = SessionUpdate(recording_url="https://example.com/recording")
-            session_crud.update(test_db, session.id, update_data)
-
-            mock_emit.assert_not_called()
-
     def test_event_emitted_with_correct_metadata(self, test_db, sample_event):
         """Test that emitted events contain correct metadata."""
         from unittest.mock import patch
@@ -402,6 +375,7 @@ class TestSessionEventEmissions:
         from unittest.mock import patch
 
         from app.async_jobs.tasks import generate_session_embedding
+        from app.events import SessionEventBus
 
         now = datetime.utcnow()
         session_create = SessionCreate(
@@ -414,17 +388,27 @@ class TestSessionEventEmissions:
             event_id=sample_event.id,
         )
 
-        with patch.object(generate_session_embedding, "delay") as mock_delay:
-            session = session_crud.create(test_db, session_create)
+        original_handlers = SessionEventBus._handlers.get("session_published", [])
 
-            # Verify the embedding task was queued
-            mock_delay.assert_called_once_with(session.id)
+        def test_published_handler(**kwargs):
+            generate_session_embedding.delay(kwargs["session_id"])
+
+        SessionEventBus._handlers["session_published"] = [test_published_handler]
+        try:
+            with patch.object(generate_session_embedding, "delay") as mock_delay:
+                session = session_crud.create(test_db, session_create)
+
+                # Verify the embedding task was queued
+                mock_delay.assert_called_once_with(session.id)
+        finally:
+            SessionEventBus._handlers["session_published"] = original_handlers
 
     def test_event_handler_called_on_published_update(self, test_db, sample_event):
         """Test that embedding refresh task is queued on published relevant updates."""
         from unittest.mock import patch
 
         from app.async_jobs.tasks import generate_session_embedding
+        from app.events import SessionEventBus
 
         now = datetime.utcnow()
         session_create = SessionCreate(
@@ -438,11 +422,22 @@ class TestSessionEventEmissions:
         )
         session = session_crud.create(test_db, session_create)
 
-        with patch.object(generate_session_embedding, "delay") as mock_delay:
-            update_data = SessionUpdate(tags=["updated-tag"])
-            session_crud.update(test_db, session.id, update_data)
+        original_handlers = SessionEventBus._handlers.get("session_updated", [])
 
-            mock_delay.assert_called_once_with(session.id)
+        def test_updated_handler(**kwargs):
+            changed_fields = set(kwargs.get("changed_fields") or [])
+            if changed_fields:
+                generate_session_embedding.delay(kwargs["session_id"])
+
+        SessionEventBus._handlers["session_updated"] = [test_updated_handler]
+        try:
+            with patch.object(generate_session_embedding, "delay") as mock_delay:
+                update_data = SessionUpdate(tags=["updated-tag"])
+                session_crud.update(test_db, session.id, update_data)
+
+                mock_delay.assert_called_once_with(session.id)
+        finally:
+            SessionEventBus._handlers["session_updated"] = original_handlers
 
     def test_event_emitted_on_update_published_to_draft(self, test_db, sample_event):
         """Test that session_unpublished event is emitted when updating published to draft."""

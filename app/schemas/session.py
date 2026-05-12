@@ -370,12 +370,6 @@ class SessionListResponse(BaseModel):
         return data
 
 
-class SessionWithEvent(SessionResponse):
-    """Schema for Session response with associated event."""
-
-    event: EventResponse | None = None
-
-
 class TimeWindow(BaseModel):
     """Single time window with inclusive bounds."""
 

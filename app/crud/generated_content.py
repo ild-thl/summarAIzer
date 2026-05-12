@@ -70,7 +70,6 @@ def create_or_update_content(
             and_(
                 GeneratedContent.session_id == session_id,
                 GeneratedContent.identifier == identifier,
-                GeneratedContent.workflow_execution_id == workflow_execution_id,
             )
         )
         .first()
@@ -121,14 +120,22 @@ def get_content_by_identifier(
     )
 
 
-def get_content_list(
+def list_for_session(
     db: SQLSession, session_id: int, identifier: str | None = None
 ) -> list[GeneratedContent]:
-    """List content for session, optionally filtered by identifier."""
+    """
+    List all generated content for a session, ordered by creation time.
+
+    Optionally filtered by identifier.
+
+    Used by documentation builder to assemble published artifacts.
+    """
     query = db.query(GeneratedContent).filter(GeneratedContent.session_id == session_id)
+
     if identifier:
         query = query.filter(GeneratedContent.identifier == identifier)
-    return query.order_by(desc(GeneratedContent.created_at)).all()
+
+    return query.order_by(GeneratedContent.created_at.asc()).all()
 
 
 def list_content_identifiers(db: SQLSession, session_id: int) -> list[str]:
@@ -140,20 +147,6 @@ def list_content_identifiers(db: SQLSession, session_id: int) -> list[str]:
         .all()
     )
     return [c[0] for c in contents]
-
-
-def list_all_for_session(db: SQLSession, session_id: int) -> list[GeneratedContent]:
-    """
-    List all generated content for a session, ordered by creation time.
-
-    Used by documentation builder to assemble published artifacts.
-    """
-    return (
-        db.query(GeneratedContent)
-        .filter(GeneratedContent.session_id == session_id)
-        .order_by(GeneratedContent.created_at.asc())
-        .all()
-    )
 
 
 def update_content(

@@ -106,7 +106,7 @@ class SummaryStep(LLMStep):
 Deine Zusammenfassung enthält diese Abschnitte:
 {sections_text}
 
-Format: Markdown, bereit zum Kopieren."""
+Format: Markdown."""
 
         if key_takeaways_block:
             sys_message = (
@@ -116,31 +116,21 @@ Format: Markdown, bereit zum Kopieren."""
             sys_message = sys_base
 
         # Build human message
-        human_base = f"""Veranstaltung: {session.title}
+        human_message = f"""Veranstaltung: {session.title}
 Referent:innen: {speakers}
 Dauer: {duration} Minuten
-Tags: {tags}
-
-Transkript:
-{context.get('transcription', '')}
-
-Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
+Tags: {tags}"""
 
         if key_takeaways_block:
-            human_message = f"""Veranstaltung: {session.title}
-Referent:innen: {speakers}
-Dauer: {duration} Minuten
-Tags: {tags}
-
+            human_message += f"""
 Vorab extrahierte Key Takeaways:
-{key_takeaways_block}
+{key_takeaways_block}"""
 
+            human_message += f"""
 Transkript:
 {context.get('transcription', '')}
 
 Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
-        else:
-            human_message = human_base
 
         return [
             SystemMessage(content=sys_message),

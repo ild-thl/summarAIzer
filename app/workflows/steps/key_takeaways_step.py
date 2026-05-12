@@ -1,6 +1,5 @@
 """Key takeaways step - extracts actionable insights from session."""
 
-import json
 from typing import Any
 
 import structlog
@@ -44,7 +43,6 @@ class KeyTakeawaysStep(LLMStep):
 
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate key takeaways messages with context injection."""
-        speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
 
         return [
             SystemMessage(
@@ -54,14 +52,14 @@ Deine Aufgabe ist es, 6-8 spezifische, umsetzbare Key Takeaways zu extrahieren. 
 - Klar und prägnant sein (1-2 Sätze)
 - Umsetzbar für Teilnehmende sein
 - Spezifisch zu diesem Veranstaltungsinhalt sein
-- Mit direkten Zitaten aus dem Transkript belegt werden können
 
-Gib AUSSCHLIESSLICH ein JSON-Array von Strings zurück, nichts anderes. Beispiel:
-["Takeaway 1", "Takeaway 2", ...]"""
+Gib AUSSCHLIESSLICH eine Markdown-Liste zurück, nichts anderes. Beispiel:
+ - Takeaway 1
+ - Takeaway 2
+ - ..."""
             ),
             HumanMessage(
                 content=f"""Veranstaltungstitel: {session.title}
-Referent:innen: {speakers}
 
 Transkript:
 {context.get('transcription', '')}
@@ -72,23 +70,14 @@ Extrahiere nun die Key Takeaways:"""
 
     def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response into key takeaways output."""
-        takeaways_json = response.content if hasattr(response, "content") else str(response)
-
-        # Parse JSON response
-        try:
-            takeaways = json.loads(takeaways_json)
-            if not isinstance(takeaways, list):
-                takeaways = [takeaways_json]
-        except json.JSONDecodeError:
-            takeaways = [takeaways_json]
+        takeaways = response.content if hasattr(response, "content") else str(response)
 
         return {
-            "content": json.dumps(takeaways),
-            "content_type": "json_array",
+            "content": takeaways,
+            "content_type": "markdown",
             "meta_info": {
                 "model": self.get_model_config().model,
                 "type": "generated_key_takeaways",
-                "count": len(takeaways),
             },
         }
 

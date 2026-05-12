@@ -126,7 +126,7 @@ async def get_workflow_status(
     # Get generated content if completed
     created_content = []
     if workflow_exec.status == "completed":
-        contents = content_crud.get_content_list(db, session_id)
+        contents = content_crud.list_for_session(db, session_id)
         created_content = [
             GeneratedContentListItem(
                 id=c.id,
