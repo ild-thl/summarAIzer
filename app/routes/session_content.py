@@ -1,7 +1,8 @@
 """API routes for Session Content Management (sub-resource)."""
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -38,6 +39,27 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/sessions", tags=["session-content"])
 
 
+def _content_media_type(content_type: str | None) -> str:
+    normalized = (content_type or "plain_text").strip().lower()
+
+    media_type_map = {
+        "plain_text": "text/plain; charset=utf-8",
+        "markdown": "text/markdown; charset=utf-8",
+        "json": "application/json",
+        "json_array": "application/json",
+    }
+
+    return media_type_map.get(normalized, "text/plain; charset=utf-8")
+
+
+def _is_browser_navigation(request: Request) -> bool:
+    accept = (request.headers.get("accept") or "").lower()
+
+    # Regular browser navigation requests usually prefer HTML. API clients that
+    # want the structured payload should keep using JSON Accept headers.
+    return "text/html" in accept
+
+
 @router.get("/{session_id}/content", response_model=SessionContentListResponse)
 async def get_available_content(
     session_id: int,
@@ -69,6 +91,8 @@ async def get_available_content(
 async def get_content_by_identifier(
     session_id: int,
     identifier: str,
+    request: Request,
+    download: bool = Query(default=False),
     current_user: User = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
@@ -97,6 +121,36 @@ async def get_content_by_identifier(
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND,
             detail=f"Content with identifier '{identifier}' not found for this session",
+        )
+
+    if download:
+        filename_base = (
+            db_session.uri or f"session-{session_id}"
+        ).strip() or f"session-{session_id}"
+        identifier_part = identifier.strip() or "content"
+
+        content_type = (db_content.content_type or "plain_text").strip().lower()
+        extension_map = {
+            "plain_text": "txt",
+            "markdown": "md",
+            "json": "json",
+            "json_array": "json",
+        }
+
+        extension = extension_map.get(content_type, "txt")
+        media_type = _content_media_type(content_type)
+        filename = f"{filename_base}-{identifier_part}.{extension}"
+
+        return Response(
+            content=db_content.content,
+            media_type=media_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if _is_browser_navigation(request):
+        return Response(
+            content=db_content.content,
+            media_type=_content_media_type(db_content.content_type),
         )
 
     return db_content

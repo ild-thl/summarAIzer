@@ -101,6 +101,55 @@ class TestContentEndpoints:
         assert data["identifier"] == "transcription"
         assert data["content"] == content_text
 
+    def test_get_content_by_identifier_as_download(self, client: TestClient, session_with_event):
+        """Test retrieving content as a downloadable text file."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+        content_text = "Test transcription content for download"
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": content_text},
+        )
+
+        response = client.get(
+            f"/api/v2/sessions/{session_id}/content/transcription?download=true",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+
+        assert response.status_code == HTTP_200_OK
+        assert response.text == content_text
+        assert response.headers["content-type"].startswith("text/plain")
+        assert "attachment;" in response.headers["content-disposition"]
+        assert "ai-workshop-transcription.txt" in response.headers["content-disposition"]
+
+    def test_get_content_by_identifier_returns_raw_content_for_browser_navigation(
+        self, client: TestClient, session_with_event
+    ):
+        """Test browser navigation gets raw content instead of the JSON envelope."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+        content_text = "Test transcription content for browser"
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": content_text},
+        )
+
+        response = client.get(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={
+                "Authorization": f"Bearer {plain_key}",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        assert response.text == content_text
+        assert response.headers["content-type"].startswith("text/plain")
+
     def test_transcription_conflict(self, client: TestClient, session_with_event):
         """Test adding duplicate transcription fails."""
         session_data, plain_key = session_with_event
