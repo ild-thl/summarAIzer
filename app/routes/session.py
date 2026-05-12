@@ -28,6 +28,7 @@ from app.security.auth import (
     get_current_user_optional,
     require_session_owner,
 )
+from app.services.documentation_builder import DocumentationBuilder
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_list_sessions_usage
 
@@ -365,6 +366,49 @@ async def list_event_sessions(
     filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions
+
+
+@router.get("/documentation/rebuild-all")
+async def rebuild_all_documentation(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Rebuild documentation artifacts for all published sessions.
+
+    Iterates over every published session and regenerates its documentation
+    artifact. Useful after deploying changes to the artifact-building logic
+    or to backfill sessions that were published before this feature existed.
+
+    Requires authentication. Returns counts of rebuilt and failed sessions.
+    """
+    from app.database.models import SessionStatus
+
+    sessions = session_crud.list_with_filters(
+        db,
+        status=[SessionStatus.PUBLISHED.value],
+        skip=0,
+        limit=10000,
+    )
+
+    rebuilt = 0
+    failed = 0
+
+    for session in sessions:
+        try:
+            result = DocumentationBuilder.build_documentation(db, session.id)
+            if result is not None:
+                rebuilt += 1
+        except Exception as exc:
+            logger.error(
+                "rebuild_documentation_failed",
+                session_id=session.id,
+                error=str(exc),
+            )
+            failed += 1
+
+    logger.info("rebuild_all_documentation_complete", rebuilt=rebuilt, failed=failed)
+    return {"rebuilt": rebuilt, "failed": failed, "total": len(sessions)}
 
 
 @router.get("/{session_id}/documentation", response_model=SessionDocumentationResponse)
