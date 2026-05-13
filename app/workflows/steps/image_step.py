@@ -127,7 +127,7 @@ Create a concise English prompt for a high-quality visualization image that repr
             ),
         ]
 
-    def process_response(self, response: Any) -> dict[str, Any]:
+    def process_response(self, response: Any) -> str:
         """Extract and clean image description from LLM response."""
         image_prompt = response.content if hasattr(response, "content") else str(response)
 
@@ -189,19 +189,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-
-                # Return failure result with error details
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             images = result.get("images", [])
             if not images:
@@ -211,17 +199,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             # Get first image (we only request one)
             image = images[0]
@@ -239,17 +217,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                         session_id=session.id,
                         error=error_msg,
                     )
-                    return {
-                        "content": "",
-                        "content_type": "image",
-                        "meta_info": {
-                            "model": self.image_model,
-                            "type": "image_generation",
-                            "status": "failed",
-                            "error": error_msg,
-                            "image_prompt": image_prompt,
-                        },
-                    }
+                    raise RuntimeError(error_msg)
             elif isinstance(image, str):
                 image_data = image
             else:
@@ -259,17 +227,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             logger.info(
                 "image_generated",
@@ -292,17 +250,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     error=error_msg,
                     exc_info=True,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg) from upload_error
 
             logger.info(
                 "image_uploaded_to_s3",
@@ -332,16 +280,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                 error=error_msg,
                 exc_info=True,
             )
-            return {
-                "content": "",
-                "content_type": "image",
-                "meta_info": {
-                    "model": self.image_model,
-                    "type": "image_generation",
-                    "status": "error",
-                    "error": error_msg,
-                },
-            }
+            raise RuntimeError(error_msg) from e
 
     def __repr__(self) -> str:
         return f"ImageStep(model={self.image_model}, size={self.width}x{self.height})"

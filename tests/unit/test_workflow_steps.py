@@ -171,6 +171,75 @@ async def test_summary_step_integration(test_db, sample_session):
 
 
 @pytest.mark.asyncio
+async def test_image_step_generation_failure_does_not_persist(test_db, sample_session):
+    """Image generation API errors should fail the step and skip persistence."""
+    from app.workflows.steps.image_step import ImageStep
+
+    step = ImageStep(api_url="http://example.test", api_key="test-key")
+    step._save_to_db = Mock()
+
+    mock_response = Mock()
+    mock_response.content = "Valid image prompt"
+
+    with (
+        patch.object(step, "get_model") as mock_get_model,
+        patch("app.database.connection.SessionLocal") as mock_session_local,
+    ):
+        mock_llm = Mock()
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+        mock_get_model.return_value = mock_llm
+        mock_session_local.return_value = test_db
+
+        step.image_service.generate_image = Mock(
+            return_value={"success": False, "error": "API error 401: Unauthorized"}
+        )
+
+        with pytest.raises(RuntimeError, match="Unauthorized"):
+            await step.execute(
+                session_id=sample_session.id,
+                execution_id=1,
+                context={"summary": "Summary for image prompt"},
+            )
+
+    step._save_to_db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_step_s3_failure_does_not_persist(test_db, sample_session):
+    """S3 upload failures should fail the step and skip persistence."""
+    from app.workflows.steps.image_step import ImageStep
+
+    step = ImageStep(api_url="http://example.test", api_key="test-key")
+    step._save_to_db = Mock()
+
+    mock_response = Mock()
+    mock_response.content = "Valid image prompt"
+
+    with (
+        patch.object(step, "get_model") as mock_get_model,
+        patch("app.database.connection.SessionLocal") as mock_session_local,
+    ):
+        mock_llm = Mock()
+        mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+        mock_get_model.return_value = mock_llm
+        mock_session_local.return_value = test_db
+
+        step.image_service.generate_image = Mock(
+            return_value={"success": True, "images": [{"b64_json": "dGVzdA=="}]}
+        )
+        step.s3_service.upload_image_from_base64 = Mock(side_effect=Exception("S3 unavailable"))
+
+        with pytest.raises(RuntimeError, match="Failed to upload image to S3"):
+            await step.execute(
+                session_id=sample_session.id,
+                execution_id=1,
+                context={"summary": "Summary for image prompt"},
+            )
+
+    step._save_to_db.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_step_with_callable_generate():
     """Test step with callable generate result."""
 
