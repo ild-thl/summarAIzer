@@ -199,6 +199,61 @@ class TestSessionDocumentationEndpoint:
             == f"http://localhost:7860/api/v2/sessions/{session_published.id}/content/transcription"
         )
 
+    def test_artifact_normalizes_image_url_to_resource_url(self, session_published, test_db):
+        """Image sections should expose canonical URL via resource_url only."""
+        from app.services.documentation_builder import DocumentationBuilder
+
+        image_url = (
+            "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
+            "session_32/generated_image_20260513_145220.png"
+        )
+        create_content(
+            db=test_db,
+            session_id=session_published.id,
+            identifier="image",
+            content_type="image",
+            content=image_url,
+            meta_info={"image_url": image_url},
+        )
+
+        artifact = DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
+
+        assert artifact is not None
+        sections = artifact["sections"]
+        image_section = next(s for s in sections if s["identifier"] == "image")
+
+        assert image_section["type"] == "image"
+        assert image_section["resource_url"] == image_url
+        assert image_section["content"] is None
+
+    def test_artifact_uses_meta_image_url_when_content_missing(self, session_published, test_db):
+        """Image URL should still be exposed via resource_url when only meta contains the URL."""
+        from app.services.documentation_builder import DocumentationBuilder
+
+        image_url = (
+            "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
+            "session_42/generated_image_20260513_150000.png"
+        )
+        create_content(
+            db=test_db,
+            session_id=session_published.id,
+            identifier="image",
+            content_type="image",
+            content="",
+            meta_info={"image_url": image_url},
+        )
+
+        artifact = DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
+
+        assert artifact is not None
+        sections = artifact["sections"]
+        image_section = next(s for s in sections if s["identifier"] == "image")
+
+        assert image_section["resource_url"] == image_url
+        assert image_section["content"] is None
+
 
 class TestSessionDocumentationByUriEndpoint:
     """Test the GET /by-uri/{uri}/documentation endpoint."""

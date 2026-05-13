@@ -3,6 +3,7 @@
 import logging
 from collections import OrderedDict
 from datetime import datetime
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session as SQLSession
 
@@ -15,6 +16,7 @@ from app.schemas.session import DocumentationSection, SessionDocumentationRespon
 logger = logging.getLogger(__name__)
 
 TRANSCRIPTION_IDENTIFIER = "transcription"
+URL_SECTION_TYPES = {"resource_link", "image", "image_url"}
 settings = get_settings()
 
 
@@ -74,6 +76,19 @@ class DocumentationBuilder:
                     section_type = "resource_link"
                     section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session.id}/content/{TRANSCRIPTION_IDENTIFIER}"
                     section_content = None
+                elif section_type in URL_SECTION_TYPES:
+                    section_resource_url = _extract_resource_url(content.content, content.meta_info)
+                    section_content = None
+
+                    if section_resource_url is None:
+                        logger.warning(
+                            "Dropping invalid URL content from documentation section",
+                            extra={
+                                "session_id": session.id,
+                                "identifier": content.identifier,
+                                "content_type": section_type,
+                            },
+                        )
 
                 section = DocumentationSection(
                     identifier=content.identifier,
@@ -142,3 +157,32 @@ def _get_section_title(identifier: str) -> str:
         "questions": "Questions",
     }
     return title_map.get(identifier, identifier.replace("_", " ").title())
+
+
+def _extract_resource_url(content: str | None, meta_info: dict | None) -> str | None:
+    """Extract canonical URL for URL-based documentation sections."""
+    candidates = []
+    if isinstance(content, str):
+        candidates.append(content)
+
+    if isinstance(meta_info, dict):
+        for key in ["resource_url", "image_url", "url"]:
+            value = meta_info.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+
+    for candidate in candidates:
+        url = candidate.strip()
+        if _is_http_url(url):
+            return url
+
+    return None
+
+
+def _is_http_url(value: str) -> bool:
+    """Return True when value is an absolute HTTP(S) URL."""
+    if value == "":
+        return False
+
+    parsed = urlparse(value)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
