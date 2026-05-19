@@ -57,6 +57,7 @@ select = [
     "RUF",    # Ruff-specific rules
 ]
 ignore = [
+    "RUF001",  # Allow EN Dash in comments and docstrings
     "E501",   # line too long (handled by Black)
     "B008",   # function call in default argument
     "E731",   # allow lambda assignment

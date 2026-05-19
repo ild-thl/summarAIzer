@@ -370,7 +370,7 @@ async def list_event_sessions(
 
 @router.get("/documentation/rebuild-all")
 async def rebuild_all_documentation(
-    current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """

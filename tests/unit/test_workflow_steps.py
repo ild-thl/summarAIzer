@@ -124,7 +124,7 @@ def test_step_get_model_config():
     step = create_mock_step(identifier="test_step")
     config = step.get_model_config()
 
-    assert config.model == "gemma-3-27b-it"
+    assert config.model == "mistral-large-3-675b-instruct-2512"
     assert config.temperature == 0.7
     assert config.max_tokens == 2000
 

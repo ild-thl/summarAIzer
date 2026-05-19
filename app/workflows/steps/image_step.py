@@ -88,7 +88,7 @@ class ImageStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
-            model="gemma-3-27b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.7,  # Moderate for creativity but consistency
             max_tokens=300,  # Short and concise
             top_p=0.95,
@@ -106,10 +106,17 @@ class ImageStep(LLMStep):
 Rules:
 - Output in English, one single line prompt (50-80 words)
 - Focus: Visual representation of the event's core concepts
-- Style: Professional, academic, digital
+- Style: Artistic, conceptual, poster-like, clean geometric composition
 - Technical quality descriptors: e.g., "high quality", "detailed", "professional"
 - No human faces or people
-- Color palette: Modern, contrasting, appealing
+- No text or typography in the image: no letters, words, numbers, captions, labels, logos, signs, watermarks
+- Avoid photorealistic or uncanny aesthetics; prefer crafted visual techniques (editorial collage, graphic abstraction, soft gradients, subtle grain)
+- Corporate visual DNA (University Future Festival inspired):
+    - Light neutral gray background base
+    - Bold black geometric shapes
+    - Soft glowing gradient accents in warm yellow to pink transitions
+    - Minimal, high-contrast, modern layout with generous negative space
+    - Composition should feel intentional, artistic, and premium
 - Format: Single flowing text prompt, no bullets or quotes
 
 Example format:
@@ -123,7 +130,7 @@ Tags: {tags}
 Summary:
 {context.get('summary', '')}
 
-Create a concise English prompt for a high-quality visualization image that represents the core concepts of this event. Output only the prompt text, no explanations."""
+Create a concise English prompt for a high-quality visualization image that represents the core concepts of this event while following the specified corporate visual DNA. Keep thematic freedom for the topic, but strictly avoid any text, letters, or numbers in the generated image. Output only the prompt text, no explanations."""
             ),
         ]
 

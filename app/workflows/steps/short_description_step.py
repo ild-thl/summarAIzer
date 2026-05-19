@@ -34,7 +34,9 @@ class ShortDescriptionStep(LLMStep):
     temperature: float = 0.3  # Low for factual compression
     max_tokens: int = 300  # Give LLM room to stay within margin
     top_p: float = 0.9  # Moderate for some variability in phrasing
-    model_name: str = "gemma-3-27b-it"  # Model with good context handling for compression
+    model_name: str = (
+        "mistral-large-3-675b-instruct-2512"  # Model with good context handling for compression
+    )
 
     @property
     def identifier(self) -> str:

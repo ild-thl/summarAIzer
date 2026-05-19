@@ -107,11 +107,11 @@ Die verwendeten LLMs werden per `ChatModelConfig` pro Step konfiguriert. Default
 
 | Step | Standard-Modell | Eigenschaft |
 |------|----------------|-------------|
-| `summary` | `gemma-3-27b-it` | `temperature=0.7`, `max_tokens=3000` |
-| `key_takeaways` | `gemma-3-27b-it` | `temperature=0.6`, `max_tokens=1500` |
+| `summary` | `mistral-large-3-675b-instruct-2512` | `temperature=0.7`, `max_tokens=3000` |
+| `key_takeaways` | `mistral-large-3-675b-instruct-2512` | `temperature=0.6`, `max_tokens=1500` |
 | `tags` | `qwen3-30b-a3b-instruct-2507` | `temperature=0.5`, `max_tokens=500` |
-| `short_description` | `gemma-3-27b-it` | `temperature=0.3`, `max_tokens=300` |
-| `mermaid` | `codestral-22b` | `temperature=0.2`, `max_tokens=2000` |
+| `short_description` | `mistral-large-3-675b-instruct-2512` | `temperature=0.3`, `max_tokens=300` |
+| `mermaid` | `devstral-2-123b-instruct-2512` | `temperature=0.2`, `max_tokens=2000` |
 
 ---
 
@@ -200,9 +200,9 @@ class ImageStep(LLMStep):
 | Identifier | Klasse | Basis-Klasse | Beschreibung |
 |------------|--------|-------------|-------------|
 | `summary` | `SummaryStep` | `LLMStep` | Format-aware Markdown-Zusammenfassung (Vortrag / Diskussion / Workshop) |
-| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | 6–8 umsetzbare Key Takeaways als JSON-Array |
-| `tags` | `TagsStep` | `LLMStep` | 2–5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
-| `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` auf 150–250 Zeichen für bessere Embeddings |
+| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | 6-8 umsetzbare Key Takeaways als JSON-Array |
+| `tags` | `TagsStep` | `LLMStep` | 2-5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
+| `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` auf 150-250 Zeichen für bessere Embeddings |
 | `mermaid` | `MermaidStep` | `LLMStep` | Mermaid-Mindmap-Diagramm |
 | `image` | `ImageStep` | `LLMStep` | KI-generiertes Titelbild, Upload zu S3 |
 
@@ -256,7 +256,7 @@ class H5PQuizStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="gemma-3-27b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.4,      # niedrig für konsistente, korrekte Antworten
             max_tokens=2000,
             top_p=0.9,

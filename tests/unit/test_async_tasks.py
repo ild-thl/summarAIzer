@@ -1,7 +1,7 @@
 """Tests for async Celery tasks."""
 
 from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -359,6 +359,33 @@ def test_reconcile_session_embeddings_queues_missing_and_stale():
     db_mock.close.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_generate_session_embedding_base_raises_on_missing_embedding_vector(
+    mock_db_session,
+):
+    """Embedding generation should fail fast if the provider returns None."""
+    session_id = 27
+    mock_settings = Mock(enable_embeddings=True, embedding_model_name="test-embedding-model")
+    mock_session = Mock()
+    mock_service = Mock()
+    mock_service.prepare_session_text_with_summary.return_value = "Valid embedding input text"
+    mock_service.embed_query = AsyncMock(return_value=None)
+    mock_service.store_session_embedding = AsyncMock()
+
+    with (
+        patch("app.config.settings.get_settings", return_value=mock_settings),
+        patch("app.async_jobs.tasks.get_embedding_service", return_value=mock_service),
+        patch("app.async_jobs.tasks.SessionLocal", return_value=mock_db_session),
+        patch("app.async_jobs.tasks.session_crud.read", return_value=mock_session),
+        patch("app.async_jobs.tasks.EmbeddingService.validate_embedding_text", return_value=True),
+        pytest.raises(ValueError, match="returned no vector"),
+    ):
+        await tasks_module._generate_session_embedding_base(session_id=session_id)
+
+    mock_service.store_session_embedding.assert_not_awaited()
+    mock_db_session.commit.assert_not_called()
+
+
 def test_reconcile_session_embeddings_scopes_to_event_when_provided():
     """Reconcile task should filter published sessions by event_id when provided."""
     now = datetime.utcnow()
@@ -433,3 +460,38 @@ def test_reconcile_session_embeddings_skips_when_disabled():
 
     assert result["status"] == "skipped"
     assert result["reason"] == "disabled"
+
+
+def test_track_generated_content_ignores_session_context_keys(mock_db_session):
+    """Only real step identifiers should be persisted as available content."""
+    final_state = {
+        "session_id": 27,
+        "execution_id": 99,
+        "transcription": {"content": "..."},
+        "summary": {"content": "..."},
+        "session_format": "input",
+        "session_tags": ["ai"],
+        "_init_session_context": {"session_format": "input"},
+    }
+    created_content = [Mock(id=1, workflow_execution_id=99), Mock(id=2, workflow_execution_id=100)]
+
+    with (
+        patch(
+            "app.async_jobs.tasks.StepRegistry.get_all_steps",
+            return_value={"transcription": Mock(), "summary": Mock(), "tags": Mock()},
+        ),
+        patch("app.async_jobs.tasks.session_crud.add_available_content_identifier") as mock_add,
+        patch("app.async_jobs.tasks.content_crud.list_for_session", return_value=created_content),
+    ):
+        created_ids = tasks_module._track_generated_content(
+            final_state=final_state,
+            execution_id=99,
+            session_id=27,
+            db=mock_db_session,
+        )
+
+    added_identifiers = [call.args[2] for call in mock_add.call_args_list]
+    assert added_identifiers == ["transcription", "summary"]
+    assert "session_format" not in added_identifiers
+    assert "session_tags" not in added_identifiers
+    assert created_ids == [1]

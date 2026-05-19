@@ -1,4 +1,4 @@
-"""Key takeaways step - extracts actionable insights from session."""
+"""Key takeaways step - extracts core points from talk, workshop and lab sessions."""
 
 from typing import Any
 
@@ -6,20 +6,27 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from app.database.models import Session as SessionModel
+from app.database.models import SessionFormat
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
 
+# Lightning Talk sessions get a compact extraction
+_LIGHTNING_TALK_COUNT = "3-4"
+_DEFAULT_COUNT = "5-8"
+
 
 class KeyTakeawaysStep(LLMStep):
     """
-    Extracts 6-8 actionable key takeaways from the session.
+    Extracts core points (Kernpunkte) from talk, workshop and lab sessions.
 
-    Depends on: Session transcription
+    Not used for discussion sessions (use PositionsStep instead).
+    Lightning Talk sessions get a reduced count (3-4) for a compact output.
+
     Input: Session metadata + transcription
-    Output: JSON array of actionable takeaway strings
+    Output: Markdown list of core points used as input for the summary step
     """
 
     @property
@@ -35,42 +42,56 @@ class KeyTakeawaysStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Key takeaways need nuanced understanding - use well-rounded model."""
         return ChatModelConfig(
-            model="gemma-3-27b-it",
-            temperature=0.6,  # Moderate for balanced extraction
-            max_tokens=1500,  # Medium output for 6-8 takeaways
+            model="mistral-large-3-675b-instruct-2512",
+            temperature=0.5,
+            max_tokens=1500,
             top_p=0.92,
         )
 
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
-        """Generate key takeaways messages with context injection."""
+        """Generate key takeaways messages, compact variant for Lightning Talks."""
+        is_lightning = session.session_format == SessionFormat.LIGHTNING_TALK
+        count = _LIGHTNING_TALK_COUNT if is_lightning else _DEFAULT_COUNT
+        format_label = session.session_format.value if session.session_format else "Vortrag"
+        description_block = (
+            f"\n\nSession-Beschreibung und Problemstellung:\n{session.description}"
+            if session.description
+            else ""
+        )
 
         return [
             SystemMessage(
-                content="""Du bist Expert:in für die Extrahierung von Key Takeaways aus technischen Veranstaltungen.
+                content=f"""Du bist Expert:in für die Extraktion von Kernaussagen aus Bildungsveranstaltungen.
 
-Deine Aufgabe ist es, 6-8 spezifische, umsetzbare Key Takeaways zu extrahieren. Jeder Takeaway sollte:
-- Klar und prägnant sein (1-2 Sätze)
-- Umsetzbar für Teilnehmende sein
-- Spezifisch zu diesem Veranstaltungsinhalt sein
+Deine Aufgabe ist es, {count} spezifische, inhaltlich eigenständige Kernpunkte zu extrahieren. Jeder Kernpunkt sollte:
+- Klar und prägnant formuliert sein (1-2 Sätze)
+- Einen eigenständigen Informationswert haben
+- Direkt aus dem Inhalt der Veranstaltung stammen (keine Erfindungen)
+- Für Teilnehmende relevant oder umsetzbar sein
 
-Gib AUSSCHLIESSLICH eine Markdown-Liste zurück, nichts anderes. Beispiel:
- - Takeaway 1
- - Takeaway 2
+Gib AUSSCHLIESSLICH eine Markdown-Liste zurück, ohne weitere Einleitungen oder Erklärungen.
+Beispiel:
+ - Kernpunkt 1
+ - Kernpunkt 2
  - ..."""
             ),
             HumanMessage(
                 content=f"""Veranstaltungstitel: {session.title}
+Format: {format_label}
+Referent:innen: {", ".join(session.speakers) if session.speakers else "Unbekannt"}{description_block}
 
 Transkript:
 {context.get('transcription', '')}
 
-Extrahiere nun die Key Takeaways:"""
+Extrahiere nun {count} Kernpunkte dieser Veranstaltung."""
             ),
         ]
 
     def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response into key takeaways output."""
         takeaways = response.content if hasattr(response, "content") else str(response)
+        # Extract markdown from code fence wrappers if present
+        takeaways = self._extract_markdown_from_code_fences(takeaways)
 
         return {
             "content": takeaways,
