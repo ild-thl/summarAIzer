@@ -151,6 +151,22 @@ class EventResponse(EventBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PaginationMeta(BaseModel):
+    """Pagination metadata returned by dashboard list endpoints."""
+
+    total: int = Field(..., ge=0, description="Total number of matching records")
+    skip: int = Field(..., ge=0, description="Current offset")
+    limit: int = Field(..., ge=1, description="Current page size")
+    has_more: bool = Field(..., description="Whether more records exist beyond this page")
+
+
+class EventPageResponse(BaseModel):
+    """Paginated event list response for authenticated dashboard views."""
+
+    items: list[EventResponse] = Field(default_factory=list)
+    meta: PaginationMeta
+
+
 # ============================================================================
 # Session Schemas
 # ============================================================================
@@ -368,6 +384,13 @@ class SessionListResponse(BaseModel):
             obj["location"] = data.location_rel
             return obj
         return data
+
+
+class SessionPageResponse(BaseModel):
+    """Paginated session list response for authenticated dashboard views."""
+
+    items: list[SessionListResponse] = Field(default_factory=list)
+    meta: PaginationMeta
 
 
 class TimeWindow(BaseModel):

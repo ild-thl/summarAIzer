@@ -206,8 +206,11 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    keycloak_sub = Column(String(255), unique=True, nullable=True, index=True)
     username = Column(String(255), unique=True, nullable=False, index=True)
     email = Column(String(255), nullable=True)  # For human users
+    roles = Column(JSON, default=list, nullable=False)  # Canonical app roles synced from JWT
+    groups = Column(JSON, default=list, nullable=False)  # Optional Keycloak group snapshot
     type = Column(String(20), default="api", nullable=False)  # 'api' or 'human'
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -230,6 +233,11 @@ class APIKey(Base):
     )
     key_hash = Column(String(255), unique=True, nullable=False, index=True)  # Hashed
     name = Column(String(255), nullable=True)  # e.g., 'scheduler-service', 'mobile-app-v2'
+    allowed_roles = Column(
+        JSON,
+        nullable=True,
+        comment="Optional delegated role subset; NULL means full owner role delegation",
+    )
     last_used_at = Column(DateTime, nullable=True)  # For audit trail
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     deleted_at = Column(DateTime, nullable=True)  # Soft delete for audit trail

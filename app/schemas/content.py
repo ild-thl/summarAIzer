@@ -71,23 +71,69 @@ class WorkflowExecutionCreate(BaseModel):
 class WorkflowExecutionResponse(BaseModel):
     """Schema for workflow execution response."""
 
-    task_id: str = Field(..., description="Celery task ID for polling status")
-    workflow_type: str
-    status: str
-    created_at: datetime
+    task_id: str = Field(
+        ...,
+        description="Legacy execution identifier for polling status (kept for backward compatibility)",
+    )
+    execution_id: int = Field(..., description="Workflow execution ID")
+    session_id: int = Field(..., description="Session ID")
+    workflow_type: str = Field(..., description="Requested workflow target")
+    status: str = Field(..., description="Execution state: queued/running/completed/failed")
+    created_at: datetime = Field(..., description="Execution record creation timestamp")
+    started_at: datetime | None = Field(None, description="Execution start timestamp")
+    completed_at: datetime | None = Field(None, description="Execution completion timestamp")
+    celery_task_id: str | None = Field(None, description="Celery task identifier")
 
 
 class WorkflowStatusResponse(BaseModel):
     """Schema for polling workflow status."""
 
-    status: str  # "queued", "running", "completed", "failed"
-    created_at: datetime
-    completed_at: datetime | None = None
-    error_message: str | None = None
+    execution_id: int = Field(..., description="Workflow execution ID")
+    session_id: int = Field(..., description="Session ID")
+    workflow_type: str = Field(..., description="Workflow target")
+    status: str = Field(..., description="Execution state: queued/running/completed/failed")
+    created_at: datetime = Field(..., description="Execution record creation timestamp")
+    started_at: datetime | None = Field(None, description="Execution start timestamp")
+    completed_at: datetime | None = Field(None, description="Execution completion timestamp")
+    celery_task_id: str | None = Field(None, description="Celery task identifier")
+    error_message: str | None = Field(None, description="Execution error details if failed")
     created_content: list[GeneratedContentListItem] = Field(
         default_factory=list,
         description="Content items created by workflow (populated when completed)",
     )
+
+
+class WorkflowExecutionListItem(BaseModel):
+    """Schema for listing workflow executions in admin dashboards."""
+
+    execution_id: int = Field(..., description="Workflow execution ID")
+    session_id: int = Field(..., description="Session ID")
+    workflow_type: str = Field(..., description="Workflow target")
+    status: str = Field(..., description="Execution state: queued/running/completed/failed")
+    triggered_by: str = Field(..., description="Trigger source")
+    created_at: datetime = Field(..., description="Execution record creation timestamp")
+    started_at: datetime | None = Field(None, description="Execution start timestamp")
+    completed_at: datetime | None = Field(None, description="Execution completion timestamp")
+    celery_task_id: str | None = Field(None, description="Celery task identifier")
+    error_message: str | None = Field(None, description="Execution error details if failed")
+    created_content: list[GeneratedContentListItem] = Field(
+        default_factory=list,
+        description="Content items created by this workflow execution",
+    )
+
+
+class WorkflowExecutionOverviewResponse(BaseModel):
+    """Schema for listing active and historical workflow executions of a session."""
+
+    running: list[WorkflowExecutionListItem] = Field(
+        default_factory=list,
+        description="Currently active executions (queued/running)",
+    )
+    history: list[WorkflowExecutionListItem] = Field(
+        default_factory=list,
+        description="Completed or failed executions, newest first",
+    )
+    has_running: bool = Field(..., description="True if at least one execution is active")
 
 
 class SessionContentListResponse(BaseModel):

@@ -2,7 +2,15 @@
 
 from fastapi import APIRouter
 
-from app.routes import embedding, event, session, session_content, session_workflow, workflow_debug
+from app.routes import (
+    api_key,
+    embedding,
+    event,
+    session,
+    session_content,
+    session_workflow,
+    workflow_debug,
+)
 
 
 def build_api_v2_router(enable_embeddings: bool) -> APIRouter:
@@ -11,6 +19,7 @@ def build_api_v2_router(enable_embeddings: bool) -> APIRouter:
 
     router.include_router(event.router)
     router.include_router(session.router)
+    router.include_router(api_key.router)
     router.include_router(session_content.router)
     router.include_router(session_workflow.router)
     router.include_router(workflow_debug.router)

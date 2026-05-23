@@ -2,7 +2,8 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, joinedload
 from starlette.status import (
     HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
@@ -13,12 +14,15 @@ from starlette.status import (
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Event
 from app.database.models import Session as SessionModel
 from app.database.models import User
 from app.schemas.session import (
+    PaginationMeta,
     SessionCreate,
     SessionDocumentationResponse,
     SessionListResponse,
+    SessionPageResponse,
     SessionResponse,
     SessionUpdate,
 )
@@ -26,6 +30,7 @@ from app.security.auth import (
     can_access_session_content,
     get_current_user,
     get_current_user_optional,
+    is_admin,
     require_session_owner,
 )
 from app.services.documentation_builder import DocumentationBuilder
@@ -35,6 +40,84 @@ from app.utils.matomo import track_list_sessions_usage
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _resolve_session_sort(sort_by: str, sort_dir: str):
+    """Resolve supported session sort options with stable secondary ordering."""
+    sort_fields = {
+        "id": SessionModel.id,
+        "title": SessionModel.title,
+        "start_datetime": SessionModel.start_datetime,
+        "created_at": SessionModel.created_at,
+        "updated_at": SessionModel.updated_at,
+    }
+    column = sort_fields.get(sort_by)
+    if column is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid sort_by. Allowed: id,title,start_datetime,created_at,updated_at",
+        )
+
+    if sort_dir == "asc":
+        return [column.asc(), SessionModel.id.asc()]
+
+    return [column.desc(), SessionModel.id.desc()]
+
+
+@router.get("/me", response_model=SessionPageResponse)
+async def list_my_sessions(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
+    status: str = Query(
+        None,
+        description="Optional status filter - comma-separated (draft,published)",
+    ),
+    event_id: int = Query(None, description="Optional event ID filter"),
+    sort_by: str = Query(
+        "updated_at",
+        description="Sort field: id, title, start_datetime, created_at, updated_at",
+    ),
+    sort_dir: str = Query("desc", description="Sort direction: asc or desc"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List sessions manageable by current user with pagination metadata."""
+    from app.database.models import SessionStatus
+
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_dir. Allowed: asc,desc")
+
+    status_list = _validate_and_parse_enum_list(status, SessionStatus, "status") if status else None
+
+    query = db.query(SessionModel).options(joinedload(SessionModel.location_rel))
+
+    if not is_admin(current_user):
+        query = query.outerjoin(Event, SessionModel.event_id == Event.id).filter(
+            or_(
+                SessionModel.owner_id == current_user.id,
+                and_(SessionModel.event_id.is_not(None), Event.owner_id == current_user.id),
+            )
+        )
+
+    if status_list:
+        query = query.filter(SessionModel.status.in_(status_list))
+
+    if event_id is not None:
+        query = query.filter(SessionModel.event_id == event_id)
+
+    total = query.with_entities(func.count(func.distinct(SessionModel.id))).scalar() or 0
+    sort_columns = _resolve_session_sort(sort_by, sort_dir)
+    items = query.order_by(*sort_columns).offset(skip).limit(limit).all()
+
+    return SessionPageResponse(
+        items=[SessionListResponse.model_validate(item) for item in items],
+        meta=PaginationMeta(
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + len(items)) < total,
+        ),
+    )
 
 
 @router.post("", response_model=SessionResponse, status_code=HTTP_201_CREATED)

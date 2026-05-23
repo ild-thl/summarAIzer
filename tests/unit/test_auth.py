@@ -335,3 +335,118 @@ class TestEventOwnershipAndCreation:
             headers={"Authorization": "Bearer other-key-2"},
         )
         assert response.status_code == HTTP_403_FORBIDDEN
+
+
+class TestAuthorizationHierarchy:
+    """Test suite for admin and ownership hierarchy checks."""
+
+    def test_event_owner_can_update_session_in_owned_event(
+        self,
+        client,
+        test_db,
+        sample_api_key,
+    ):
+        """Event owner may update any session belonging to that event."""
+        _, owner_key = sample_api_key
+
+        # Create event owned by sample user (authenticated via sample_api_key)
+        now = datetime.utcnow()
+        event_response = client.post(
+            "/api/v2/events",
+            headers={"Authorization": f"Bearer {owner_key}"},
+            json={
+                "title": "Hierarchy Event",
+                "start_date": now.isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+                "uri": "hierarchy-event",
+            },
+        )
+        assert event_response.status_code == HTTP_201_CREATED
+        event_id = event_response.json()["id"]
+
+        from app.database.models import Session as SessionModel
+        from app.database.models import User
+
+        # Create a different user as direct session owner
+        session_owner = User(username="hierarchy-session-owner", type="api")
+        test_db.add(session_owner)
+        test_db.commit()
+        test_db.refresh(session_owner)
+
+        # Session belongs to event owned by sample user, but has different owner_id
+        foreign_owned_session = SessionModel(
+            title="Foreign Owned Session",
+            speakers=[],
+            tags=[],
+            start_datetime=now,
+            end_datetime=now + timedelta(hours=1),
+            uri="foreign-owned-session",
+            event_id=event_id,
+            owner_id=session_owner.id,
+        )
+        test_db.add(foreign_owned_session)
+        test_db.commit()
+        test_db.refresh(foreign_owned_session)
+
+        response = client.patch(
+            f"/api/v2/sessions/{foreign_owned_session.id}",
+            headers={"Authorization": f"Bearer {owner_key}"},
+            json={"title": "Updated by Event Owner"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "Updated by Event Owner"
+
+    def test_is_admin_uses_jwt_auth_context(self, sample_user):
+        """Admin role is resolved from JWT auth context."""
+        from app.security.auth import _set_auth_context, is_admin
+
+        _set_auth_context(method="jwt", roles=["summaraizer_admin"])
+        assert is_admin(sample_user) is True
+
+        _set_auth_context(method="jwt", roles=["editor"])
+        assert is_admin(sample_user) is False
+
+    def test_api_key_inherits_owner_admin_role(self, test_db, sample_user):
+        """API key auth inherits owner roles by default."""
+        from app.database.models import APIKey
+        from app.security.auth import _authenticate_with_api_key, is_admin
+
+        sample_user.roles = ["summaraizer_admin"]
+        sample_user.groups = ["/admin"]
+        test_db.commit()
+
+        plain_key = "delegated-admin-key"
+        api_key = APIKey(
+            user_id=sample_user.id,
+            key_hash=_hash_api_key(plain_key),
+            name="delegated-admin-key",
+        )
+        test_db.add(api_key)
+        test_db.commit()
+
+        authenticated_user = _authenticate_with_api_key(plain_key, test_db)
+        assert authenticated_user.id == sample_user.id
+        assert is_admin(authenticated_user) is True
+
+    def test_api_key_role_subset_cannot_escalate_privileges(self, test_db, sample_user):
+        """API key optional role subset can only reduce owner privileges."""
+        from app.database.models import APIKey
+        from app.security.auth import _authenticate_with_api_key, is_admin
+
+        sample_user.roles = ["summaraizer_admin", "editor"]
+        test_db.commit()
+
+        plain_key = "delegated-editor-key"
+        api_key = APIKey(
+            user_id=sample_user.id,
+            key_hash=_hash_api_key(plain_key),
+            name="delegated-editor-key",
+            allowed_roles=["editor"],
+        )
+        test_db.add(api_key)
+        test_db.commit()
+
+        authenticated_user = _authenticate_with_api_key(plain_key, test_db)
+        assert authenticated_user.id == sample_user.id
+        assert is_admin(authenticated_user) is False

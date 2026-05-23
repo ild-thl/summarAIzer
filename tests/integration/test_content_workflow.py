@@ -257,6 +257,9 @@ class TestWorkflowEndpoints:
         # tags Step is independent and runs first, so workflow can be queued
         assert response.status_code == 202
         data = response.json()
+        assert "execution_id" in data
+        assert data["session_id"] == session_id
+        assert "celery_task_id" in data
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
 
@@ -281,8 +284,26 @@ class TestWorkflowEndpoints:
         assert response.status_code == 202
         data = response.json()
         assert "task_id" in data
+        assert "execution_id" in data
+        assert data["session_id"] == session_id
+        assert "celery_task_id" in data
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
+
+        # Status contract should contain normalized dashboard fields.
+        status_response = client.get(
+            f"/api/v2/sessions/{session_id}/workflow/{data['task_id']}",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert status_response.status_code == 200
+        status_data = status_response.json()
+        assert status_data["execution_id"] == int(data["task_id"])
+        assert status_data["session_id"] == session_id
+        assert status_data["workflow_type"] == "talk_workflow"
+        assert "celery_task_id" in status_data
+        assert "created_at" in status_data
+        assert "started_at" in status_data
+        assert "completed_at" in status_data
 
     def test_get_workflow_status_not_found(self, client: TestClient, session_with_event):
         """Test getting status of non-existent workflow."""
@@ -358,6 +379,96 @@ class TestWorkflowEndpoints:
         assert "task_id" in data
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
+
+    def test_list_workflow_executions_overview(
+        self, client: TestClient, session_with_event, test_db: Session
+    ):
+        """Test listing active and historical workflow executions for a session."""
+        from app.crud import generated_content as content_crud
+        from app.database.models import WorkflowExecution, WorkflowExecutionStatus
+
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+
+        queued_response = client.post(
+            f"/api/v2/sessions/{session_id}/workflow/talk_workflow",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert queued_response.status_code == 202
+        queued_execution_id = queued_response.json()["execution_id"]
+
+        overview_running = client.get(
+            f"/api/v2/sessions/{session_id}/workflows",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert overview_running.status_code == HTTP_200_OK
+        overview_running_data = overview_running.json()
+        assert overview_running_data["has_running"] is True
+        assert any(
+            item["execution_id"] == queued_execution_id for item in overview_running_data["running"]
+        )
+
+        queued_execution = (
+            test_db.query(WorkflowExecution)
+            .filter(WorkflowExecution.id == queued_execution_id)
+            .first()
+        )
+        assert queued_execution is not None
+        queued_execution.status = WorkflowExecutionStatus.COMPLETED
+        queued_execution.started_at = datetime.utcnow()
+        queued_execution.completed_at = datetime.utcnow()
+        test_db.commit()
+
+        content_crud.create_content(
+            db=test_db,
+            session_id=session_id,
+            identifier="summary",
+            content="Generated summary",
+            content_type="plain_text",
+            workflow_execution_id=queued_execution_id,
+        )
+
+        failed_execution = content_crud.create_workflow_execution(
+            db=test_db,
+            session_id=session_id,
+            target="tags",
+            triggered_by="user_triggered",
+        )
+        failed_execution.status = WorkflowExecutionStatus.FAILED
+        failed_execution.error = "Synthetic failure"
+        failed_execution.completed_at = datetime.utcnow()
+        test_db.commit()
+
+        overview_history = client.get(
+            f"/api/v2/sessions/{session_id}/workflows",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert overview_history.status_code == HTTP_200_OK
+        overview_history_data = overview_history.json()
+        assert overview_history_data["has_running"] is False
+        assert len(overview_history_data["running"]) == 0
+
+        history_ids = [item["execution_id"] for item in overview_history_data["history"]]
+        assert queued_execution_id in history_ids
+        assert failed_execution.id in history_ids
+
+        completed_entry = next(
+            item
+            for item in overview_history_data["history"]
+            if item["execution_id"] == queued_execution_id
+        )
+        assert completed_entry["status"] == WorkflowExecutionStatus.COMPLETED.value
+        assert any(
+            content["identifier"] == "summary" for content in completed_entry["created_content"]
+        )
+
+        failed_entry = next(
+            item
+            for item in overview_history_data["history"]
+            if item["execution_id"] == failed_execution.id
+        )
+        assert failed_entry["status"] == WorkflowExecutionStatus.FAILED.value
+        assert failed_entry["error_message"] == "Synthetic failure"
 
 
 @pytest.mark.integration
