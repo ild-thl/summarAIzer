@@ -250,14 +250,16 @@ Anforderungen:
 
 Gib AUSSCHLIESSLICH die optimierte Beschreibung zurück, nichts anderes."""
             ),
-            HumanMessage(content=f"""Veranstaltungstitel: {session.title}
+            HumanMessage(
+                content=f"""Veranstaltungstitel: {session.title}
 Referent:innen: {speakers}
 Tags: {tags}
 
 Originalbeschreibung:
 {source}
 
-Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Zeichen):"""),
+Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Zeichen):"""
+            ),
         ]
 
     def _save_to_db(

@@ -105,7 +105,8 @@ Format:
 
 > „Weiteres Zitat." """
             ),
-            HumanMessage(content=f"""Veranstaltung: {session.title}
+            HumanMessage(
+                content=f"""Veranstaltung: {session.title}
 Referent:innen: {speakers}
 
 Zusammenfassung (zur Orientierung über Kernthemen):
@@ -114,7 +115,8 @@ Zusammenfassung (zur Orientierung über Kernthemen):
 Transkript (Quelle der Zitate):
 {context.get('transcription', '')}
 
-Wähle nun 3-5 prägnante Originalzitate aus dem Transkript aus."""),
+Wähle nun 3-5 prägnante Originalzitate aus dem Transkript aus."""
+            ),
         ]
 
     async def _invoke_and_process(

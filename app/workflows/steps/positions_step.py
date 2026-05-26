@@ -66,14 +66,16 @@ Wichtige Hinweise:
 
 Gib das Ergebnis als strukturierte Markdown-Liste zurück."""
             ),
-            HumanMessage(content=f"""Diskussionsthema: {session.title}
+            HumanMessage(
+                content=f"""Diskussionsthema: {session.title}
 Diskutierende: {speakers}
 Dauer: {duration} Minuten
 
 Transkript:
 {context.get('transcription', '')}
 
-Extrahiere nun die Positionen und Kernaussagen der einzelnen Diskutierenden."""),
+Extrahiere nun die Positionen und Kernaussagen der einzelnen Diskutierenden."""
+            ),
         ]
 
     def process_response(self, response: Any) -> dict[str, Any]:
