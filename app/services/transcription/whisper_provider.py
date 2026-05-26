@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session as SQLSession
 
 from app.config.settings import get_settings
 from app.database.models import AudioFileProcessingStatus
+from app.services.provider_request_control import perform_rate_limited_request
 from app.services.s3_audio_service import get_s3_audio_service
 from app.services.transcription.exceptions import (
     TranscriptionPendingError,
@@ -121,16 +122,19 @@ class WhisperTranscriptionProvider:
     @staticmethod
     def _call_whisper(url: str, headers: dict, chunk_bytes: bytes, settings) -> str:
         """Send a single FLAC chunk to the Whisper endpoint and return text."""
-        response = requests.post(
-            url,
-            headers=headers,
-            files={"file": ("chunk.flac", io.BytesIO(chunk_bytes), "audio/flac")},
-            data={
-                "model": settings.transcription_model,
-                "response_format": settings.transcription_response_format,
-                "temperature": str(settings.openai_transcribe_temperature),
-            },
-            timeout=300,  # 5 min per chunk
+        response = perform_rate_limited_request(
+            lambda: requests.post(
+                url,
+                headers=headers,
+                files={"file": ("chunk.flac", io.BytesIO(chunk_bytes), "audio/flac")},
+                data={
+                    "model": settings.transcription_model,
+                    "response_format": settings.transcription_response_format,
+                    "temperature": str(settings.openai_transcribe_temperature),
+                },
+                timeout=300,  # 5 min per chunk
+            ),
+            operation_name="whisper_transcription",
         )
         response.raise_for_status()
 

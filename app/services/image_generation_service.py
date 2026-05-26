@@ -7,6 +7,8 @@ from typing import Any
 
 import requests
 
+from app.services.provider_request_control import perform_rate_limited_request
+
 logger = logging.getLogger(__name__)
 
 
@@ -122,11 +124,14 @@ class ImageGenerationService:
 
             logger.info(f"Generating {num_images} image(s) with model '{model}': {prompt[:100]}...")
 
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                headers=headers,
-                timeout=120,
+            response = perform_rate_limited_request(
+                lambda: requests.post(
+                    self.api_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=120,
+                ),
+                operation_name="image_generation",
             )
 
             if response.status_code == 200:
