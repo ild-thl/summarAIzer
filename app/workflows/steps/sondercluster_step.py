@@ -103,7 +103,7 @@ class SonderclusterStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.5,
             max_tokens=400,
             top_p=0.9,

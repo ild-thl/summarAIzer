@@ -12,7 +12,7 @@ from app.config.settings import get_settings
 DEFAULT_RATE_LIMITER = InMemoryRateLimiter(
     requests_per_second=1,
     check_every_n_seconds=0.1,
-    max_bucket_size=1,
+    max_bucket_size=10,
 )
 
 
@@ -26,6 +26,7 @@ class ChatModelConfig:
     top_p: float | None = None
     max_retries: int | None = None
     rate_limiter: Any | None = None
+    timeout: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to kwargs dict for init_chat_model."""
@@ -39,6 +40,7 @@ class ChatModelConfig:
             "top_p": get_settings().llm_top_p,
             "max_retries": 5,
             "rate_limiter": DEFAULT_RATE_LIMITER,
+            "timeout": get_settings().llm_request_timeout_seconds,
         }
 
         if self.temperature is not None:
@@ -51,6 +53,8 @@ class ChatModelConfig:
             kwargs["max_retries"] = self.max_retries
         if self.rate_limiter is not None:
             kwargs["rate_limiter"] = self.rate_limiter
+        if self.timeout is not None:
+            kwargs["timeout"] = self.timeout
         return kwargs
 
 

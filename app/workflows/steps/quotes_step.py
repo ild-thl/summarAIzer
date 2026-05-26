@@ -76,7 +76,7 @@ class QuotesStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Quotes need exact reproduction - use lowest temperature to reduce drift."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.1,  # Very low: quotes must be as close to verbatim as possible
             max_tokens=1000,
             top_p=0.9,

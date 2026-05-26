@@ -73,10 +73,11 @@ class Settings(BaseSettings):
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
     llm_top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    llm_request_timeout_seconds: float = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "180"))
 
     # LLM Model for structured output tasks (e.g., query refinement, slot filling)
     llm_model_structured_output: str = os.getenv(
-        "LLM_MODEL_STRUCTURED_OUTPUT", "qwen3-30b-a3b-instruct-2507"
+        "LLM_MODEL_STRUCTURED_OUTPUT", "mistral-large-3-675b-instruct-2512"
     )
 
     # Embedding Configuration for semantic search
