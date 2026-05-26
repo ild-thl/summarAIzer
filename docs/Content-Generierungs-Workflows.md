@@ -107,10 +107,10 @@ Die verwendeten LLMs werden per `ChatModelConfig` pro Step konfiguriert. Default
 
 | Step | Standard-Modell | Eigenschaft |
 |------|----------------|-------------|
-| `summary` | `mistral-large-3-675b-instruct-2512` | `temperature=0.7`, `max_tokens=3000` |
-| `key_takeaways` | `mistral-large-3-675b-instruct-2512` | `temperature=0.6`, `max_tokens=1500` |
+| `summary` | `gemma-4-31b-it` | `temperature=0.7`, `max_tokens=3000` |
+| `key_takeaways` | `gemma-4-31b-it` | `temperature=0.6`, `max_tokens=1500` |
 | `tags` | `qwen3-30b-a3b-instruct-2507` | `temperature=0.5`, `max_tokens=500` |
-| `short_description` | `mistral-large-3-675b-instruct-2512` | `temperature=0.3`, `max_tokens=300` |
+| `short_description` | `gemma-4-31b-it` | `temperature=0.3`, `max_tokens=300` |
 | `mermaid` | `devstral-2-123b-instruct-2512` | `temperature=0.2`, `max_tokens=2000` |
 
 ---
@@ -256,7 +256,7 @@ class H5PQuizStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="mistral-large-3-675b-instruct-2512",
+            model="gemma-4-31b-it",
             temperature=0.4,      # niedrig für konsistente, korrekte Antworten
             max_tokens=2000,
             top_p=0.9,

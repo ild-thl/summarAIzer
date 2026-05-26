@@ -20,6 +20,14 @@ class GeneratedContentCreate(BaseModel):
         default=None,
         description="Optional metadata (e.g., model, tokens used, source)",
     )
+    ai_generated: bool = Field(
+        default=False,
+        description="Whether the created content is AI generated",
+    )
+    editorially_reviewed: bool = Field(
+        default=False,
+        description="Whether the content has been editorially reviewed",
+    )
 
 
 class GeneratedContentUpdate(BaseModel):
@@ -29,6 +37,19 @@ class GeneratedContentUpdate(BaseModel):
     meta_info: dict[str, Any] | None = Field(
         default=None,
         description="Optional metadata to update",
+    )
+    editorially_reviewed: bool | None = Field(
+        default=None,
+        description="Optional editorial review flag update",
+    )
+
+
+class GeneratedContentReviewUpdate(BaseModel):
+    """Schema for updating editorial review status of generated content."""
+
+    editorially_reviewed: bool = Field(
+        ...,
+        description="Set to true after editorial review, false to unset",
     )
 
 
@@ -42,6 +63,8 @@ class GeneratedContentResponse(BaseModel):
     identifier: str
     content_type: str
     content: str
+    ai_generated: bool = False
+    editorially_reviewed: bool = False
     workflow_execution_id: int | None = None
     meta_info: dict[str, Any] | None = None
     created_by_user_id: int | None = None

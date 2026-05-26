@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.database.models import Event, Session as SessionModel
+from app.database.models import Event
+from app.database.models import Session as SessionModel
 
 
 @pytest.mark.integration

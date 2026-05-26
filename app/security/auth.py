@@ -302,7 +302,7 @@ def _upsert_human_user_from_claims(
 
 
 def _authenticate_with_api_key(api_key: str, db: Session) -> User:
-    """Authenticate using legacy API key."""
+    """Authenticate using API key."""
     key_hash = hash_api_key(api_key)
 
     api_key_record = (
@@ -384,7 +384,7 @@ def _authenticate_token(token: str, db: Session) -> User:
             if jwt_error is not None:
                 # If token looked like JWT and JWT auth failed, surface that error
                 # instead of masking it as "Invalid API key".
-                raise jwt_error
+                raise jwt_error from None
             raise
 
     return _authenticate_with_api_key(token, db)

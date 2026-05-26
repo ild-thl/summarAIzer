@@ -14,9 +14,8 @@ from starlette.status import (
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event
+from app.database.models import Event, User
 from app.database.models import Session as SessionModel
-from app.database.models import User
 from app.schemas.session import (
     PaginationMeta,
     SessionCreate,
@@ -68,6 +67,7 @@ def _resolve_session_sort(sort_by: str, sort_dir: str):
 async def list_my_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
+    title: str = Query(None, description="Optional title contains filter (case-insensitive)"),
     status: str = Query(
         None,
         description="Optional status filter - comma-separated (draft,published)",
@@ -101,6 +101,9 @@ async def list_my_sessions(
 
     if status_list:
         query = query.filter(SessionModel.status.in_(status_list))
+
+    if title is not None and title.strip() != "":
+        query = query.filter(SessionModel.title.ilike(f"%{title.strip()}%"))
 
     if event_id is not None:
         query = query.filter(SessionModel.event_id == event_id)

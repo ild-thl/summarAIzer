@@ -196,6 +196,28 @@ class TestContentEndpoints:
         data = response.json()
         assert data["content"] == updated_content
 
+    def test_update_content_editorial_review_flag(self, client: TestClient, session_with_event):
+        """Test toggling editorial review flag for a content identifier."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/summary",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": "AI generated summary", "ai_generated": True},
+        )
+
+        review_response = client.patch(
+            f"/api/v2/sessions/{session_id}/content/summary/review",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"editorially_reviewed": True},
+        )
+
+        assert review_response.status_code == HTTP_200_OK
+        review_payload = review_response.json()
+        assert review_payload["ai_generated"] is True
+        assert review_payload["editorially_reviewed"] is True
+
     def test_delete_content(self, client: TestClient, session_with_event):
         """Test deleting content."""
         session_data, plain_key = session_with_event
@@ -524,3 +546,73 @@ class TestTranscriptionStorage:
         )
         assert detail_resp.status_code == HTTP_200_OK
         assert detail_resp.json()["content"] == transcription
+
+
+@pytest.mark.integration
+class TestDocumentationFlags:
+    """Test AI-generation and editorial-review flags on documentation artifacts."""
+
+    def test_documentation_includes_ai_review_flags(
+        self,
+        client: TestClient,
+        test_db: Session,
+        sample_api_key,
+    ):
+        from app.services.documentation_builder import DocumentationBuilder
+
+        _api_key, plain_key = sample_api_key
+
+        event_resp = client.post(
+            "/api/v2/events",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Documentation Flags Event",
+                "start_date": datetime.utcnow().isoformat(),
+                "end_date": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "uri": "documentation-flags-event",
+                "status": "published",
+            },
+        )
+        assert event_resp.status_code == HTTP_201_CREATED
+        event_id = event_resp.json()["id"]
+
+        session_resp = client.post(
+            "/api/v2/sessions",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Documentation Flags Session",
+                "uri": "documentation-flags-session",
+                "start_datetime": datetime.utcnow().isoformat(),
+                "end_datetime": (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+                "event_id": event_id,
+                "status": "published",
+            },
+        )
+        assert session_resp.status_code == HTTP_201_CREATED
+        session_id = session_resp.json()["id"]
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/summary",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "content": "Summary from AI",
+                "content_type": "markdown",
+                "ai_generated": True,
+                "editorially_reviewed": False,
+            },
+        )
+
+        test_db.commit()
+
+        built = DocumentationBuilder.build_documentation(test_db, session_id)
+        assert built is not None
+
+        doc_resp = client.get(
+            f"/api/v2/sessions/{session_id}/documentation",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert doc_resp.status_code == HTTP_200_OK
+        payload = doc_resp.json()
+        assert payload["contains_ai_generated_content"] is True
+        assert payload["all_ai_content_editorially_reviewed"] is False
+        assert any(section.get("ai_generated") is True for section in payload["sections"])

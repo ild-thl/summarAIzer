@@ -872,6 +872,14 @@ class DocumentationSection(BaseModel):
     source: str | None = Field(
         None, description="Where content originated: workflow, manual, upload"
     )
+    ai_generated: bool = Field(
+        default=False,
+        description="True when section content is AI-generated",
+    )
+    editorially_reviewed: bool = Field(
+        default=False,
+        description="True when section content was editorially reviewed",
+    )
     meta: dict | None = Field(None, description="Additional metadata (model, tokens, etc.)")
 
     model_config = ConfigDict(from_attributes=True)
@@ -910,9 +918,17 @@ class SessionDocumentationResponse(BaseModel):
     sections: list[DocumentationSection] = Field(
         default_factory=list, description="Generated content sections"
     )
+    contains_ai_generated_content: bool = Field(
+        default=False,
+        description="True when at least one section is AI generated",
+    )
+    all_ai_content_editorially_reviewed: bool = Field(
+        default=False,
+        description="True when all AI-generated sections are editorially reviewed",
+    )
 
     # Documentation artifact metadata (for versioning and freshness)
-    doc_version: str = Field(default="1.0", description="Documentation schema version")
+    doc_version: str = Field(default="1.1", description="Documentation schema version")
     generated_at: datetime = Field(..., description="When the artifact was first generated")
     updated_at: datetime | None = Field(None, description="When the artifact was last updated")
 

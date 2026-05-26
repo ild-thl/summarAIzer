@@ -113,7 +113,7 @@ async def list_workflow_executions(
 async def trigger_workflow(
     session_id: int,
     workflow_type: str,
-    session: SessionModel = Depends(require_session_owner),
+    _session: SessionModel = Depends(require_session_owner),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

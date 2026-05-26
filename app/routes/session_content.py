@@ -24,6 +24,7 @@ from app.schemas.content import (
     AudioFileResponse,
     GeneratedContentCreate,
     GeneratedContentResponse,
+    GeneratedContentReviewUpdate,
     GeneratedContentUpdate,
     SessionContentListResponse,
 )
@@ -199,6 +200,8 @@ async def create_content(
         content_type=content_in.content_type or "plain_text",
         workflow_execution_id=None,  # Manually provided
         meta_info=content_in.meta_info,
+        ai_generated=content_in.ai_generated,
+        editorially_reviewed=content_in.editorially_reviewed,
     )
 
     # Update session's available content
@@ -238,6 +241,7 @@ async def update_content(
         content_id=db_content.id,
         content=content_in.content,
         meta_info=content_in.meta_info,
+        editorially_reviewed=content_in.editorially_reviewed,
     )
 
     logger.info(
@@ -245,6 +249,42 @@ async def update_content(
         session_id=session_id,
         identifier=identifier,
         content_id=db_content.id,
+    )
+
+    return updated
+
+
+@router.patch(
+    "/{session_id}/content/{identifier}/review",
+    response_model=GeneratedContentResponse,
+)
+async def update_content_review(
+    session_id: int,
+    identifier: str,
+    review_in: GeneratedContentReviewUpdate,
+    _: SessionModel = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+):
+    """Update editorial review status for a content identifier (owner only)."""
+    db_content = content_crud.get_content_by_identifier(db, session_id, identifier)
+    if not db_content:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail=f"Content with identifier '{identifier}' not found",
+        )
+
+    updated = content_crud.update_content_editorial_review(
+        db=db,
+        content_id=db_content.id,
+        editorially_reviewed=review_in.editorially_reviewed,
+    )
+
+    logger.info(
+        "content_editorial_review_updated",
+        session_id=session_id,
+        identifier=identifier,
+        content_id=db_content.id,
+        editorially_reviewed=review_in.editorially_reviewed,
     )
 
     return updated

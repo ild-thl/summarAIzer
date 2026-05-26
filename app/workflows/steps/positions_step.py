@@ -38,7 +38,7 @@ class PositionsStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Positions extraction needs careful attribution - use balanced model."""
         return ChatModelConfig(
-            model="mistral-large-3-675b-instruct-2512",
+            model="gemma-4-31b-it",
             temperature=0.3,  # Low for precise attribution, avoid hallucinated positions
             max_tokens=2000,
             top_p=0.9,

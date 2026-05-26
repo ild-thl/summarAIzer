@@ -43,64 +43,13 @@ class DocumentationBuilder:
             None (logs errors and returns None on failure)
         """
         try:
-            # Load session
-            session = session_crud.read(db, session_id)
-            if not session:
-                logger.warning(f"Session {session_id} not found for documentation build")
+            session = DocumentationBuilder._get_published_session(db, session_id)
+            if session is None:
                 return None
 
-            # Verify published status
-            if session.status != SessionStatus.PUBLISHED:
-                logger.warning(
-                    f"Session {session_id} not published (status={session.status}), skipping documentation build"
-                )
-                return None
-
-            # Load all generated content for the session
-            content_items = list_for_session(db, session_id)
-
-            # Deduplicate - keep only latest per identifier (by creation time)
-            deduped: OrderedDict[str, any] = OrderedDict()
-            for content in content_items:
-                deduped[content.identifier] = content
-
-            # Transform the deduplicated set into documentation sections.
-            sections: list[DocumentationSection] = []
-            for idx, content in enumerate(deduped.values()):
-                section_type = content.content_type
-                section_content = content.content
-                section_resource_url = None
-
-                if content.identifier == TRANSCRIPTION_IDENTIFIER:
-                    # Avoid embedding very large transcription blobs in the artifact payload.
-                    section_type = "resource_link"
-                    section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session.id}/content/{TRANSCRIPTION_IDENTIFIER}"
-                    section_content = None
-                elif section_type in URL_SECTION_TYPES:
-                    section_resource_url = _extract_resource_url(content.content, content.meta_info)
-                    section_content = None
-
-                    if section_resource_url is None:
-                        logger.warning(
-                            "Dropping invalid URL content from documentation section",
-                            extra={
-                                "session_id": session.id,
-                                "identifier": content.identifier,
-                                "content_type": section_type,
-                            },
-                        )
-
-                section = DocumentationSection(
-                    identifier=content.identifier,
-                    type=section_type,
-                    title=_get_section_title(content.identifier),
-                    content=section_content,
-                    resource_url=section_resource_url,
-                    order=idx,
-                    source=content.meta_info.get("source") if content.meta_info else None,
-                    meta=content.meta_info,
-                )
-                sections.append(section)
+            sections, contains_ai_generated_content, all_ai_content_editorially_reviewed = (
+                DocumentationBuilder._build_sections_and_ai_flags(db, session)
+            )
 
             # Build response with core session metadata
             now = datetime.utcnow()
@@ -121,7 +70,9 @@ class DocumentationBuilder:
                 session_format=session.session_format.value if session.session_format else None,
                 recording_url=session.recording_url,
                 sections=sections,
-                doc_version="1.0",
+                contains_ai_generated_content=contains_ai_generated_content,
+                all_ai_content_editorially_reviewed=all_ai_content_editorially_reviewed,
+                doc_version="1.1",
                 generated_at=now,
                 updated_at=now,
             )
@@ -142,6 +93,93 @@ class DocumentationBuilder:
                 f"Error building documentation for session {session_id}: {e}", exc_info=True
             )
             return None
+
+    @staticmethod
+    def _get_published_session(db: SQLSession, session_id: int):
+        """Return session only when it exists and is published."""
+        session = session_crud.read(db, session_id)
+        if not session:
+            logger.warning(f"Session {session_id} not found for documentation build")
+            return None
+
+        if session.status != SessionStatus.PUBLISHED:
+            logger.warning(
+                f"Session {session_id} not published (status={session.status}), skipping documentation build"
+            )
+            return None
+
+        return session
+
+    @staticmethod
+    def _build_sections_and_ai_flags(db: SQLSession, session):
+        """Create documentation sections and aggregate AI review flags."""
+        content_items = list_for_session(db, session.id)
+
+        # Deduplicate - keep only latest per identifier (by creation time)
+        deduped: OrderedDict[str, any] = OrderedDict()
+        for content in content_items:
+            deduped[content.identifier] = content
+
+        sections: list[DocumentationSection] = []
+        ai_section_count = 0
+        ai_reviewed_count = 0
+
+        for idx, content in enumerate(deduped.values()):
+            section = DocumentationBuilder._build_section(session.id, content, idx)
+            sections.append(section)
+
+            if section.ai_generated:
+                ai_section_count += 1
+                if section.editorially_reviewed:
+                    ai_reviewed_count += 1
+
+        contains_ai_generated_content = ai_section_count > 0
+        all_ai_content_editorially_reviewed = (
+            ai_section_count > 0 and ai_reviewed_count == ai_section_count
+        )
+        return sections, contains_ai_generated_content, all_ai_content_editorially_reviewed
+
+    @staticmethod
+    def _build_section(session_id: int, content, order: int) -> DocumentationSection:
+        """Transform a generated content row into a documentation section."""
+        section_type = content.content_type
+        section_content = content.content
+        section_resource_url = None
+
+        if content.identifier == TRANSCRIPTION_IDENTIFIER:
+            # Avoid embedding very large transcription blobs in the artifact payload.
+            section_type = "resource_link"
+            section_resource_url = (
+                f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/content/"
+                f"{TRANSCRIPTION_IDENTIFIER}"
+            )
+            section_content = None
+        elif section_type in URL_SECTION_TYPES:
+            section_resource_url = _extract_resource_url(content.content, content.meta_info)
+            section_content = None
+
+            if section_resource_url is None:
+                logger.warning(
+                    "Dropping invalid URL content from documentation section",
+                    extra={
+                        "session_id": session_id,
+                        "identifier": content.identifier,
+                        "content_type": section_type,
+                    },
+                )
+
+        return DocumentationSection(
+            identifier=content.identifier,
+            type=section_type,
+            title=_get_section_title(content.identifier),
+            content=section_content,
+            resource_url=section_resource_url,
+            order=order,
+            source=content.meta_info.get("source") if content.meta_info else None,
+            ai_generated=bool(content.ai_generated),
+            editorially_reviewed=bool(content.editorially_reviewed),
+            meta=content.meta_info,
+        )
 
 
 def _get_section_title(identifier: str) -> str:

@@ -88,7 +88,7 @@ class ImageStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
-            model="mistral-large-3-675b-instruct-2512",
+            model="gemma-4-31b-it",
             temperature=0.7,  # Moderate for creativity but consistency
             max_tokens=300,  # Short and concise
             top_p=0.95,
@@ -96,7 +96,6 @@ class ImageStep(LLMStep):
 
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate image description prompt messages."""
-        speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
         tags = ", ".join(session.tags) if session.tags else "General"
 
         return [
@@ -108,7 +107,6 @@ Rules:
 - Focus: Visual representation of the event's core concepts
 - Style: Artistic, conceptual, poster-like, clean geometric composition
 - Technical quality descriptors: e.g., "high quality", "detailed", "professional"
-- No human faces or people
 - No text or typography in the image: no letters, words, numbers, captions, labels, logos, signs, watermarks
 - Avoid photorealistic or uncanny aesthetics; prefer crafted visual techniques (editorial collage, graphic abstraction, soft gradients, subtle grain)
 - Corporate visual DNA (University Future Festival inspired):
@@ -124,7 +122,6 @@ Example format:
             ),
             HumanMessage(
                 content=f"""Event: {session.title}
-Speakers: {speakers}
 Tags: {tags}
 
 Summary:
