@@ -88,7 +88,7 @@ class ImageStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
-            model="gemma-3-27b-it",
+            model="gemma-4-31b-it",
             temperature=0.7,  # Moderate for creativity but consistency
             max_tokens=300,  # Short and concise
             top_p=0.95,
@@ -96,7 +96,6 @@ class ImageStep(LLMStep):
 
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
         """Generate image description prompt messages."""
-        speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
         tags = ", ".join(session.tags) if session.tags else "General"
 
         return [
@@ -106,10 +105,16 @@ class ImageStep(LLMStep):
 Rules:
 - Output in English, one single line prompt (50-80 words)
 - Focus: Visual representation of the event's core concepts
-- Style: Professional, academic, digital
+- Style: Artistic, conceptual, poster-like, clean geometric composition
 - Technical quality descriptors: e.g., "high quality", "detailed", "professional"
-- No human faces or people
-- Color palette: Modern, contrasting, appealing
+- No text or typography in the image: no letters, words, numbers, captions, labels, logos, signs, watermarks
+- Avoid photorealistic or uncanny aesthetics; prefer crafted visual techniques (editorial collage, graphic abstraction, soft gradients, subtle grain)
+- Corporate visual DNA (University Future Festival inspired):
+    - Light neutral gray background base
+    - Bold black geometric shapes
+    - Soft glowing gradient accents in warm yellow to pink transitions
+    - Minimal, high-contrast, modern layout with generous negative space
+    - Composition should feel intentional, artistic, and premium
 - Format: Single flowing text prompt, no bullets or quotes
 
 Example format:
@@ -117,17 +122,16 @@ Example format:
             ),
             HumanMessage(
                 content=f"""Event: {session.title}
-Speakers: {speakers}
 Tags: {tags}
 
 Summary:
 {context.get('summary', '')}
 
-Create a concise English prompt for a high-quality visualization image that represents the core concepts of this event. Output only the prompt text, no explanations."""
+Create a concise English prompt for a high-quality visualization image that represents the core concepts of this event while following the specified corporate visual DNA. Keep thematic freedom for the topic, but strictly avoid any text, letters, or numbers in the generated image. Output only the prompt text, no explanations."""
             ),
         ]
 
-    def process_response(self, response: Any) -> dict[str, Any]:
+    def process_response(self, response: Any) -> str:
         """Extract and clean image description from LLM response."""
         image_prompt = response.content if hasattr(response, "content") else str(response)
 
@@ -189,19 +193,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-
-                # Return failure result with error details
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             images = result.get("images", [])
             if not images:
@@ -211,17 +203,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             # Get first image (we only request one)
             image = images[0]
@@ -239,17 +221,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                         session_id=session.id,
                         error=error_msg,
                     )
-                    return {
-                        "content": "",
-                        "content_type": "image",
-                        "meta_info": {
-                            "model": self.image_model,
-                            "type": "image_generation",
-                            "status": "failed",
-                            "error": error_msg,
-                            "image_prompt": image_prompt,
-                        },
-                    }
+                    raise RuntimeError(error_msg)
             elif isinstance(image, str):
                 image_data = image
             else:
@@ -259,17 +231,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     session_id=session.id,
                     error=error_msg,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg)
 
             logger.info(
                 "image_generated",
@@ -292,17 +254,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                     error=error_msg,
                     exc_info=True,
                 )
-                return {
-                    "content": "",
-                    "content_type": "image",
-                    "meta_info": {
-                        "model": self.image_model,
-                        "type": "image_generation",
-                        "status": "failed",
-                        "error": error_msg,
-                        "image_prompt": image_prompt,
-                    },
-                }
+                raise RuntimeError(error_msg) from upload_error
 
             logger.info(
                 "image_uploaded_to_s3",
@@ -332,16 +284,7 @@ Create a concise English prompt for a high-quality visualization image that repr
                 error=error_msg,
                 exc_info=True,
             )
-            return {
-                "content": "",
-                "content_type": "image",
-                "meta_info": {
-                    "model": self.image_model,
-                    "type": "image_generation",
-                    "status": "error",
-                    "error": error_msg,
-                },
-            }
+            raise RuntimeError(error_msg) from e
 
     def __repr__(self) -> str:
         return f"ImageStep(model={self.image_model}, size={self.width}x{self.height})"

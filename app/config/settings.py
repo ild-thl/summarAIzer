@@ -7,6 +7,12 @@ from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 
 
+def _split_csv_env(name: str, default: str = "") -> list[str]:
+    """Parse comma-separated env values into a trimmed list."""
+    raw = os.getenv(name, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 class Settings(BaseSettings):
     """Application settings from environment variables."""
 
@@ -26,6 +32,7 @@ class Settings(BaseSettings):
     api_description: str = "CRUD API for managing sessions and events with secure authentication"
     api_version: str = "2.0.0"
     uvicorn_workers: int = int(os.getenv("UVICORN_WORKERS", "1"))
+    api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:7860")
 
     # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")
@@ -37,7 +44,21 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     enable_cors: bool = os.getenv("ENABLE_CORS", "true").lower() == "true"
-    cors_origins: list[str] = ["*"]  # Restrict in production
+    cors_origins: list[str] = _split_csv_env("CORS_ORIGINS", "*")
+
+    # Keycloak JWT configuration
+    jwt_verify_signature: bool = os.getenv("JWT_VERIFY_SIGNATURE", "true").lower() == "true"
+    jwt_verify_exp: bool = os.getenv("JWT_VERIFY_EXP", "true").lower() == "true"
+    # Accept either CSV/plain string (e.g. RS256 or RS256,HS256) or JSON list via env.
+    jwt_algorithms: str | list[str] = os.getenv("JWT_ALGORITHMS", "RS256")
+    jwt_leeway_seconds: int = int(os.getenv("JWT_LEEWAY_SECONDS", "30"))
+    jwt_audience: str = os.getenv("JWT_AUDIENCE", "")
+    jwt_issuer: str = os.getenv("JWT_ISSUER", "")
+    jwt_jwks_url: str = os.getenv("JWT_JWKS_URL", "")
+    jwt_jwks_cache_ttl_seconds: int = int(os.getenv("JWT_JWKS_CACHE_TTL_SECONDS", "300"))
+    jwt_client_id: str = os.getenv("JWT_CLIENT_ID", "")
+    jwt_admin_role: str = os.getenv("JWT_ADMIN_ROLE", "summaraizer_admin")
+    jwt_admin_group: str = os.getenv("JWT_ADMIN_GROUP", "/admin")
 
     # Celery & Redis
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -151,6 +172,31 @@ class Settings(BaseSettings):
     openai_transcribe_temperature: float = float(os.getenv("OPENAI_TRANSCRIBE_TEMPERATURE", "0.4"))
 
     model_config = ConfigDict(env_file=".env", case_sensitive=False)
+
+    @property
+    def jwt_algorithms_list(self) -> list[str]:
+        """Return normalized JWT algorithms list from string or list config."""
+        value = self.jwt_algorithms
+
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith("[") and raw.endswith("]"):
+                # Allow JSON list syntax in env (e.g. ["RS256"]).
+                import json
+
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if str(item).strip()]
+                except json.JSONDecodeError:
+                    pass
+
+            return [part.strip() for part in raw.split(",") if part.strip()]
+
+        return ["RS256"]
 
 
 @lru_cache

@@ -21,6 +21,7 @@ from app.services.embedding.service import EmbeddingService
 from app.services.execution_service import WorkflowExecutionService
 from app.services.s3_audio_service import S3AudioService, get_s3_audio_service
 from app.workflows.execution_context import (
+    StepRegistry,
     WorkflowRegistry,
     resolve_target_to_workflow_class,
 )
@@ -252,6 +253,13 @@ async def _generate_session_embedding_base(
         # Generate embedding
         embedding = await service.embed_query(embedding_text)
 
+        if embedding is None:
+            logger.error(
+                "embedding_service_returned_no_vector",
+                session_id=session_id,
+            )
+            raise ValueError("Embedding service returned no vector")
+
         # Store embedding in Chroma with metadata built from session
         await service.store_session_embedding(
             session_id, embedding, embedding_text, session=session
@@ -479,21 +487,38 @@ def _track_generated_content(
     Returns:
         List of created content IDs
     """
-    # Extract step identifiers from final state (other keys are execution context)
-    _TRANSIENT_STATE_KEYS = {"session_id", "execution_id"}
-    step_identifiers = [k for k in final_state if k not in _TRANSIENT_STATE_KEYS]
+    # Only persist identifiers for registered workflow steps.
+    # final_state also contains execution/routing context (e.g. session_format/session_tags)
+    # which must never be exposed as available content identifiers.
+    registered_step_ids = set(StepRegistry.get_all_steps().keys())
+    if registered_step_ids:
+        step_identifiers = [
+            key for key, value in final_state.items() if key in registered_step_ids and value
+        ]
+    else:
+        # Defensive fallback: avoid persisting known context/meta keys.
+        _NON_CONTENT_STATE_KEYS = {
+            "session_id",
+            "execution_id",
+            "session_format",
+            "session_tags",
+        }
+        step_identifiers = [
+            key
+            for key, value in final_state.items()
+            if value and key not in _NON_CONTENT_STATE_KEYS and not key.startswith("_")
+        ]
 
     for step_id in step_identifiers:
-        if final_state.get(step_id):
-            session_crud.add_available_content_identifier(db, session_id, step_id)
-            logger.debug(
-                "content_identifier_ensured_in_session",
-                session_id=session_id,
-                step_id=step_id,
-            )
+        session_crud.add_available_content_identifier(db, session_id, step_id)
+        logger.debug(
+            "content_identifier_ensured_in_session",
+            session_id=session_id,
+            step_id=step_id,
+        )
 
     # Get created content IDs for logging
-    created_content = content_crud.get_content_list(db, session_id)
+    created_content = content_crud.list_for_session(db, session_id)
     created_ids = [c.id for c in created_content if c.workflow_execution_id == execution_id]
 
     logger.info(
@@ -766,6 +791,11 @@ def execute_generated_content(
             "session_id": session_id,
             "execution_id": execution_id,
         }
+
+        # Populate inital state with existing content to enable context-aware generation and updates
+        existing_content = content_crud.list_for_session(db, session_id)
+        for content in existing_content:
+            initial_state[content.identifier] = content.content
 
         logger.info(
             "content_generation_initial_state_built",

@@ -271,7 +271,12 @@ class EmbeddingService:
             Combined text for embedding
         """
         summary_truncated = summary[:1000] if summary else None
-        description = short_description if len(short_description) > 100 else description
+        # Prefer richer short description when available, but guard for None.
+        description = (
+            short_description
+            if isinstance(short_description, str) and len(short_description) > 100
+            else description
+        )
         return self._prepare_text(
             title=title,
             fields=[description, summary_truncated],

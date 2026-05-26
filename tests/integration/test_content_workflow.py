@@ -101,6 +101,55 @@ class TestContentEndpoints:
         assert data["identifier"] == "transcription"
         assert data["content"] == content_text
 
+    def test_get_content_by_identifier_as_download(self, client: TestClient, session_with_event):
+        """Test retrieving content as a downloadable text file."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+        content_text = "Test transcription content for download"
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": content_text},
+        )
+
+        response = client.get(
+            f"/api/v2/sessions/{session_id}/content/transcription?download=true",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+
+        assert response.status_code == HTTP_200_OK
+        assert response.text == content_text
+        assert response.headers["content-type"].startswith("text/plain")
+        assert "attachment;" in response.headers["content-disposition"]
+        assert "ai-workshop-transcription.txt" in response.headers["content-disposition"]
+
+    def test_get_content_by_identifier_returns_raw_content_for_browser_navigation(
+        self, client: TestClient, session_with_event
+    ):
+        """Test browser navigation gets raw content instead of the JSON envelope."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+        content_text = "Test transcription content for browser"
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": content_text},
+        )
+
+        response = client.get(
+            f"/api/v2/sessions/{session_id}/content/transcription",
+            headers={
+                "Authorization": f"Bearer {plain_key}",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            },
+        )
+
+        assert response.status_code == HTTP_200_OK
+        assert response.text == content_text
+        assert response.headers["content-type"].startswith("text/plain")
+
     def test_transcription_conflict(self, client: TestClient, session_with_event):
         """Test adding duplicate transcription fails."""
         session_data, plain_key = session_with_event
@@ -146,6 +195,28 @@ class TestContentEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["content"] == updated_content
+
+    def test_update_content_editorial_review_flag(self, client: TestClient, session_with_event):
+        """Test toggling editorial review flag for a content identifier."""
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/summary",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"content": "AI generated summary", "ai_generated": True},
+        )
+
+        review_response = client.patch(
+            f"/api/v2/sessions/{session_id}/content/summary/review",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={"editorially_reviewed": True},
+        )
+
+        assert review_response.status_code == HTTP_200_OK
+        review_payload = review_response.json()
+        assert review_payload["ai_generated"] is True
+        assert review_payload["editorially_reviewed"] is True
 
     def test_delete_content(self, client: TestClient, session_with_event):
         """Test deleting content."""
@@ -208,6 +279,9 @@ class TestWorkflowEndpoints:
         # tags Step is independent and runs first, so workflow can be queued
         assert response.status_code == 202
         data = response.json()
+        assert "execution_id" in data
+        assert data["session_id"] == session_id
+        assert "celery_task_id" in data
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
 
@@ -232,8 +306,26 @@ class TestWorkflowEndpoints:
         assert response.status_code == 202
         data = response.json()
         assert "task_id" in data
+        assert "execution_id" in data
+        assert data["session_id"] == session_id
+        assert "celery_task_id" in data
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
+
+        # Status contract should contain normalized dashboard fields.
+        status_response = client.get(
+            f"/api/v2/sessions/{session_id}/workflow/{data['task_id']}",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert status_response.status_code == 200
+        status_data = status_response.json()
+        assert status_data["execution_id"] == int(data["task_id"])
+        assert status_data["session_id"] == session_id
+        assert status_data["workflow_type"] == "talk_workflow"
+        assert "celery_task_id" in status_data
+        assert "created_at" in status_data
+        assert "started_at" in status_data
+        assert "completed_at" in status_data
 
     def test_get_workflow_status_not_found(self, client: TestClient, session_with_event):
         """Test getting status of non-existent workflow."""
@@ -310,6 +402,96 @@ class TestWorkflowEndpoints:
         assert data["workflow_type"] == "talk_workflow"
         assert data["status"] == "queued"
 
+    def test_list_workflow_executions_overview(
+        self, client: TestClient, session_with_event, test_db: Session
+    ):
+        """Test listing active and historical workflow executions for a session."""
+        from app.crud import generated_content as content_crud
+        from app.database.models import WorkflowExecution, WorkflowExecutionStatus
+
+        session_data, plain_key = session_with_event
+        session_id = session_data["id"]
+
+        queued_response = client.post(
+            f"/api/v2/sessions/{session_id}/workflow/talk_workflow",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert queued_response.status_code == 202
+        queued_execution_id = queued_response.json()["execution_id"]
+
+        overview_running = client.get(
+            f"/api/v2/sessions/{session_id}/workflows",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert overview_running.status_code == HTTP_200_OK
+        overview_running_data = overview_running.json()
+        assert overview_running_data["has_running"] is True
+        assert any(
+            item["execution_id"] == queued_execution_id for item in overview_running_data["running"]
+        )
+
+        queued_execution = (
+            test_db.query(WorkflowExecution)
+            .filter(WorkflowExecution.id == queued_execution_id)
+            .first()
+        )
+        assert queued_execution is not None
+        queued_execution.status = WorkflowExecutionStatus.COMPLETED
+        queued_execution.started_at = datetime.utcnow()
+        queued_execution.completed_at = datetime.utcnow()
+        test_db.commit()
+
+        content_crud.create_content(
+            db=test_db,
+            session_id=session_id,
+            identifier="summary",
+            content="Generated summary",
+            content_type="plain_text",
+            workflow_execution_id=queued_execution_id,
+        )
+
+        failed_execution = content_crud.create_workflow_execution(
+            db=test_db,
+            session_id=session_id,
+            target="tags",
+            triggered_by="user_triggered",
+        )
+        failed_execution.status = WorkflowExecutionStatus.FAILED
+        failed_execution.error = "Synthetic failure"
+        failed_execution.completed_at = datetime.utcnow()
+        test_db.commit()
+
+        overview_history = client.get(
+            f"/api/v2/sessions/{session_id}/workflows",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert overview_history.status_code == HTTP_200_OK
+        overview_history_data = overview_history.json()
+        assert overview_history_data["has_running"] is False
+        assert len(overview_history_data["running"]) == 0
+
+        history_ids = [item["execution_id"] for item in overview_history_data["history"]]
+        assert queued_execution_id in history_ids
+        assert failed_execution.id in history_ids
+
+        completed_entry = next(
+            item
+            for item in overview_history_data["history"]
+            if item["execution_id"] == queued_execution_id
+        )
+        assert completed_entry["status"] == WorkflowExecutionStatus.COMPLETED.value
+        assert any(
+            content["identifier"] == "summary" for content in completed_entry["created_content"]
+        )
+
+        failed_entry = next(
+            item
+            for item in overview_history_data["history"]
+            if item["execution_id"] == failed_execution.id
+        )
+        assert failed_entry["status"] == WorkflowExecutionStatus.FAILED.value
+        assert failed_entry["error_message"] == "Synthetic failure"
+
 
 @pytest.mark.integration
 class TestTranscriptionStorage:
@@ -364,3 +546,73 @@ class TestTranscriptionStorage:
         )
         assert detail_resp.status_code == HTTP_200_OK
         assert detail_resp.json()["content"] == transcription
+
+
+@pytest.mark.integration
+class TestDocumentationFlags:
+    """Test AI-generation and editorial-review flags on documentation artifacts."""
+
+    def test_documentation_includes_ai_review_flags(
+        self,
+        client: TestClient,
+        test_db: Session,
+        sample_api_key,
+    ):
+        from app.services.documentation_builder import DocumentationBuilder
+
+        _api_key, plain_key = sample_api_key
+
+        event_resp = client.post(
+            "/api/v2/events",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Documentation Flags Event",
+                "start_date": datetime.utcnow().isoformat(),
+                "end_date": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+                "uri": "documentation-flags-event",
+                "status": "published",
+            },
+        )
+        assert event_resp.status_code == HTTP_201_CREATED
+        event_id = event_resp.json()["id"]
+
+        session_resp = client.post(
+            "/api/v2/sessions",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Documentation Flags Session",
+                "uri": "documentation-flags-session",
+                "start_datetime": datetime.utcnow().isoformat(),
+                "end_datetime": (datetime.utcnow() + timedelta(hours=1)).isoformat(),
+                "event_id": event_id,
+                "status": "published",
+            },
+        )
+        assert session_resp.status_code == HTTP_201_CREATED
+        session_id = session_resp.json()["id"]
+
+        client.post(
+            f"/api/v2/sessions/{session_id}/content/summary",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "content": "Summary from AI",
+                "content_type": "markdown",
+                "ai_generated": True,
+                "editorially_reviewed": False,
+            },
+        )
+
+        test_db.commit()
+
+        built = DocumentationBuilder.build_documentation(test_db, session_id)
+        assert built is not None
+
+        doc_resp = client.get(
+            f"/api/v2/sessions/{session_id}/documentation",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+        assert doc_resp.status_code == HTTP_200_OK
+        payload = doc_resp.json()
+        assert payload["contains_ai_generated_content"] is True
+        assert payload["all_ai_content_editorially_reviewed"] is False
+        assert any(section.get("ai_generated") is True for section in payload["sections"])

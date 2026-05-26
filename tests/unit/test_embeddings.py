@@ -192,6 +192,19 @@ class TestEmbeddingService:
         assert EmbeddingService.validate_embedding_text(text, max_length=50) is False
         assert EmbeddingService.validate_embedding_text(text, max_length=150) is True
 
+    def test_prepare_session_text_handles_none_short_description(self, embedding_service):
+        """Preparing session text should not crash when short_description is None."""
+        result = embedding_service._prepare_session_text(
+            title="Session Title",
+            description="Fallback description",
+            short_description=None,
+            summary="Summary text",
+        )
+
+        assert "Session Title" in result
+        assert "Fallback description" in result
+        assert "Summary text" in result
+
 
 # ============================================================================
 # EmbeddingSearchService Tests

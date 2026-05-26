@@ -25,6 +25,9 @@ redis>=5.0.0
 kombu>=5.3.0
 watchdog>=3.0.0  # Required for Celery autoreload
 
+# String similarity (quote verification)
+rapidfuzz>=3.0.0
+
 # LLM & AI
 langchain>=0.2.6
 langchain-openai>=0.1.14

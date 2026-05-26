@@ -1,7 +1,7 @@
 """CRUD operations for Session model."""
 
 from collections.abc import Iterable
-from typing import Any, ClassVar
+from typing import Any
 
 import structlog
 from sqlalchemy import and_, func, or_
@@ -34,21 +34,6 @@ def _invalidate_query_refinement_cache(event_ids: set[int | None]) -> None:
 
 class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     """CRUD operations for Session model."""
-
-    EMBEDDING_REFRESH_FIELDS: ClassVar[set[str]] = {
-        "title",
-        "description",
-        "short_description",
-        "speakers",
-        "tags",
-        "session_format",
-        "language",
-        "duration",
-        "start_datetime",
-        "end_datetime",
-        "event_id",
-        "location",
-    }
 
     def __init__(self):
         super().__init__(SessionModel)
@@ -433,31 +418,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 previous_status=previous_status,
             )
 
-    def _emit_embedding_refresh_event_if_needed(
-        self,
-        db_obj: SessionModel,
-        previous_status: str,
-        changed_fields: set[str],
-    ) -> None:
-        """Emit update event when a published session changed embedding-relevant fields."""
-        if previous_status != "published" or db_obj.status != "published":
-            return
-
-        refresh_fields = changed_fields & self.EMBEDDING_REFRESH_FIELDS
-        if not refresh_fields:
-            return
-
-        from app.events import SessionEventBus
-
-        SessionEventBus.emit(
-            "session_updated",
-            session_id=db_obj.id,
-            uri=db_obj.uri,
-            event_id=db_obj.event_id,
-            previous_status=previous_status,
-            changed_fields=sorted(refresh_fields),
-        )
-
     def update(self, db: Session, id: int, obj_in: SessionUpdate) -> SessionModel | None:
         """Update a session."""
         try:
@@ -496,11 +456,21 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             _invalidate_query_refinement_cache({previous_event_id, db_obj.event_id})
 
             self._emit_status_transition_event(db_obj=db_obj, previous_status=previous_status)
-            self._emit_embedding_refresh_event_if_needed(
-                db_obj=db_obj,
-                previous_status=previous_status,
-                changed_fields=changed_fields,
-            )
+
+            # Emit generic update event only when status did not transition.
+            # Status transitions are handled by dedicated lifecycle events
+            # (session_published/session_unpublished) to avoid duplicate executions.
+            if previous_status == db_obj.status:
+                from app.events import SessionEventBus
+
+                SessionEventBus.emit(
+                    "session_updated",
+                    session_id=db_obj.id,
+                    uri=db_obj.uri,
+                    event_id=db_obj.event_id,
+                    previous_status=previous_status,
+                    changed_fields=sorted(changed_fields),
+                )
 
             return db_obj
         except SQLAlchemyError as e:

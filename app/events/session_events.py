@@ -98,15 +98,31 @@ class SessionEventBus:
 
 def _handle_session_published(session_id: int, **kwargs) -> None:
     """
-    Handle session_published event - queue embedding generation.
+    Handle session_published event - build documentation and queue embedding generation.
 
     Args:
         session_id: ID of published session
         **kwargs: Other event data (uri, event_id, etc.)
     """
     try:
+        # Import here to avoid circular imports
         from app.async_jobs.tasks import generate_session_embedding
+        from app.database.connection import SessionLocal
+        from app.services.documentation_builder import DocumentationBuilder
 
+        # Build published documentation artifact
+        db = SessionLocal()
+        try:
+            DocumentationBuilder.build_documentation(db, session_id)
+            logger.info(
+                "session_documentation_built_on_publish_event",
+                session_id=session_id,
+                **kwargs,
+            )
+        finally:
+            db.close()
+
+        # Queue embedding generation asynchronously
         generate_session_embedding.delay(session_id)
 
         logger.info(
@@ -116,7 +132,7 @@ def _handle_session_published(session_id: int, **kwargs) -> None:
         )
     except Exception as e:
         logger.error(
-            "failed_to_queue_embedding_on_publish_event",
+            "failed_to_process_publish_event",
             session_id=session_id,
             error=str(e),
             error_type=type(e).__name__,
@@ -189,29 +205,59 @@ def _handle_session_updated(
     session_id: int, changed_fields: list[str] | None = None, **kwargs
 ) -> None:
     """
-    Handle session_updated event - queue embedding refresh.
+    Handle session_updated event - rebuild documentation and conditionally refresh embeddings.
 
-    Triggered for published sessions when embedding-relevant fields changed.
+    For published sessions:
+    - Always rebuilds documentation artifact (to capture any content changes)
+    - Only refreshes embeddings if embedding-relevant fields changed
 
     Args:
         session_id: ID of updated session
-        changed_fields: Updated field names that require embedding refresh
-        **kwargs: Other event data
+        changed_fields: Updated field names
+        **kwargs: Other event data (previous_status, uri, event_id, etc.)
     """
     try:
         from app.async_jobs.tasks import generate_session_embedding
+        from app.crud.session import session_crud
+        from app.database.connection import SessionLocal
+        from app.database.models import SessionStatus
+        from app.services.documentation_builder import DocumentationBuilder
 
-        generate_session_embedding.delay(session_id)
+        db = SessionLocal()
+        try:
+            # Get the session to check current status
+            session = session_crud.read(db, session_id)
+            if not session:
+                logger.warning(
+                    "session_not_found_in_update_handler",
+                    session_id=session_id,
+                    **kwargs,
+                )
+                return
 
-        logger.info(
-            "session_embedding_refresh_queued_on_update_event",
-            session_id=session_id,
-            changed_fields=changed_fields or [],
-            **kwargs,
-        )
+            # Always rebuild documentation for published sessions
+            if session.status == SessionStatus.PUBLISHED:
+                DocumentationBuilder.build_documentation(db, session_id)
+                logger.info(
+                    "session_documentation_rebuilt_on_update_event",
+                    session_id=session_id,
+                    **kwargs,
+                )
+
+                changed_set = set(changed_fields or [])
+                if changed_set:
+                    generate_session_embedding.delay(session_id)
+                    logger.info(
+                        "session_embedding_refresh_queued_on_update_event",
+                        session_id=session_id,
+                        changed_fields=sorted(changed_set),
+                        **kwargs,
+                    )
+        finally:
+            db.close()
     except Exception as e:
         logger.error(
-            "failed_to_queue_embedding_refresh_on_update_event",
+            "failed_to_process_update_event",
             session_id=session_id,
             changed_fields=changed_fields or [],
             error=str(e),

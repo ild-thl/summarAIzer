@@ -114,26 +114,52 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
             "meta_info": {},
         },
     )
-    tags_step = create_mock_step(
-        identifier="tags",
-        context_requirements=[],
-        generate_result={"content": "Tags", "content_type": "text", "meta_info": {}},
-    )
     summary_step = create_mock_step(
         identifier="summary",
-        context_requirements=["key_takeaways", "tags"],
+        context_requirements=["key_takeaways"],
         generate_result=lambda _session_id, context: {
-            "content": f"summary:{context['key_takeaways']}|{context['tags']}",
+            "content": f"summary:{context['key_takeaways']}",
             "content_type": "text",
             "meta_info": {},
         },
+    )
+    # Steps referenced by build_graph() - register as silent no-ops for this test
+    _noop = {"content": "", "content_type": "text", "meta_info": {}}
+    positions_step = create_mock_step(
+        identifier="positions", context_requirements=["transcription"], generate_result=_noop
+    )
+    quotes_step = create_mock_step(
+        identifier="quotes", context_requirements=["summary"], generate_result=_noop
+    )
+    mermaid_step = create_mock_step(
+        identifier="mermaid",
+        context_requirements=["summary"],
+        generate_result={**_noop, "content_type": "mermaid"},
+    )
+    learning_objectives_step = create_mock_step(
+        identifier="learning_objectives", context_requirements=["summary"], generate_result=_noop
+    )
+    tags_step = create_mock_step(
+        identifier="tags", context_requirements=[], generate_result={**_noop, "content": "Tags"}
+    )
+    image_step = create_mock_step(
+        identifier="image", context_requirements=["summary"], generate_result=_noop
+    )
+    sondercluster_step = create_mock_step(
+        identifier="sondercluster", context_requirements=["summary"], generate_result=_noop
     )
 
     for step in [
         transcription_step,
         key_takeaways_step,
-        tags_step,
         summary_step,
+        positions_step,
+        quotes_step,
+        mermaid_step,
+        learning_objectives_step,
+        tags_step,
+        image_step,
+        sondercluster_step,
     ]:
         step._save_to_db = Mock()
         StepRegistry.register(step)
@@ -158,6 +184,7 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
 
     assert final_state["transcription"] == "Persisted transcription"
     assert final_state["key_takeaways"] == "takeaways:Persisted transcription"
+    assert final_state["summary"] == "summary:takeaways:Persisted transcription"
 
 
 @pytest.mark.asyncio
@@ -579,3 +606,54 @@ async def test_multiple_sessions_independent_execution(mock_db_session, clean_re
 
     # Both should succeed with different execution IDs
     assert exec1.id != exec2.id
+
+
+# ---------------------------------------------------------------------------
+# Sondercluster tests
+# ---------------------------------------------------------------------------
+
+
+def test_sondercluster_get_matched_clusters_known_tags():
+    """get_matched_clusters returns canonical cluster keys for recognised tags."""
+    from app.workflows.steps.sondercluster_step import get_matched_clusters
+
+    assert get_matched_clusters(["Fringe"]) == ["fringe"]
+    assert get_matched_clusters(["Fail & Learn"]) == ["fail & learn"]
+    assert get_matched_clusters(["Global Perspectives"]) == ["global perspectives"]
+    assert get_matched_clusters(["Student Voices"]) == ["student voices"]
+    assert get_matched_clusters(["Ecological Sustainability"]) == ["ecological sustainability"]
+
+
+def test_sondercluster_get_matched_clusters_case_insensitive():
+    """get_matched_clusters normalises tag case before matching."""
+    from app.workflows.steps.sondercluster_step import get_matched_clusters
+
+    assert get_matched_clusters(["fringe"]) == ["fringe"]
+    assert get_matched_clusters(["FRINGE"]) == ["fringe"]
+    assert get_matched_clusters(["fail & learn"]) == ["fail & learn"]
+    assert get_matched_clusters(["Ökologische Nachhaltigkeit"]) == ["ecological sustainability"]
+
+
+def test_sondercluster_get_matched_clusters_no_match():
+    """get_matched_clusters returns empty list for unknown tags."""
+    from app.workflows.steps.sondercluster_step import get_matched_clusters
+
+    assert get_matched_clusters([]) == []
+    assert get_matched_clusters(["AI", "Testing", "Education"]) == []
+
+
+def test_sondercluster_get_matched_clusters_mixed_tags():
+    """get_matched_clusters works when regular and cluster tags are mixed."""
+    from app.workflows.steps.sondercluster_step import get_matched_clusters
+
+    result = get_matched_clusters(["AI", "Fringe", "Testing", "Student Voices"])
+    assert result == ["fringe", "student voices"]
+
+
+def test_sondercluster_get_matched_clusters_deduplicates():
+    """get_matched_clusters deduplicates when multiple tag variants map to the same cluster."""
+    from app.workflows.steps.sondercluster_step import get_matched_clusters
+
+    result = get_matched_clusters(["Fail & Learn", "Fail and Learn"])
+    assert result == ["fail & learn"]
+    assert len(result) == 1

@@ -4,8 +4,16 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain.chat_models import init_chat_model
+from langchain_core.rate_limiters import InMemoryRateLimiter
 
 from app.config.settings import get_settings
+
+# Default limiter shared across model instances: 1 request per second, no burst.
+DEFAULT_RATE_LIMITER = InMemoryRateLimiter(
+    requests_per_second=1,
+    check_every_n_seconds=0.1,
+    max_bucket_size=1,
+)
 
 
 @dataclass
@@ -16,6 +24,8 @@ class ChatModelConfig:
     temperature: float | None = None
     max_tokens: int | None = None
     top_p: float | None = None
+    max_retries: int | None = None
+    rate_limiter: Any | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to kwargs dict for init_chat_model."""
@@ -27,6 +37,8 @@ class ChatModelConfig:
             "temperature": get_settings().llm_temperature,
             "max_tokens": get_settings().llm_max_tokens,
             "top_p": get_settings().llm_top_p,
+            "max_retries": 5,
+            "rate_limiter": DEFAULT_RATE_LIMITER,
         }
 
         if self.temperature is not None:
@@ -35,6 +47,10 @@ class ChatModelConfig:
             kwargs["max_tokens"] = self.max_tokens
         if self.top_p is not None:
             kwargs["top_p"] = self.top_p
+        if self.max_retries is not None:
+            kwargs["max_retries"] = self.max_retries
+        if self.rate_limiter is not None:
+            kwargs["rate_limiter"] = self.rate_limiter
         return kwargs
 
 

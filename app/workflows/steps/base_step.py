@@ -70,7 +70,7 @@ class WorkflowStep(ABC):
         Example:
             def get_model_config(self) -> ChatModelConfig:
                 return ChatModelConfig(
-                    model="gemma-3-27b-it",
+                    model="gemma-4-31b-it",
                     temperature=0.7,
                     max_tokens=2000,
                     top_p=0.95,
@@ -81,7 +81,7 @@ class WorkflowStep(ABC):
         """
         # Default configuration - steps override for optimization
         return ChatModelConfig(
-            model="gemma-3-27b-it",
+            model="gemma-4-31b-it",
             temperature=0.7,
             max_tokens=2000,
             top_p=None,
@@ -286,7 +286,7 @@ class WorkflowStep(ABC):
             {
                 "content": "actual content string",
                 "content_type": "markdown|json_array|plain_text|...",
-                "meta_info": {"model": "gemma-3-27b-it", "type": "generated_summary", ...}
+                "meta_info": {"model": "gemma-4-31b-it", "type": "generated_summary", ...}
             }
         """
         pass

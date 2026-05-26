@@ -2,6 +2,7 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -17,6 +18,7 @@ from app.database.models import Event, User
 from app.database.models import Session as SessionModel
 from app.schemas.session import (
     EventCreate,
+    EventPageResponse,
     EventResponse,
     EventUpdate,
     SessionCreate,
@@ -24,12 +26,35 @@ from app.schemas.session import (
 )
 from app.security.auth import (
     get_current_user,
+    is_admin,
     require_event_owner,
 )
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/events", tags=["events"])
+
+
+def _resolve_event_sort(sort_by: str, sort_dir: str):
+    """Resolve supported event sort options with stable secondary ordering."""
+    sort_fields = {
+        "id": Event.id,
+        "title": Event.title,
+        "start_date": Event.start_date,
+        "created_at": Event.created_at,
+        "updated_at": Event.updated_at,
+    }
+    column = sort_fields.get(sort_by)
+    if column is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid sort_by. Allowed: id,title,start_date,created_at,updated_at",
+        )
+
+    if sort_dir == "asc":
+        return [column.asc(), Event.id.asc()]
+
+    return [column.desc(), Event.id.desc()]
 
 
 @router.post("", response_model=EventResponse, status_code=HTTP_201_CREATED)
@@ -60,6 +85,46 @@ async def create_event(
 
     db_event = event_crud.create(db, event_in, owner_id=current_user.id)
     return db_event
+
+
+@router.get("/me", response_model=EventPageResponse)
+async def list_my_events(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
+    status: str = Query(None, description="Optional status filter (draft, published, archived)"),
+    sort_by: str = Query(
+        "updated_at",
+        description="Sort field: id, title, start_date, created_at, updated_at",
+    ),
+    sort_dir: str = Query("desc", description="Sort direction: asc or desc"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List events manageable by current user with pagination metadata."""
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_dir. Allowed: asc,desc")
+
+    query = db.query(Event)
+
+    if not is_admin(current_user):
+        query = query.filter(Event.owner_id == current_user.id)
+
+    if status:
+        query = query.filter(Event.status == status)
+
+    total = query.with_entities(func.count(Event.id)).scalar() or 0
+    sort_columns = _resolve_event_sort(sort_by, sort_dir)
+    items = query.order_by(*sort_columns).offset(skip).limit(limit).all()
+
+    return EventPageResponse(
+        items=items,
+        meta={
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "has_more": (skip + len(items)) < total,
+        },
+    )
 
 
 @router.get("/{event_id}", response_model=EventResponse)

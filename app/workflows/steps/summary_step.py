@@ -1,4 +1,4 @@
-"""Summary step - generates markdown summary of session."""
+"""Summary step - generates format-specific markdown summaries of session content."""
 
 from typing import Any
 
@@ -14,51 +14,199 @@ from app.workflows.steps.llm_step import LLMStep
 logger = structlog.get_logger()
 
 
-_FORMAT_SECTIONS: dict[str, tuple[str, list[str]]] = {
-    "talk": (
-        "Vortrag",
-        ["Übersicht", "Kernaussagen", "Handlungsempfehlungen"],
-    ),
-    "discussion": (
-        "Diskussion",
-        [
-            "Übersicht",
-            "Positionen & Perspektiven",
-            "Zentrale Streitpunkte",
-            "Ergebnisse & offene Fragen",
-        ],
-    ),
-    "workshop": (
-        "Workshop/Training",
-        [
-            "Übersicht",
-            "Vermittelte Methoden & Tools",
-            "Übungen & Aktivitäten",
-            "Kernaussagen",
-            "Handlungsempfehlungen",
-        ],
-    ),
-}
+def _build_talk_messages(
+    session: SessionModel,
+    context: dict[str, Any],
+    is_lightning: bool,
+) -> list[BaseMessage]:
+    """Build summary messages for talk/impuls format (Input, Lightning Talk)."""
+    speakers = ", ".join(session.speakers) if session.speakers else "Unbekannt"
+    duration = session.duration or 0
+    key_takeaways = context.get("key_takeaways", "")
+    description = session.description or ""
+
+    if is_lightning:
+        sections_text = (
+            "1. **Kontext & Einordnung** – Worum geht es? Einordnung in den größeren Zusammenhang, 2-3 Sätze\n"
+            "2. **Kernaussage** – Die zentrale inhaltliche Botschaft dieses Lightning Talks\n"
+            "3. **Argumente & Belege** – Stützende Belege, Zahlen oder Beispiele (weglassen wenn nicht ableitbar)\n"
+            "4. **Handlungsempfehlung** – Konkrete Empfehlung oder Botschaft (weglassen wenn nicht ableitbar)"
+        )
+        length_instruction = "\nHalte die Zusammenfassung kompakt (max. ~250 Wörter)."
+        task_instruction = (
+            "Erstelle nun eine kompakte Markdown-Zusammenfassung dieses Lightning Talks."
+        )
+        sahnehaeubchen_note = ""
+    else:
+        sections_text = (
+            "1. **Kontext & Einordnung** – Worum geht es? Kontext und Einordnung in den Themenzusammenhang, 2-4 Sätze\n"
+            "2. **Kernaussagen** – Die wichtigsten inhaltlichen Punkte (max 2-6); adressiert die Problemstellung aus der Session-Beschreibung\n"
+            "3. **Argumente & Belege** – Fakten, Zahlen und Beispiele; nur falls vorhanden\n"
+            "4. **Handlungsempfehlung** – Konkrete Empfehlung oder Botschaft; nur falls ableitbar alternativ kuzes Fazit"
+        )
+        length_instruction = ""
+        task_instruction = (
+            "Erstelle nun eine strukturierte Markdown-Zusammenfassung dieses Vortrags."
+        )
+        sahnehaeubchen_note = "\n\nAbschnitte 4 und 5 weglassen statt mit Platzhaltern füllen."
+
+    coverage_instruction = (
+        "\n\nDecke in der Zusammenfassung alle vorab extrahierten Kernpunkte vollständig ab."
+        if key_takeaways
+        else ""
+    )
+
+    system_message = f"""Du bist ein Assistent, der Vorträge und Impuls-Präsentationen dokumentiert. Du erstellst präzise, gut lesbare Zusammenfassungen mit folgenden Eigenschaften:
+
+- Klare, sachliche Sprache auf Deutsch
+- Keine Halluzinationen: Ausschließlich Inhalte aus Transkription und Kernpunkten verwenden
+- Strukturierte Gliederung mit maximal zwei Überschriftsebenen
+- Keine wörtlichen Zitate aus der Transkription
+- Fachbegriffe und Tool-Namen exakt aus dem Original übernehmen
+
+Deine Zusammenfassung enthält diese Abschnitte:
+{sections_text}{length_instruction}
+
+Format: Markdown.{sahnehaeubchen_note}{coverage_instruction}"""
+
+    human_parts = [
+        f"Veranstaltung: {session.title}",
+        f"Referent:innen: {speakers}",
+        f"Dauer: {duration} Minuten",
+    ]
+
+    if description:
+        human_parts.append(f"\nSession-Beschreibung und Problemstellung:\n{description}")
+
+    if key_takeaways:
+        human_parts.append(f"\nVorab extrahierte Kernpunkte:\n{key_takeaways}")
+
+    human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
+    human_parts.append(f"\n{task_instruction}")
+
+    return [SystemMessage(content=system_message), HumanMessage(content="\n".join(human_parts))]
 
 
-def _get_format_config(session_format) -> tuple[str, list[str]]:
-    """Map session format to format label and section list."""
-    if session_format in (SessionFormat.DISCUSSION,):
-        return _FORMAT_SECTIONS["discussion"]
-    if session_format in (SessionFormat.WORKSHOP, SessionFormat.TRAINING):
-        return _FORMAT_SECTIONS["workshop"]
-    return _FORMAT_SECTIONS["talk"]  # INPUT, LIGHTNING_TALK, None, unknown
+def _build_workshop_messages(
+    session: SessionModel,
+    context: dict[str, Any],
+) -> list[BaseMessage]:
+    """Build summary messages for workshop/training/lab format."""
+    speakers = ", ".join(session.speakers) if session.speakers else "Unbekannt"
+    duration = session.duration or 0
+    format_label = (
+        session.session_format.value.capitalize() if session.session_format else "Workshop"
+    )
+    key_takeaways = context.get("key_takeaways", "")
+    description = session.description or ""
+
+    coverage_instruction = (
+        "\n\nDecke in der Zusammenfassung alle vorab extrahierten Kernpunkte vollständig ab."
+        if key_takeaways
+        else ""
+    )
+
+    system_message = f"""Du bist ein Assistent, der Workshops, Trainings und Lab-Sessions dokumentiert. Du erstellst praxisnahe, strukturierte Dokumentationen mit folgenden Eigenschaften:
+
+- Klare, anleitende Sprache auf Deutsch
+- Keine Erfindungen: Ausschließlich Inhalte aus Transkription und Kernpunkten verwenden
+- Besonderer Fokus auf vermittelte Methoden, Tools und praktische Aktivitäten
+- Übungen und ihre Zielsetzungen explizit benennen – nicht nur erwähnen, dass Übungen stattfanden
+- Keine wörtlichen Zitate aus der Transkription
+
+Deine Zusammenfassung enthält diese Abschnitte (Workshop):
+1. **Lernziele** – 3-4 konkrete Kompetenzen, die Teilnehmende erwerben (als Liste)
+2. **Methodik & Ablauf** – Ablauf und eingesetzte Methoden und Frameworks
+3. **Kerninhalte** – Inhaltliche Substanz; adressiert die Problemstellung aus der Session-Beschreibung
+4. **Arbeitsergebnisse** – Erkenntnisse und Outputs aus Gruppenarbeit oder Arbeitsphasen (wenn ableitbar)
+5. **Handlungsempfehlung & Transfer** – Wie können die Inhalte in der Praxis angewendet werden? (wenn ableitbar)
+
+Abschnitte 4-5 weglassen wenn kein Material vorhanden.
+
+Format: Markdown.{coverage_instruction}"""
+
+    human_parts = [
+        f"Veranstaltung: {session.title}",
+        f"Format: {format_label}",
+        f"Referent:innen: {speakers}",
+        f"Dauer: {duration} Minuten",
+    ]
+
+    if description:
+        human_parts.append(f"\nSession-Beschreibung und Problemstellung:\n{description}")
+
+    if key_takeaways:
+        human_parts.append(f"\nVorab extrahierte Kernpunkte:\n{key_takeaways}")
+
+    human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
+    human_parts.append(
+        "\nErstelle nun eine strukturierte Markdown-Dokumentation dieser Veranstaltung."
+    )
+
+    return [SystemMessage(content=system_message), HumanMessage(content="\n".join(human_parts))]
+
+
+def _build_discussion_messages(
+    session: SessionModel,
+    context: dict[str, Any],
+) -> list[BaseMessage]:
+    """Build summary messages for discussion/panel format."""
+    speakers = ", ".join(session.speakers) if session.speakers else "Unbekannte Diskutierende"
+    duration = session.duration or 0
+    positions = context.get("positions", "")
+    description = session.description or ""
+
+    system_message = """Du bist ein Assistent, der Diskussionen und Panel-Gespräche objektiv dokumentiert. Du erstellst ausgewogene, neutrale Berichte mit folgenden Eigenschaften:
+
+- Neutrale, berichtende Sprache auf Deutsch – keine eigene Position
+- Verschiedene Perspektiven fair und vollständig darstellen
+- Sprecher:innen namentlich zuordnen, soweit aus dem Transkript erkennbar
+- Mehrheitsmeinungen und Minderheitsmeinungen klar unterscheiden
+- Offene Fragen und Uneinigkeiten explizit als solche kennzeichnen
+- Keine wörtlichen Zitate aus der Transkription
+
+Deine Zusammenfassung enthält diese Abschnitte:
+1. **Kontext & Einordnung** – Ausgangsfrage, These oder Rahmensetzung der Diskussion
+2. **Diskussionslinien** – Zentrale Fragestellungen und Positionen; adressiert die Problemstellung
+3. **Perspektiven der Beteiligten** – Position A, Position B etc. mit namentlicher Zuordnung
+4. **Argumente & Belege** – Stützende Fakten und Beispiele je Perspektive
+5. **Offene Fragen** – Was blieb ungeklärt? (weglassen wenn kein Material)
+6. **Ergebnis & Handlungsempfehlung** – Was wurde (vorläufig) geklärt? Was nehmen Teilnehmende mit? (weglassen wenn kein Material)
+
+Format: Markdown."""
+
+    human_parts = [
+        f"Veranstaltung: {session.title}",
+        f"Diskutierende: {speakers}",
+        f"Dauer: {duration} Minuten",
+    ]
+
+    if description:
+        human_parts.append(f"\nSession-Beschreibung und Problemstellung:\n{description}")
+
+    if positions:
+        human_parts.append(f"\nVorab extrahierte Positionen & Zitate:\n{positions}")
+
+    human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
+    human_parts.append("\nErstelle nun eine ausgewogene Markdown-Dokumentation dieser Diskussion.")
+
+    return [SystemMessage(content=system_message), HumanMessage(content="\n".join(human_parts))]
 
 
 class SummaryStep(LLMStep):
     """
-    Generates a comprehensive markdown summary of a session.
+    Generates a format-specific markdown summary of a session.
 
-    Independent step that optionally uses key takeaways if available in context
-    for more complete coverage, but can also generate standalone summaries.
-    Supports format-aware prompts (talk, discussion, workshop).
+    Routes to one of three prompt variants based on session format:
+    - Talk/Impuls (Input, Lightning Talk): structured overview with key statements
+    - Workshop/Training/Lab: practice-oriented with methods, activities, objectives
+    - Discussion/Panel: neutral multi-perspective report
 
-    Input: Session metadata + transcription (+ optional key_takeaways)
+    Context used:
+    - transcription (required)
+    - key_takeaways (optional, used for talk/workshop paths)
+    - positions (optional, used for discussion path)
+
     Output: Markdown formatted summary with format-specific sections
     """
 
@@ -69,87 +217,40 @@ class SummaryStep(LLMStep):
 
     @property
     def context_requirements(self) -> list[str]:
-        """Requires transcription to generate summary.
-
-        Optionally uses 'key_takeaways' if available in context for more complete coverage.
-        """
+        """Requires transcription. Optionally uses key_takeaways or positions."""
         return ["transcription"]
 
     def get_model_config(self) -> ChatModelConfig:
-        """Summary needs good context - use model with larger max_tokens."""
+        """Summary needs good context comprehension and longer output."""
         return ChatModelConfig(
-            model="gemma-3-27b-it",
+            model="gemma-4-31b-it",
             temperature=0.7,
-            max_tokens=3000,  # Larger for comprehensive summaries
+            max_tokens=5000,
             top_p=0.95,
         )
 
     def get_messages(self, session: SessionModel, context: dict[str, Any]) -> list[BaseMessage]:
-        """Generate format-aware summary messages with optional key takeaways context."""
-        speakers = ", ".join(session.speakers) if session.speakers else "Unknown"
-        duration = session.duration or 0
-        tags = ", ".join(session.tags) if session.tags else "General"
+        """Generate summary messages based on format."""
+        is_lightning = session.session_format == SessionFormat.LIGHTNING_TALK
+        is_discussion = session.session_format in {SessionFormat.DISCUSSION}
+        is_workshop = session.session_format in {
+            SessionFormat.WORKSHOP,
+            SessionFormat.TRAINING,
+            SessionFormat.LAB,
+        }
 
-        format_label, sections = _get_format_config(session.session_format)
-        sections_text = "\n".join(f"{i+1}. **{s}**" for i, s in enumerate(sections))
-        key_takeaways_block = context.get("key_takeaways", "")
-
-        # Build system message
-        sys_base = f"""Du bist ein Assistent, der {format_label}-Veranstaltungen zusammenfasst. Du erstellst Dokumentationen aus Transkripten mit folgenden Eigenschaften:
-
-- Klare, didaktische Sprache auf Deutsch
-- Keine Halluzinationen: Nur Fakten aus dem Transkript verwenden
-- Strukturierte Gliederung mit max. zwei Überschriftsebenen
-- Zitate kursiv in Anführungszeichen
-- Fokus auf Kernaussagen und Handlungsempfehlungen
-
-Deine Zusammenfassung enthält diese Abschnitte:
-{sections_text}
-
-Format: Markdown, bereit zum Kopieren."""
-
-        if key_takeaways_block:
-            sys_message = (
-                sys_base + "\n\nDecke alle vorab extrahierten Key Takeaways vollständig ab."
-            )
+        if is_discussion:
+            return _build_discussion_messages(session, context)
+        elif is_workshop:
+            return _build_workshop_messages(session, context)
         else:
-            sys_message = sys_base
-
-        # Build human message
-        human_base = f"""Veranstaltung: {session.title}
-Referent:innen: {speakers}
-Dauer: {duration} Minuten
-Tags: {tags}
-
-Transkript:
-{context.get('transcription', '')}
-
-Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
-
-        if key_takeaways_block:
-            human_message = f"""Veranstaltung: {session.title}
-Referent:innen: {speakers}
-Dauer: {duration} Minuten
-Tags: {tags}
-
-Vorab extrahierte Key Takeaways:
-{key_takeaways_block}
-
-Transkript:
-{context.get('transcription', '')}
-
-Erstelle nun eine strukturierte Markdown-Zusammenfassung der Veranstaltung."""
-        else:
-            human_message = human_base
-
-        return [
-            SystemMessage(content=sys_message),
-            HumanMessage(content=human_message),
-        ]
+            return _build_talk_messages(session, context, is_lightning)
 
     def process_response(self, response: Any) -> dict[str, Any]:
         """Process LLM response into summary output."""
         summary = response.content if hasattr(response, "content") else str(response)
+        # Extract markdown from code fence wrappers if present
+        summary = self._extract_markdown_from_code_fences(summary)
 
         return {
             "content": summary,

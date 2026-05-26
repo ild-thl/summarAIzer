@@ -2,7 +2,8 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, joinedload
 from starlette.status import (
     HTTP_201_CREATED,
     HTTP_204_NO_CONTENT,
@@ -13,27 +14,113 @@ from starlette.status import (
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
+from app.database.models import Event, User
 from app.database.models import Session as SessionModel
-from app.database.models import User
 from app.schemas.session import (
+    PaginationMeta,
     SessionCreate,
+    SessionDocumentationResponse,
     SessionListResponse,
+    SessionPageResponse,
     SessionResponse,
     SessionUpdate,
-    SessionWithEvent,
 )
 from app.security.auth import (
     can_access_session_content,
     get_current_user,
     get_current_user_optional,
+    is_admin,
     require_session_owner,
 )
+from app.services.documentation_builder import DocumentationBuilder
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_list_sessions_usage
 
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _resolve_session_sort(sort_by: str, sort_dir: str):
+    """Resolve supported session sort options with stable secondary ordering."""
+    sort_fields = {
+        "id": SessionModel.id,
+        "title": SessionModel.title,
+        "start_datetime": SessionModel.start_datetime,
+        "created_at": SessionModel.created_at,
+        "updated_at": SessionModel.updated_at,
+    }
+    column = sort_fields.get(sort_by)
+    if column is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid sort_by. Allowed: id,title,start_datetime,created_at,updated_at",
+        )
+
+    if sort_dir == "asc":
+        return [column.asc(), SessionModel.id.asc()]
+
+    return [column.desc(), SessionModel.id.desc()]
+
+
+@router.get("/me", response_model=SessionPageResponse)
+async def list_my_sessions(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
+    title: str = Query(None, description="Optional title contains filter (case-insensitive)"),
+    status: str = Query(
+        None,
+        description="Optional status filter - comma-separated (draft,published)",
+    ),
+    event_id: int = Query(None, description="Optional event ID filter"),
+    sort_by: str = Query(
+        "updated_at",
+        description="Sort field: id, title, start_datetime, created_at, updated_at",
+    ),
+    sort_dir: str = Query("desc", description="Sort direction: asc or desc"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List sessions manageable by current user with pagination metadata."""
+    from app.database.models import SessionStatus
+
+    if sort_dir not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_dir. Allowed: asc,desc")
+
+    status_list = _validate_and_parse_enum_list(status, SessionStatus, "status") if status else None
+
+    query = db.query(SessionModel).options(joinedload(SessionModel.location_rel))
+
+    if not is_admin(current_user):
+        query = query.outerjoin(Event, SessionModel.event_id == Event.id).filter(
+            or_(
+                SessionModel.owner_id == current_user.id,
+                and_(SessionModel.event_id.is_not(None), Event.owner_id == current_user.id),
+            )
+        )
+
+    if status_list:
+        query = query.filter(SessionModel.status.in_(status_list))
+
+    if title is not None and title.strip() != "":
+        query = query.filter(SessionModel.title.ilike(f"%{title.strip()}%"))
+
+    if event_id is not None:
+        query = query.filter(SessionModel.event_id == event_id)
+
+    total = query.with_entities(func.count(func.distinct(SessionModel.id))).scalar() or 0
+    sort_columns = _resolve_session_sort(sort_by, sort_dir)
+    items = query.order_by(*sort_columns).offset(skip).limit(limit).all()
+
+    return SessionPageResponse(
+        items=[SessionListResponse.model_validate(item) for item in items],
+        meta=PaginationMeta(
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + len(items)) < total,
+        ),
+    )
 
 
 @router.post("", response_model=SessionResponse, status_code=HTTP_201_CREATED)
@@ -93,7 +180,7 @@ async def create_session(
     return db_session
 
 
-@router.get("/{session_id}", response_model=SessionWithEvent)
+@router.get("/{session_id}", response_model=SessionResponse)
 async def get_session(
     session_id: int,
     current_user: User = Depends(get_current_user_optional),
@@ -118,7 +205,7 @@ async def get_session(
     return db_session
 
 
-@router.get("/by-uri/{uri}", response_model=SessionWithEvent)
+@router.get("/by-uri/{uri}", response_model=SessionResponse)
 async def get_session_by_uri(
     uri: str,
     current_user: User = Depends(get_current_user_optional),
@@ -289,7 +376,7 @@ async def list_sessions(
     return filtered_sessions
 
 
-@router.patch("/{session_id}", response_model=SessionWithEvent)
+@router.patch("/{session_id}", response_model=SessionResponse)
 async def update_session(
     session_id: int,
     session_in: SessionUpdate,
@@ -365,3 +452,118 @@ async def list_event_sessions(
     filtered_sessions = [s for s in sessions if can_access_session_content(s, current_user)]
 
     return filtered_sessions
+
+
+@router.get("/documentation/rebuild-all")
+async def rebuild_all_documentation(
+    _current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Rebuild documentation artifacts for all published sessions.
+
+    Iterates over every published session and regenerates its documentation
+    artifact. Useful after deploying changes to the artifact-building logic
+    or to backfill sessions that were published before this feature existed.
+
+    Requires authentication. Returns counts of rebuilt and failed sessions.
+    """
+    from app.database.models import SessionStatus
+
+    sessions = session_crud.list_with_filters(
+        db,
+        status=[SessionStatus.PUBLISHED.value],
+        skip=0,
+        limit=10000,
+    )
+
+    rebuilt = 0
+    failed = 0
+
+    for session in sessions:
+        try:
+            result = DocumentationBuilder.build_documentation(db, session.id)
+            if result is not None:
+                rebuilt += 1
+        except Exception as exc:
+            logger.error(
+                "rebuild_documentation_failed",
+                session_id=session.id,
+                error=str(exc),
+            )
+            failed += 1
+
+    logger.info("rebuild_all_documentation_complete", rebuilt=rebuilt, failed=failed)
+    return {"rebuilt": rebuilt, "failed": failed, "total": len(sessions)}
+
+
+@router.get("/{session_id}/documentation", response_model=SessionDocumentationResponse)
+async def get_session_documentation(
+    session_id: int,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Get published documentation artifact for a session.
+
+    Returns the pre-built JSON documentation containing session metadata
+    and all generated content sections (summary, transcription, diagrams, etc.).
+
+    - Published sessions: accessible to anyone
+    - Draft sessions: only accessible to owner
+    - Returns 404 if session not found or artifact not yet generated
+    """
+    session = session_crud.read(db, session_id)
+    if not session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Verify access permissions
+    if not can_access_session_content(session, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    # Return artifact if available
+    if not session.published_documentation_artifact:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Documentation artifact not yet generated",
+        )
+
+    return session.published_documentation_artifact
+
+
+@router.get("/by-uri/{uri}/documentation", response_model=SessionDocumentationResponse)
+async def get_session_documentation_by_uri(
+    uri: str,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """
+    Get published documentation artifact for a session by URI.
+
+    URI-based variant of documentation endpoint - useful for public-facing
+    session pages that use clean URLs instead of database IDs.
+
+    Returns 404 if session not found or if artifact not yet generated.
+    """
+    session = session_crud.read_by_uri(db, uri)
+    if not session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Verify access permissions
+    if not can_access_session_content(session, current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    # Return artifact if available
+    if not session.published_documentation_artifact:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Documentation artifact not yet generated",
+        )
+
+    return session.published_documentation_artifact

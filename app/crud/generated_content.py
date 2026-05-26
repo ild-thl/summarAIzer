@@ -17,6 +17,8 @@ def create_content(
     workflow_execution_id: int | None = None,
     created_by_user_id: int | None = None,
     meta_info: dict | None = None,
+    ai_generated: bool | None = None,
+    editorially_reviewed: bool = False,
 ) -> GeneratedContent:
     """Create new generated content record."""
     db_content = GeneratedContent(
@@ -24,6 +26,8 @@ def create_content(
         identifier=identifier,
         content_type=content_type,
         content=content,
+        ai_generated=(workflow_execution_id is not None) if ai_generated is None else ai_generated,
+        editorially_reviewed=editorially_reviewed,
         workflow_execution_id=workflow_execution_id,
         created_by_user_id=created_by_user_id,
         meta_info=meta_info,
@@ -43,6 +47,8 @@ def create_or_update_content(
     workflow_execution_id: int | None = None,
     created_by_user_id: int | None = None,
     meta_info: dict | None = None,
+    ai_generated: bool | None = None,
+    editorially_reviewed: bool | None = None,
 ) -> GeneratedContent:
     """
     Create new content or update existing if already exists.
@@ -70,7 +76,6 @@ def create_or_update_content(
             and_(
                 GeneratedContent.session_id == session_id,
                 GeneratedContent.identifier == identifier,
-                GeneratedContent.workflow_execution_id == workflow_execution_id,
             )
         )
         .first()
@@ -81,6 +86,12 @@ def create_or_update_content(
         existing.content = content
         existing.content_type = content_type
         existing.meta_info = meta_info
+        if ai_generated is not None:
+            existing.ai_generated = ai_generated
+        elif workflow_execution_id is not None:
+            existing.ai_generated = True
+        if editorially_reviewed is not None:
+            existing.editorially_reviewed = editorially_reviewed
         existing.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(existing)
@@ -96,6 +107,8 @@ def create_or_update_content(
             workflow_execution_id=workflow_execution_id,
             created_by_user_id=created_by_user_id,
             meta_info=meta_info,
+            ai_generated=ai_generated,
+            editorially_reviewed=editorially_reviewed or False,
         )
 
 
@@ -121,14 +134,22 @@ def get_content_by_identifier(
     )
 
 
-def get_content_list(
+def list_for_session(
     db: SQLSession, session_id: int, identifier: str | None = None
 ) -> list[GeneratedContent]:
-    """List content for session, optionally filtered by identifier."""
+    """
+    List all generated content for a session, ordered by creation time.
+
+    Optionally filtered by identifier.
+
+    Used by documentation builder to assemble published artifacts.
+    """
     query = db.query(GeneratedContent).filter(GeneratedContent.session_id == session_id)
+
     if identifier:
         query = query.filter(GeneratedContent.identifier == identifier)
-    return query.order_by(desc(GeneratedContent.created_at)).all()
+
+    return query.order_by(GeneratedContent.created_at.asc()).all()
 
 
 def list_content_identifiers(db: SQLSession, session_id: int) -> list[str]:
@@ -147,6 +168,7 @@ def update_content(
     content_id: int,
     content: str,
     meta_info: dict | None = None,
+    editorially_reviewed: bool | None = None,
 ) -> GeneratedContent | None:
     """Update content (for manual edits)."""
     db_content = get_content_by_id(db, content_id)
@@ -154,6 +176,23 @@ def update_content(
         db_content.content = content
         if meta_info is not None:
             db_content.meta_info = meta_info
+        if editorially_reviewed is not None:
+            db_content.editorially_reviewed = editorially_reviewed
+        db_content.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_content)
+    return db_content
+
+
+def update_content_editorial_review(
+    db: SQLSession,
+    content_id: int,
+    editorially_reviewed: bool,
+) -> GeneratedContent | None:
+    """Update editorial review flag for a content record."""
+    db_content = get_content_by_id(db, content_id)
+    if db_content:
+        db_content.editorially_reviewed = editorially_reviewed
         db_content.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(db_content)

@@ -61,6 +61,39 @@ class LLMStep(WorkflowStep):
         """
         pass
 
+    @staticmethod
+    def _extract_markdown_from_code_fences(content: str) -> str:
+        """
+        Extract markdown content from code fence wrappers.
+
+        Some models wrap markdown output in ```markdown ... ``` code blocks.
+        This method detects and removes the wrapper to preserve pure markdown.
+
+        Args:
+            content: Raw content that may contain code fences
+
+        Returns:
+            Content with code fence wrappers removed if present
+        """
+        if not content:
+            return content
+
+        stripped = content.strip()
+        # Check for markdown code fence pattern: ```markdown ... ``` or similar
+        if stripped.startswith("```") and stripped.endswith("```"):
+            # Split by triple backticks
+            parts = stripped.split("```")
+            if len(parts) >= 3:
+                # Extract the middle content (between first ``` and last ```)
+                # First part might be empty or contain language specifier
+                inner_content = "```".join(parts[1:-1]).strip()
+                # Remove language specifier line if present (e.g., "markdown")
+                lines = inner_content.split("\n", 1)
+                if len(lines) == 2:
+                    return lines[1]
+                return inner_content
+        return content
+
     async def _invoke_and_process(
         self, session: SessionModel, context: dict[str, Any]
     ) -> dict[str, Any]:

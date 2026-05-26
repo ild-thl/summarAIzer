@@ -1,4 +1,4 @@
-"""TalkWorkflow - Main workflow for talk/session content generation using LangGraph."""
+"""TalkWorkflow - Format-aware documentation workflow using LangGraph."""
 
 from typing import Annotated
 
@@ -7,8 +7,11 @@ from langgraph.graph import END, START, StateGraph
 
 from app.crud import generated_content as content_crud
 from app.database.connection import SessionLocal
+from app.database.models import Session as SessionModel
+from app.database.models import SessionFormat
 from app.workflows.flows.base_workflow import BaseWorkflow
 from app.workflows.steps.node_factory import create_step_node
+from app.workflows.steps.sondercluster_step import SONDERCLUSTER_TAG_MAP
 
 logger = structlog.get_logger()
 
@@ -19,34 +22,44 @@ def merge_dicts(left: dict, right: dict) -> dict:
 
     When multiple steps execute in parallel, LangGraph calls this reducer
     to merge their individual updates into the combined state.
-
-    Args:
-        left: Existing state
-        right: Update from a step
-
-    Returns:
-        Merged state with right's values updated into left
     """
     return {**left, **right}
 
 
+# Format groups used for routing decisions
+_DISCUSSION_FORMATS = {SessionFormat.DISCUSSION}
+_WORKSHOP_FORMATS = {SessionFormat.WORKSHOP, SessionFormat.TRAINING, SessionFormat.LAB}
+_LIGHTNING_FORMAT = SessionFormat.LIGHTNING_TALK
+_INPUT_FORMAT = SessionFormat.INPUT
+
+
 class TalkWorkflow(BaseWorkflow):
     """
-    Main workflow for generating session content using LangGraph.
+    Format-aware documentation workflow for conference/education sessions.
 
-    Orchestration:
-    1. Key Takeaways (independent) - extracts actionable points from transcript
-    2. Tags (independent) - categorizes session
-    3. Summary (independent, but waits for key_takeaways & tags in workflow) - generates overview
+    All paths:
+        transcription → (key_takeaways OR positions) → summary
+        → [format-specific parallel end steps] → END
 
-    Execution flow:
-    - Key Takeaways and Tags start in parallel (both independent)
-    - Summary waits for both to complete, so it can optionally use their results in context
-    - Summary can run standalone without key_takeaways/tags having completed first
-    - All steps handle their own content generation and database persistence
+    End steps by format (all run in parallel after summary):
 
-    Steps are created using the node factory, which provides consistent logging
-    and error handling for all step nodes.
+    Input (long talk):
+        → quotes + mermaid + tags + image
+
+    Lightning Talk (short):
+        → tags + image
+
+    Workshop / Training / Lab:
+        → tags + image
+
+    Discussion / Panel:
+        → quotes + tags + image
+
+    Other / unknown:
+        → tags + image
+
+    The transcription step is skipped when a transcription already exists in the database.
+    Session format is loaded from the database and stored in state to drive routing.
     """
 
     @property
@@ -61,99 +74,185 @@ class TalkWorkflow(BaseWorkflow):
 
         db = SessionLocal()
         try:
-            existing_transcription = content_crud.get_content_by_identifier(
-                db, session_id, "transcription"
-            )
-            if not existing_transcription:
+            existing = content_crud.get_content_by_identifier(db, session_id, "transcription")
+            if not existing:
                 return None
-            return existing_transcription.content
+            return existing.content
         finally:
             db.close()
+
+    def _get_session_format(self, session_id: int | None) -> SessionFormat | None:
+        """Return the session format from the database."""
+        if session_id is None:
+            return None
+
+        db = SessionLocal()
+        try:
+            session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+            return session.session_format if session else None
+        finally:
+            db.close()
+
+    def _get_session_tags(self, session_id: int | None) -> list[str]:
+        """Return the session tags from the database."""
+        if session_id is None:
+            return []
+
+        db = SessionLocal()
+        try:
+            session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+            return list(session.tags or []) if session else []
+        finally:
+            db.close()
+
+    async def _load_existing_transcription_node(self, state: dict) -> dict:
+        """Hydrate persisted transcription into graph state."""
+        if state.get("transcription"):
+            return {"transcription": state["transcription"]}
+
+        session_id = state.get("session_id")
+        transcription = self._get_existing_transcription(session_id)
+        if not transcription:
+            raise ValueError(
+                f"Expected existing transcription for session {session_id}, but none found"
+            )
+
+        logger.info(
+            "talk_workflow_loaded_existing_transcription",
+            session_id=session_id,
+            char_count=len(transcription),
+        )
+        return {"transcription": transcription}
+
+    async def _init_session_context_node(self, state: dict) -> dict:
+        """Load session format and tags into state for format-aware routing."""
+        session_id = state.get("session_id")
+        fmt = self._get_session_format(session_id)
+        tags = self._get_session_tags(session_id)
+        logger.info(
+            "talk_workflow_session_context_loaded",
+            session_id=session_id,
+            session_format=fmt.value if fmt else None,
+            session_tags=tags,
+        )
+        return {
+            "session_format": fmt.value if fmt else None,
+            "session_tags": tags,
+        }
+
+    def _parse_session_format(self, fmt_value: str | None) -> SessionFormat | None:
+        """Parse session format value from state into enum if valid."""
+        try:
+            return SessionFormat(fmt_value) if fmt_value else None
+        except ValueError:
+            return None
+
+    def _route_from_start(self, state: dict) -> str:
+        """Skip transcription step when a transcription already exists."""
+        session_id = state.get("session_id")
+        if state.get("transcription") or self._get_existing_transcription(session_id):
+            logger.info("talk_workflow_skipping_transcription", session_id=session_id)
+            return "_load_existing_transcription"
+
+        logger.info("talk_workflow_routing_to_transcription", session_id=session_id)
+        return "transcription"
+
+    def _route_after_init(self, state: dict) -> str:
+        """Route to the content-extraction step for this format."""
+        fmt_value = state.get("session_format")
+        fmt = self._parse_session_format(fmt_value)
+
+        if fmt in _DISCUSSION_FORMATS:
+            logger.info("talk_workflow_discussion_path", session_format=fmt_value)
+            return "positions"
+
+        logger.info("talk_workflow_talk_path", session_format=fmt_value)
+        return "key_takeaways"
+
+    def _route_after_summary(self, state: dict) -> list[str]:
+        """Fan out to all parallel end steps appropriate for this format."""
+        fmt_value = state.get("session_format")
+        fmt = self._parse_session_format(fmt_value)
+
+        if fmt in _DISCUSSION_FORMATS:
+            logger.info("talk_workflow_post_summary_discussion", session_format=fmt_value)
+            steps = ["quotes", "tags", "image"]
+        elif fmt == _INPUT_FORMAT:
+            logger.info("talk_workflow_post_summary_input_talk", session_format=fmt_value)
+            steps = ["quotes", "mermaid", "tags", "image"]
+        elif fmt in _WORKSHOP_FORMATS:
+            logger.info("talk_workflow_post_summary_workshop", session_format=fmt_value)
+            steps = ["tags", "image"]
+        else:
+            # LIGHTNING_TALK, OTHER, None
+            logger.info("talk_workflow_post_summary_end", session_format=fmt_value)
+            steps = ["tags", "image"]
+
+        # Conditionally add Sondercluster step when session carries a cluster tag.
+        session_tags = state.get("session_tags") or []
+        if any(t.lower().strip() in SONDERCLUSTER_TAG_MAP for t in session_tags):
+            logger.info(
+                "talk_workflow_sondercluster_triggered",
+                session_tags=session_tags,
+            )
+            steps.append("sondercluster")
+
+        return steps
 
     def build_graph(self):
         """
         Build the LangGraph StateGraph for this workflow.
 
-        Defines nodes (created from steps via node factory) and edges for orchestration.
-        Includes conditional routing to skip transcription step if transcription already exists.
-
-        Execution flow:
-        - If transcription exists: START → _load_existing_transcription → key_takeaways, tags → summary
-        - If transcription doesn't exist: START → transcription → key_takeaways, tags → summary
-
-        This preserves the ability to trigger transcription step directly, which always runs.
-        Only within talk_workflow do we conditionally skip unnecessary transcription.
+        Execution pattern:
+        - Phase 1: Transcription (or load from DB)
+        - Phase 2: Content extraction (key_takeaways or positions, format-dependent)
+        - Phase 3: Summary
+        - Phase 4: All remaining steps run in parallel (quotes, mermaid,
+                   tags, image - selection depends on format)
 
         Returns:
             Compiled LangGraph StateGraph ready to invoke
         """
         logger.info("building_talk_workflow_graph")
 
-        # Create the state graph with Annotated reducer for parallel step merging
-        # The merge_dicts reducer allows multiple parallel steps to update state simultaneously
         builder = StateGraph(Annotated[dict, merge_dicts])
 
-        # Create nodes from steps using node factory
-        # This provides consistent logging and error handling
+        # --- Nodes ---
         builder.add_node("transcription", create_step_node("transcription"))
-        builder.add_node("summary", create_step_node("summary"))
         builder.add_node("key_takeaways", create_step_node("key_takeaways"))
+        builder.add_node("positions", create_step_node("positions"))
+        builder.add_node("summary", create_step_node("summary"))
+        builder.add_node("quotes", create_step_node("quotes"))
+        builder.add_node("mermaid", create_step_node("mermaid"))
         builder.add_node("tags", create_step_node("tags"))
+        builder.add_node("image", create_step_node("image"))
+        builder.add_node("sondercluster", create_step_node("sondercluster"))
 
-        # Hydrate persisted transcription into graph state when we skip the step.
-        async def load_existing_transcription(state: dict) -> dict:
-            """Load persisted transcription into state for downstream steps."""
-            if state.get("transcription"):
-                return {"transcription": state["transcription"]}
+        builder.add_node("_load_existing_transcription", self._load_existing_transcription_node)
+        builder.add_node("_init_session_context", self._init_session_context_node)
 
-            session_id = state.get("session_id")
-            transcription = self._get_existing_transcription(session_id)
-            if not transcription:
-                raise ValueError(
-                    f"Expected existing transcription for session {session_id}, but none was found"
-                )
+        # --- Edges ---
 
-            logger.info(
-                "talk_workflow_loaded_existing_transcription",
-                session_id=session_id,
-                char_count=len(transcription),
-            )
-            return {"transcription": transcription}
+        # Phase 1: transcription (or load from DB) → format init
+        builder.add_conditional_edges(START, self._route_from_start)
+        builder.add_edge("transcription", "_init_session_context")
+        builder.add_edge("_load_existing_transcription", "_init_session_context")
 
-        builder.add_node("_load_existing_transcription", load_existing_transcription)
-
-        # Conditional routing from START based on whether transcription already exists.
-        def route_from_start(state: dict) -> str:
-            """Route START based on transcription existence in database."""
-            session_id = state.get("session_id")
-            if state.get("transcription") or self._get_existing_transcription(session_id):
-                logger.info(
-                    "talk_workflow_skipping_transcription_already_exists",
-                    session_id=session_id,
-                    has_transcription=True,
-                )
-                return "_load_existing_transcription"
-
-            logger.info("talk_workflow_routing_to_transcription", session_id=session_id)
-            return "transcription"
-
-        builder.add_conditional_edges(START, route_from_start)
-
-        # Both transcription and the hydrated skip path route to parallel key_takeaways and tags.
-        builder.add_edge("transcription", "key_takeaways")
-        builder.add_edge("transcription", "tags")
-        builder.add_edge("_load_existing_transcription", "key_takeaways")
-        builder.add_edge("_load_existing_transcription", "tags")
-
-        # Summary waits for both key_takeaways and tags to complete,
-        # so it can optionally use their results in context
+        # Phase 2: single content-extraction step (format-dependent)
+        builder.add_conditional_edges("_init_session_context", self._route_after_init)
         builder.add_edge("key_takeaways", "summary")
-        builder.add_edge("tags", "summary")
+        builder.add_edge("positions", "summary")
 
-        # Summary completes the workflow
-        builder.add_edge("summary", END)
+        # Phase 3: summary → parallel end steps
+        builder.add_conditional_edges("summary", self._route_after_summary)
 
-        # Compile the graph
+        # Phase 4: all end steps terminate the workflow
+        builder.add_edge("quotes", END)
+        builder.add_edge("mermaid", END)
+        builder.add_edge("tags", END)
+        builder.add_edge("image", END)
+        builder.add_edge("sondercluster", END)
+
         graph = builder.compile()
 
         logger.info(

@@ -118,6 +118,52 @@ This shares postgres/redis/chroma with other services.
 
 All mutation endpoints (POST, PATCH, DELETE) require API key authentication via Bearer token:
 
+SummarAIzer supports both authentication methods on the same Bearer header:
+
+1. Keycloak/OIDC JWT (human users)
+2. API key (machine and delegated user credentials)
+
+The backend auto-detects JWT-like tokens and validates them first; API key auth is used for opaque keys.
+
+### Keycloak JWT Configuration
+
+Set these environment variables in SummarAIzer:
+
+```bash
+JWT_VERIFY_SIGNATURE=true
+JWT_ALGORITHMS=RS256
+JWT_ISSUER=https://<keycloak-host>/realms/<realm>
+JWT_JWKS_URL=https://<keycloak-host>/realms/<realm>/protocol/openid-connect/certs
+JWT_AUDIENCE=<optional-client-audience>
+JWT_CLIENT_ID=<client-id-for-resource-roles>
+
+# Admin privilege mapping (choose one or both)
+JWT_ADMIN_ROLE=summaraizer_admin
+JWT_ADMIN_GROUP=/admin
+```
+
+If `JWT_VERIFY_SIGNATURE=true` and `JWT_JWKS_URL` is missing, JWT validation will fail with 401.
+
+### Admin Privilege Mapping
+
+Admin authorization is implemented in `app/security/auth.py` via `is_admin()` and maps as follows:
+
+1. If JWT roles contain `JWT_ADMIN_ROLE`, user is admin.
+2. If JWT groups contain `JWT_ADMIN_GROUP`, backend injects `JWT_ADMIN_ROLE` for that request.
+
+This means you can map existing Keycloak setup without creating a new role immediately:
+
+1. Reuse an existing role by setting `JWT_ADMIN_ROLE` to that role name, or
+2. Reuse an existing group path by setting `JWT_ADMIN_GROUP` to that group.
+
+### API Key Delegation Rules
+
+API keys always belong to a user and can never exceed that user's privileges:
+
+1. By default, key inherits full owner roles.
+2. Optional `allowed_roles` on key restricts to a subset.
+3. Effective roles are computed as `owner_roles ∩ allowed_roles`.
+
 ## 📈 Matomo Usage Tracking
 
 Optional lightweight endpoint usage tracking can be enabled with Matomo.
