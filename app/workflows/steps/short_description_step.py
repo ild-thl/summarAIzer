@@ -34,7 +34,9 @@ class ShortDescriptionStep(LLMStep):
     temperature: float = 0.3  # Low for factual compression
     max_tokens: int = 300  # Give LLM room to stay within margin
     top_p: float = 0.9  # Moderate for some variability in phrasing
-    model_name: str = "gemma-4-31b-it"  # Model with good context handling for compression
+    model_name: str = (
+        "mistral-large-3-675b-instruct-2512"  # Model with good context handling for compression
+    )
 
     @property
     def identifier(self) -> str:
@@ -248,16 +250,14 @@ Anforderungen:
 
 Gib AUSSCHLIESSLICH die optimierte Beschreibung zurück, nichts anderes."""
             ),
-            HumanMessage(
-                content=f"""Veranstaltungstitel: {session.title}
+            HumanMessage(content=f"""Veranstaltungstitel: {session.title}
 Referent:innen: {speakers}
 Tags: {tags}
 
 Originalbeschreibung:
 {source}
 
-Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Zeichen):"""
-            ),
+Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Zeichen):"""),
         ]
 
     def _save_to_db(

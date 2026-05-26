@@ -42,7 +42,7 @@ class KeyTakeawaysStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Key takeaways need nuanced understanding - use well-rounded model."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.5,
             max_tokens=1500,
             top_p=0.92,
@@ -75,16 +75,14 @@ Beispiel:
  - Kernpunkt 2
  - ..."""
             ),
-            HumanMessage(
-                content=f"""Veranstaltungstitel: {session.title}
+            HumanMessage(content=f"""Veranstaltungstitel: {session.title}
 Format: {format_label}
 Referent:innen: {", ".join(session.speakers) if session.speakers else "Unbekannt"}{description_block}
 
 Transkript:
 {context.get('transcription', '')}
 
-Extrahiere nun {count} Kernpunkte dieser Veranstaltung."""
-            ),
+Extrahiere nun {count} Kernpunkte dieser Veranstaltung."""),
         ]
 
     def process_response(self, response: Any) -> dict[str, Any]:

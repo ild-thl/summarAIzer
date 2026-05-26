@@ -103,7 +103,7 @@ class SonderclusterStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.5,
             max_tokens=400,
             top_p=0.9,
@@ -136,8 +136,7 @@ Für jeden angefragten Sondercluster formulierst du 1-2 prägnante Sätze, die d
 
 Gib für jeden Cluster einen kurzen Absatz aus, eingeleitet durch das Label mit Emoji (fett, z.B. **🚨 Fringe**), gefolgt von deinen 1-2 Sätzen. Keine weiteren Einleitungen oder Erklärungen."""
             ),
-            HumanMessage(
-                content=f"""Session: {session.title}
+            HumanMessage(content=f"""Session: {session.title}
 Referent:innen: {", ".join(session.speakers) if session.speakers else "Unbekannt"}
 
 Zusammenfassung:
@@ -145,8 +144,7 @@ Zusammenfassung:
 
 Bitte formuliere nun die Cluster-Highlights:
 
-{cluster_instructions}"""
-            ),
+{cluster_instructions}"""),
         ]
 
     def process_response(self, response: Any) -> dict[str, Any]:

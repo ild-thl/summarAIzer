@@ -223,7 +223,7 @@ class SummaryStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Summary needs good context comprehension and longer output."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model="mistral-large-3-675b-instruct-2512",
             temperature=0.7,
             max_tokens=5000,
             top_p=0.95,
