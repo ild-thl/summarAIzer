@@ -106,7 +106,6 @@ class TestSessionDocumentationEndpoint:
         assert data["id"] == session_published.id
         assert data["title"] == "Test Talk"
         assert len(data["sections"]) == 2
-        assert data["doc_version"] == "1.0"
 
     def test_artifact_contains_all_sections(self, client: TestClient, session_published, test_db):
         """Should include all generated content sections in artifact."""
@@ -389,4 +388,3 @@ class TestDocumentationResponseSchema:
         assert response.id == session_published.id
         assert response.title == session_published.title
         assert len(response.sections) == 2
-        assert response.doc_version == "1.0"

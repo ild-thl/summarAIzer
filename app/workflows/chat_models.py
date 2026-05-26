@@ -4,16 +4,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from langchain.chat_models import init_chat_model
-from langchain_core.rate_limiters import InMemoryRateLimiter
 
 from app.config.settings import get_settings
-
-# Default limiter shared across model instances: 1 request per second, no burst.
-DEFAULT_RATE_LIMITER = InMemoryRateLimiter(
-    requests_per_second=1,
-    check_every_n_seconds=0.1,
-    max_bucket_size=10,
-)
+from app.services.provider_request_control import DEFAULT_RATE_LIMITER
 
 
 @dataclass
