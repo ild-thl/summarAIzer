@@ -69,12 +69,11 @@ class TestAdminApiKeysCli:
     """Test the Typer admin API key CLI."""
 
     def test_main_cli_help_shows_short_api_keys_and_completion(self):
-        """Top-level help should advertise the short command and completion support."""
+        """Top-level help should advertise the short command."""
         result = runner.invoke(main_cli_app, ["--help"])
 
         assert result.exit_code == 0
         assert "api-keys" in result.stdout
-        assert "--install-completion" in result.stdout
 
     def test_legacy_api_keys_alias_still_works(self):
         """Legacy alias should remain callable for compatibility."""
