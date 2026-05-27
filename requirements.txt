@@ -1,5 +1,6 @@
 # Webframework
-fastapi[standard-no-fastapi-cloud-cli]
+fastapi[standard]
+typer
 uvicorn[standard]
 
 # Database & ORM
