@@ -123,8 +123,8 @@ async def trigger_workflow(
     Returns immediately with execution ID. Use GET /{session_id}/workflow/{execution_id} to check status.
 
     **workflow_type** options (path parameter):
-    - `talk_workflow` - Generate all content: summary, tags, takeaways, diagram, image
-    - Individual steps: `summary`, `tags`, `key_takeaways`, `mermaid`, `image`
+    - `talk_workflow` - Generate all content: summary, tags, takeaways, Q&A, glossary, diagram, image
+    - Individual steps: `summary`, `tags`, `key_takeaways`, `qna`, `glossary`, `mermaid`, `image`
     """
     try:
         # Lazy import to avoid circular imports

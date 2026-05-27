@@ -224,7 +224,7 @@ class SummaryStep(LLMStep):
         """Summary needs good context comprehension and longer output."""
         return ChatModelConfig(
             model="mistral-large-3-675b-instruct-2512",
-            temperature=0.7,
+            temperature=0.3,
             max_tokens=5000,
             top_p=0.95,
         )

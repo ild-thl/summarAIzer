@@ -1,11 +1,13 @@
 """Steps package - individual workflow step implementations."""
 
 from app.workflows.steps.base_step import WorkflowStep
+from app.workflows.steps.glossary_step import GlossaryStep
 from app.workflows.steps.image_step import ImageStep
 from app.workflows.steps.key_takeaways_step import KeyTakeawaysStep
 from app.workflows.steps.llm_step import LLMStep
 from app.workflows.steps.mermaid_step import MermaidStep
 from app.workflows.steps.positions_step import PositionsStep
+from app.workflows.steps.qna_step import QnAStep
 from app.workflows.steps.quotes_step import QuotesStep
 from app.workflows.steps.short_description_step import ShortDescriptionStep
 from app.workflows.steps.sondercluster_step import SonderclusterStep
@@ -22,13 +24,15 @@ __all__ = [
     "LLMStep",
     "SummaryStep",
     "KeyTakeawaysStep",
+    "GlossaryStep",
+    "ImageStep",
     "PositionsStep",
+    "QnAStep",
     "QuotesStep",
     "TagsStep",
     "ShortDescriptionStep",
     "SonderclusterStep",
     "MermaidStep",
-    "ImageStep",
     "TranscriptionStep",
     "WordcloudStep",
 ]

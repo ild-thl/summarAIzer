@@ -44,19 +44,19 @@ class TalkWorkflow(BaseWorkflow):
     End steps by format (all run in parallel after summary):
 
     Input (long talk):
-        → quotes + mermaid + tags + image
+        → quotes + mermaid + qna + glossary + tags + image
 
     Lightning Talk (short):
-        → tags + image
+        → glossary + tags + image
 
     Workshop / Training / Lab:
-        → tags + image
+        → glossary + tags + image
 
     Discussion / Panel:
-        → quotes + tags + image
+        → quotes + qna + glossary + tags + image
 
     Other / unknown:
-        → tags + image
+        → glossary + tags + image
 
     The transcription step is skipped when a transcription already exists in the database.
     Session format is loaded from the database and stored in state to drive routing.
@@ -176,17 +176,17 @@ class TalkWorkflow(BaseWorkflow):
 
         if fmt in _DISCUSSION_FORMATS:
             logger.info("talk_workflow_post_summary_discussion", session_format=fmt_value)
-            steps = ["quotes", "tags", "image", "wordcloud"]
+            steps = ["quotes", "qna", "glossary", "tags", "image", "wordcloud"]
         elif fmt == _INPUT_FORMAT:
             logger.info("talk_workflow_post_summary_input_talk", session_format=fmt_value)
-            steps = ["quotes", "mermaid", "tags", "image", "wordcloud"]
+            steps = ["quotes", "mermaid", "qna", "glossary", "tags", "image", "wordcloud"]
         elif fmt in _WORKSHOP_FORMATS:
             logger.info("talk_workflow_post_summary_workshop", session_format=fmt_value)
-            steps = ["tags", "image", "wordcloud"]
+            steps = ["glossary", "tags", "image", "wordcloud"]
         else:
             # LIGHTNING_TALK, OTHER, None
             logger.info("talk_workflow_post_summary_end", session_format=fmt_value)
-            steps = ["tags", "image", "wordcloud"]
+            steps = ["glossary", "tags", "image", "wordcloud"]
 
         # Conditionally add Sondercluster step when session carries a cluster tag.
         session_tags = state.get("session_tags") or []
@@ -223,6 +223,8 @@ class TalkWorkflow(BaseWorkflow):
         builder.add_node("positions", create_step_node("positions"))
         builder.add_node("summary", create_step_node("summary"))
         builder.add_node("quotes", create_step_node("quotes"))
+        builder.add_node("qna", create_step_node("qna"))
+        builder.add_node("glossary", create_step_node("glossary"))
         builder.add_node("mermaid", create_step_node("mermaid"))
         builder.add_node("tags", create_step_node("tags"))
         builder.add_node("image", create_step_node("image"))
@@ -248,6 +250,8 @@ class TalkWorkflow(BaseWorkflow):
 
         # Phase 4: all end steps terminate the workflow
         builder.add_edge("quotes", END)
+        builder.add_edge("qna", END)
+        builder.add_edge("glossary", END)
         builder.add_edge("mermaid", END)
         builder.add_edge("tags", END)
         builder.add_edge("image", END)

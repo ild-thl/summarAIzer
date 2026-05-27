@@ -175,6 +175,17 @@ class WorkflowStep(ABC):
                 content_length=len(result.get("content", "")),
             )
 
+            should_persist = result.get("persist", True)
+            if not should_persist:
+                logger.info(
+                    "step_persistence_skipped",
+                    step_id=self.identifier,
+                    session_id=session_id,
+                    execution_id=execution_id,
+                    reason=result.get("meta_info", {}).get("reason", "step_requested_skip"),
+                )
+                return {}
+
             # 3. Persist to database
             logger.info(
                 "step_persistence_starting",
