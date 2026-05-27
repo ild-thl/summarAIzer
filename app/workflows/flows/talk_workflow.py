@@ -176,17 +176,17 @@ class TalkWorkflow(BaseWorkflow):
 
         if fmt in _DISCUSSION_FORMATS:
             logger.info("talk_workflow_post_summary_discussion", session_format=fmt_value)
-            steps = ["quotes", "tags", "image"]
+            steps = ["quotes", "tags", "image", "wordcloud"]
         elif fmt == _INPUT_FORMAT:
             logger.info("talk_workflow_post_summary_input_talk", session_format=fmt_value)
-            steps = ["quotes", "mermaid", "tags", "image"]
+            steps = ["quotes", "mermaid", "tags", "image", "wordcloud"]
         elif fmt in _WORKSHOP_FORMATS:
             logger.info("talk_workflow_post_summary_workshop", session_format=fmt_value)
-            steps = ["tags", "image"]
+            steps = ["tags", "image", "wordcloud"]
         else:
             # LIGHTNING_TALK, OTHER, None
             logger.info("talk_workflow_post_summary_end", session_format=fmt_value)
-            steps = ["tags", "image"]
+            steps = ["tags", "image", "wordcloud"]
 
         # Conditionally add Sondercluster step when session carries a cluster tag.
         session_tags = state.get("session_tags") or []

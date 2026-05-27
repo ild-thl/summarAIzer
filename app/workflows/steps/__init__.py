@@ -12,6 +12,7 @@ from app.workflows.steps.sondercluster_step import SonderclusterStep
 from app.workflows.steps.summary_step import SummaryStep
 from app.workflows.steps.tags_step import TagsStep
 from app.workflows.steps.transcription_step import TranscriptionStep
+from app.workflows.steps.wordcloud_step import WordcloudStep
 
 # Auto-register steps when imported
 # (Registration happens in each step module)
@@ -29,4 +30,5 @@ __all__ = [
     "MermaidStep",
     "ImageStep",
     "TranscriptionStep",
+    "WordcloudStep",
 ]
