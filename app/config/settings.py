@@ -77,7 +77,7 @@ class Settings(BaseSettings):
 
     # LLM Model for structured output tasks (e.g., query refinement, slot filling)
     llm_model_structured_output: str = os.getenv(
-        "LLM_MODEL_STRUCTURED_OUTPUT", "mistral-large-3-675b-instruct-2512"
+        "LLM_MODEL_STRUCTURED_OUTPUT", "qwen3-30b-a3b-instruct-2507"
     )
 
     # Embedding Configuration for semantic search

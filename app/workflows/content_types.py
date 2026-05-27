@@ -1,7 +1,7 @@
 """Content identifiers and types for generated content.
 
-    This is currently more meant as a reference and documentation of the different content types and identifiers used in the system.
-    It can be expanded in the future to include validation logic, helper functions, or even database models if needed.
+This is currently more meant as a reference and documentation of the different content types and identifiers used in the system.
+It can be expanded in the future to include validation logic, helper functions, or even database models if needed.
 """
 
 # Content identifiers - semantic meaning of content
@@ -10,6 +10,8 @@ CONTENT_IDENTIFIERS = {
     "summary": "Generated session summary",
     "tags": "Generated topic tags/keywords",
     "key_takeaways": "Generated key takeaways from session",
+    "qna": "Extracted audience questions and short answers",
+    "glossary": "Specialized terms with one-line definitions",
     "image_prompt": "AI image generation prompt (future)",
     "mermaid_diagram": "Mermaid visualization (future)",
     "competencies": "Extracted learning outcomes/competencies (future)",
@@ -41,5 +43,5 @@ TRIGGER_TYPES = {
 
 # Default content identifiers for different workflow types
 WORKFLOW_DEFAULT_OUTPUTS = {
-    "talk_workflow": ["summary", "key_takeaways", "tags"],
+    "talk_workflow": ["summary", "key_takeaways", "qna", "glossary", "tags"],
 }

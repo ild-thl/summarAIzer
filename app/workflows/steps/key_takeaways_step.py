@@ -43,7 +43,7 @@ class KeyTakeawaysStep(LLMStep):
         """Key takeaways need nuanced understanding - use well-rounded model."""
         return ChatModelConfig(
             model="mistral-large-3-675b-instruct-2512",
-            temperature=0.5,
+            temperature=0.1,
             max_tokens=1500,
             top_p=0.92,
         )

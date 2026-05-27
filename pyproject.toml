@@ -8,6 +8,16 @@ version = "2.0.0"
 description = "SummarAIzer - AI-powered text summarization API"
 requires-python = ">=3.11"
 
+[project.scripts]
+summaraizer = "app.cli:run"
+summaraizer-api-keys = "app.cli.api_keys:run"
+summaraizer-admin = "app.cli.api_keys:run"
+summaraizer-seed-dev-data = "app.cli.seed_dev_data:run"
+summaraizer-workflow-tasks = "app.cli.workflow_tasks:run"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 # Tool configurations
 [tool.black]
 line-length = 100

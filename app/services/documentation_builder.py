@@ -187,6 +187,8 @@ def _get_section_title(identifier: str) -> str:
     title_map = {
         "summary": "Summary",
         "key_takeaways": "Key Takeaways",
+        "qna": "Audience Q&A",
+        "glossary": "Concept Glossary",
         "diagram": "Diagram",
         "transcription": "Transcription",
         "tags": "Tags",

@@ -47,10 +47,21 @@ This starts:
 docker exec summaraizer alembic upgrade head
 
 # Seed development data (creates default API user with token)
-docker exec summaraizer python seed_dev_data.py
+docker exec summaraizer python -m app.cli seed-dev-data
 ```
 
 This creates a development API user with token for testing endpoints locally.
+
+### CLI Tooling
+
+Operational CLI usage now lives in `docs/CLI.md`.
+
+Short form commands:
+
+```bash
+docker exec summaraizer python -m app.cli api-keys --help
+docker exec summaraizer python -m app.cli workflow-tasks list --older-than-minutes 30
+```
 
 **3. Verify everything is running:**
 ```bash
@@ -94,7 +105,7 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with localhost URLs for local databases
 alembic upgrade head
-python seed_dev_data.py
+python -m app.cli seed-dev-data
 
 # Terminal 1: API
 uvicorn main:app --reload
@@ -163,6 +174,7 @@ API keys always belong to a user and can never exceed that user's privileges:
 1. By default, key inherits full owner roles.
 2. Optional `allowed_roles` on key restricts to a subset.
 3. Effective roles are computed as `owner_roles ∩ allowed_roles`.
+4. API key values are always generated server-side during key creation.
 
 ## 📈 Matomo Usage Tracking
 
