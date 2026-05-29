@@ -8,6 +8,7 @@ import structlog
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.database.models import Session as SessionModel
 from app.database.models import SessionPopularity
 
 logger = structlog.get_logger()
@@ -30,33 +31,47 @@ class CRUDSessionPopularity:
         """
         now = datetime.utcnow()
 
-        for session_id, field in (
-            *((sid, "acceptance_count") for sid in accepted_ids),
-            *((sid, "rejection_count") for sid in rejected_ids),
-        ):
-            row = (
-                db.query(SessionPopularity)
-                .filter(
-                    SessionPopularity.session_id == session_id,
-                    SessionPopularity.event_id == event_id,
-                )
-                .first()
-            )
-            if row is None:
-                row = SessionPopularity(
-                    session_id=session_id,
-                    event_id=event_id,
-                    acceptance_count=0,
-                    rejection_count=0,
-                    updated_at=now,
-                )
-                db.add(row)
-                db.flush()  # make row visible within this transaction
-
-            setattr(row, field, getattr(row, field) + 1)
-            row.updated_at = now
-
         try:
+            requested_ids = list(dict.fromkeys([*accepted_ids, *rejected_ids]))
+            if not requested_ids:
+                return
+
+            existing_sessions_query = db.query(SessionModel.id).filter(
+                SessionModel.id.in_(requested_ids)
+            )
+            if event_id is not None:
+                existing_sessions_query = existing_sessions_query.filter(
+                    SessionModel.event_id == event_id
+                )
+
+            existing_ids = {row[0] for row in existing_sessions_query.all()}
+
+            for session_id, field in (
+                *((sid, "acceptance_count") for sid in accepted_ids if sid in existing_ids),
+                *((sid, "rejection_count") for sid in rejected_ids if sid in existing_ids),
+            ):
+                row = (
+                    db.query(SessionPopularity)
+                    .filter(
+                        SessionPopularity.session_id == session_id,
+                        SessionPopularity.event_id == event_id,
+                    )
+                    .first()
+                )
+                if row is None:
+                    row = SessionPopularity(
+                        session_id=session_id,
+                        event_id=event_id,
+                        acceptance_count=0,
+                        rejection_count=0,
+                        updated_at=now,
+                    )
+                    db.add(row)
+                    db.flush()  # make row visible within this transaction
+
+                setattr(row, field, getattr(row, field) + 1)
+                row.updated_at = now
+
             db.commit()
         except Exception as e:
             db.rollback()

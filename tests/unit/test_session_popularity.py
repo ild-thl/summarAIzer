@@ -261,6 +261,77 @@ class TestRecordInteractions:
         )
         broken_db.rollback.assert_called_once()
 
+    def test_missing_session_id_is_ignored(self, db, sample_event, sample_session):
+        """Deleted/non-existent session IDs should be ignored for backward compatibility."""
+        missing_id = sample_session.id + 999999
+
+        session_popularity_crud.record_interactions(
+            db=db,
+            accepted_ids=[sample_session.id, missing_id],
+            rejected_ids=[],
+            event_id=sample_event.id,
+        )
+
+        row_existing = (
+            db.query(SessionPopularity)
+            .filter_by(session_id=sample_session.id, event_id=sample_event.id)
+            .first()
+        )
+        row_missing = (
+            db.query(SessionPopularity)
+            .filter_by(session_id=missing_id, event_id=sample_event.id)
+            .first()
+        )
+
+        assert row_existing is not None
+        assert row_existing.acceptance_count == 1
+        assert row_missing is None
+
+    def test_wrong_event_session_id_is_ignored(self, db, sample_event):
+        """Session IDs from a different event should be ignored when event_id is scoped."""
+        from datetime import datetime, timedelta
+
+        from app.database.models import Event, SessionFormat, SessionStatus
+        from app.database.models import Session as SessionModel
+
+        other_event = Event(
+            title="Other Event",
+            uri="other-event",
+            start_date=datetime.utcnow(),
+            end_date=datetime.utcnow() + timedelta(days=1),
+            status="published",
+        )
+        db.add(other_event)
+        db.flush()
+
+        other_session = SessionModel(
+            title="Other Session",
+            description="Other",
+            start_datetime=datetime.utcnow(),
+            end_datetime=datetime.utcnow() + timedelta(minutes=30),
+            status=SessionStatus.PUBLISHED,
+            session_format=SessionFormat.OTHER,
+            language="en",
+            uri="other-session",
+            event_id=other_event.id,
+        )
+        db.add(other_session)
+        db.commit()
+
+        session_popularity_crud.record_interactions(
+            db=db,
+            accepted_ids=[other_session.id],
+            rejected_ids=[],
+            event_id=sample_event.id,
+        )
+
+        row_other = (
+            db.query(SessionPopularity)
+            .filter_by(session_id=other_session.id, event_id=sample_event.id)
+            .first()
+        )
+        assert row_other is None
+
 
 # ---------------------------------------------------------------------------
 # list_with_filters - popularity_sort
