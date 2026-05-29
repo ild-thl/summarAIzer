@@ -230,6 +230,41 @@ async def get_session_by_uri(
     return db_session
 
 
+@router.get("/by-external-id/{label}/{external_id}", response_model=SessionResponse)
+async def get_session_by_external_id(
+    label: str,
+    external_id: str,
+    event_id: int | None = Query(None, description="Optional event scope"),
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Get a session by labeled external ID. Published sessions are public."""
+    db_session = session_crud.read_by_external_id(
+        db, label=label, external_id=external_id, event_id=event_id
+    )
+    if not db_session:
+        logger.warning(
+            "session_not_found_by_external_id",
+            label=label,
+            external_id=external_id,
+            event_id=event_id,
+        )
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "session_access_denied_by_external_id",
+            label=label,
+            external_id=external_id,
+            event_id=event_id,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    return db_session
+
+
 def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> list[str] | None:
     """Validate and parse comma-separated enum values."""
     if not value:

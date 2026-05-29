@@ -599,6 +599,7 @@ class TestSemanticSearchWithFilters:
                 assert "overall_score" in result
                 assert 0 <= result["overall_score"] <= 1
                 assert "semantic_similarity" in result
+                assert "external_ids" in result["session"]
 
     @pytest.mark.usefixtures("sessions_with_embeddings")
     def test_semantic_search_with_language_filter(self, client):
@@ -835,6 +836,7 @@ class TestRecommendationAPI:
                 assert "overall_score" in result
                 assert 0 <= result["overall_score"] <= 1
                 assert "semantic_similarity" in result
+                assert "external_ids" in result["session"]
 
     def test_recommend_route_forwards_multiple_queries(self, client, monkeypatch):
         """Recommend endpoint should accept and forward a list of queries."""

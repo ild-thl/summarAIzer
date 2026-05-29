@@ -23,6 +23,7 @@ from app.schemas.session import (
     EventUpdate,
     SessionCreate,
     SessionResponse,
+    SessionUpdate,
 )
 from app.security.auth import (
     get_current_user,
@@ -254,9 +255,13 @@ async def sync_session(
     db: Session = Depends(get_db),
 ):
     """
-    Create or update a session (upsert by uri within event).
+    Create or update a session.
 
-    If session with (event_id, uri) exists → returns existing with metadata
+    Matching order:
+    1. First match by external IDs (if provided)
+    2. Fallback to (event_id, uri)
+
+    If a match is found → update existing session
     Otherwise → creates new session
 
     Only event owner can sync sessions to their event.
@@ -269,19 +274,37 @@ async def sync_session(
         logger.warning("sync_unauthorized_event_access", user_id=current_user.id, event_id=event_id)
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    # Check if session exists
-    existing = (
-        db.query(SessionModel)
-        .filter(
-            SessionModel.event_id == event_id,
-            SessionModel.uri == session_in.uri,
+    # Check if session exists by external IDs first
+    existing: SessionModel | None = None
+    if session_in.external_ids:
+        for external in session_in.external_ids:
+            existing = session_crud.read_by_external_id(
+                db,
+                label=external.label,
+                external_id=external.id,
+                event_id=event_id,
+            )
+            if existing:
+                break
+
+    # Fallback to URI-based upsert for backwards compatibility
+    if not existing:
+        existing = (
+            db.query(SessionModel)
+            .filter(
+                SessionModel.event_id == event_id,
+                SessionModel.uri == session_in.uri,
+            )
+            .first()
         )
-        .first()
-    )
 
     if existing:
         # Update existing session - returns 201 (resource processed)
-        updated = session_crud.update(db, existing.id, session_in)
+        updated = session_crud.update(
+            db,
+            existing.id,
+            SessionUpdate.model_validate(session_in.model_dump(mode="json", exclude_none=True)),
+        )
         response.status_code = HTTP_201_CREATED
         return updated
     else:

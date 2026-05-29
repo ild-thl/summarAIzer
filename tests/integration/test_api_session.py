@@ -135,6 +135,39 @@ class TestSessionAPI:
         data = response.json()
         assert data["uri"] == session_with_owner.uri
 
+    def test_get_session_by_external_id(self, client, sample_api_key, sample_event):
+        """Test getting a session by external ID label + id."""
+        api_key, plain_key = sample_api_key
+        now = datetime.utcnow()
+
+        create_response = client.post(
+            "/api/v2/sessions",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "External Lookup Session",
+                "start_datetime": now.isoformat(),
+                "end_datetime": (now + timedelta(hours=1)).isoformat(),
+                "language": "en",
+                "uri": "external-lookup-session",
+                "event_id": sample_event.id,
+                "status": "draft",
+                "external_ids": [{"id": "119237", "label": "sessionize.com"}],
+            },
+        )
+        assert create_response.status_code == HTTP_201_CREATED
+
+        response = client.get(
+            "/api/v2/sessions/by-external-id/sessionize.com/119237",
+            headers={"Authorization": f"Bearer {plain_key}"},
+        )
+
+        assert response.status_code == HTTP_200_OK
+        data = response.json()
+        assert data["uri"] == "external-lookup-session"
+        assert len(data["external_ids"]) == 1
+        assert data["external_ids"][0]["id"] == "119237"
+        assert data["external_ids"][0]["label"] == "sessionize.com"
+
     def test_list_sessions(self, client, published_session):
         """Test listing sessions (public access to published)."""
         response = client.get("/api/v2/sessions")
@@ -468,6 +501,58 @@ class TestSessionUpsertEndpoint:
         updated_data = update_resp.json()
         assert updated_data["id"] == original_id  # Same session
         assert updated_data["title"] == "Updated Title"
+
+    def test_upsert_prefers_external_id_over_uri(self, client, sample_api_key):
+        """Upsert should update by external ID even if URI changed."""
+        api_key, plain_key = sample_api_key
+        now = datetime.utcnow()
+
+        event_resp = client.post(
+            "/api/v2/events",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Upsert External ID Event",
+                "start_date": now.isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+                "uri": "upsert-external-id-event",
+            },
+        )
+        event_id = event_resp.json()["id"]
+
+        first = client.post(
+            f"/api/v2/events/{event_id}/sessions/sync",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Original",
+                "start_datetime": now.isoformat(),
+                "end_datetime": (now + timedelta(hours=1)).isoformat(),
+                "uri": "119237-original-title",
+                "external_ids": [
+                    {"id": "119237", "label": "sessionize.com"},
+                    {"id": "2PCzBifk4IVdllqtucQu", "label": "talque.com"},
+                ],
+            },
+        )
+        assert first.status_code == HTTP_201_CREATED
+        original_id = first.json()["id"]
+
+        second = client.post(
+            f"/api/v2/events/{event_id}/sessions/sync",
+            headers={"Authorization": f"Bearer {plain_key}"},
+            json={
+                "title": "Original Updated",
+                "start_datetime": now.isoformat(),
+                "end_datetime": (now + timedelta(hours=2)).isoformat(),
+                "uri": "119237-renamed-uri",
+                "external_ids": [
+                    {"id": "119237", "label": "sessionize.com"},
+                    {"id": "2PCzBifk4IVdllqtucQu", "label": "talque.com"},
+                ],
+            },
+        )
+        assert second.status_code == HTTP_201_CREATED
+        assert second.json()["id"] == original_id
+        assert second.json()["title"] == "Original Updated"
 
     def test_upsert_requires_event_ownership(self, test_db, client, sample_api_key):
         """Test upsert requires event ownership."""
