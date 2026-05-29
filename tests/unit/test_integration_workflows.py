@@ -144,6 +144,9 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
         context_requirements=["transcription", "summary"],
         generate_result=_noop,
     )
+    slide_markdown_step = create_mock_step(
+        identifier="slide_markdown", context_requirements=[], generate_result=_noop
+    )
     learning_objectives_step = create_mock_step(
         identifier="learning_objectives", context_requirements=["summary"], generate_result=_noop
     )
@@ -165,6 +168,7 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
         quotes_step,
         qna_step,
         glossary_step,
+        slide_markdown_step,
         mermaid_step,
         learning_objectives_step,
         tags_step,

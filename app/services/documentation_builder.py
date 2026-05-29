@@ -1,5 +1,6 @@
 """Service for building published session documentation artifacts."""
 
+import json
 import logging
 from collections import OrderedDict
 from datetime import datetime
@@ -16,6 +17,7 @@ from app.schemas.session import DocumentationSection, SessionDocumentationRespon
 logger = logging.getLogger(__name__)
 
 TRANSCRIPTION_IDENTIFIER = "transcription"
+SLIDE_DECK_IDENTIFIER = "slide_deck"
 URL_SECTION_TYPES = {"resource_link", "image", "image_url"}
 settings = get_settings()
 
@@ -154,6 +156,10 @@ class DocumentationBuilder:
                 f"{TRANSCRIPTION_IDENTIFIER}"
             )
             section_content = None
+        elif content.identifier == SLIDE_DECK_IDENTIFIER:
+            section_type = "resource_link"
+            section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/download"
+            section_content = None
         elif section_type in URL_SECTION_TYPES:
             section_resource_url = _extract_resource_url(content.content, content.meta_info)
             section_content = None
@@ -201,15 +207,7 @@ def _get_section_title(identifier: str) -> str:
 
 def _extract_resource_url(content: str | None, meta_info: dict | None) -> str | None:
     """Extract canonical URL for URL-based documentation sections."""
-    candidates = []
-    if isinstance(content, str):
-        candidates.append(content)
-
-    if isinstance(meta_info, dict):
-        for key in ["resource_url", "image_url", "url"]:
-            value = meta_info.get(key)
-            if isinstance(value, str):
-                candidates.append(value)
+    candidates = _collect_resource_url_candidates(content, meta_info)
 
     for candidate in candidates:
         url = candidate.strip()
@@ -217,6 +215,64 @@ def _extract_resource_url(content: str | None, meta_info: dict | None) -> str | 
             return url
 
     return None
+
+
+def _collect_resource_url_candidates(content: str | None, meta_info: dict | None) -> list[str]:
+    """Collect all possible URL candidate strings from content and metadata."""
+    candidates: list[str] = []
+
+    if isinstance(content, str):
+        candidates.append(content)
+
+        payload = _parse_json_dict(content)
+        if payload:
+            candidates.extend(_extract_url_candidates_from_mapping(payload))
+
+    if isinstance(meta_info, dict):
+        candidates.extend(_extract_url_candidates_from_mapping(meta_info))
+
+    return candidates
+
+
+def _extract_url_candidates_from_mapping(payload: dict) -> list[str]:
+    """Extract direct URL fields and optional S3-derived URL from a mapping."""
+    candidates: list[str] = []
+
+    for key in ["resource_url", "image_url", "url"]:
+        value = payload.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+
+    s3_key = payload.get("s3_key")
+    if isinstance(s3_key, str):
+        s3_url = _build_public_s3_url(s3_key)
+        if s3_url:
+            candidates.append(s3_url)
+
+    return candidates
+
+
+def _parse_json_dict(content: str) -> dict | None:
+    """Parse a JSON object string and return dict when valid."""
+    candidate = content.strip()
+    if not candidate.startswith("{"):
+        return None
+
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _build_public_s3_url(s3_key: str) -> str | None:
+    """Build full S3 URL from key when AWS_URL is configured."""
+    base = (settings.aws_url or "").rstrip("/")
+    key = s3_key.strip().lstrip("/")
+    if not base or not key:
+        return None
+    return f"{base}/{key}"
 
 
 def _is_http_url(value: str) -> bool:

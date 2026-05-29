@@ -64,6 +64,23 @@ def test_qna_step_skips_persistence_for_invalid_or_too_small_results() -> None:
     assert result["meta_info"]["reason"] == "parse_failed"
 
 
+def test_qna_messages_include_slide_markdown_when_available(sample_session) -> None:
+    step = QnAStep()
+
+    messages = step.get_messages(
+        sample_session,
+        {
+            "summary": "Kurzfassung",
+            "transcription": "Transkriptinhalt",
+            "slide_markdown": "### Page 1\n\nDetailierte Antwort von der Folie",
+        },
+    )
+
+    assert len(messages) == 2
+    assert "Folieninhalt (Docling/PDF-Extraktion)" in messages[1].content
+    assert "Detailierte Antwort von der Folie" in messages[1].content
+
+
 def test_glossary_step_outputs_json_entries() -> None:
     step = GlossaryStep()
     response = Mock()
@@ -126,3 +143,20 @@ def test_glossary_step_skips_when_too_few_terms() -> None:
     assert result["persist"] is False
     assert result["meta_info"]["skipped"] is True
     assert result["meta_info"]["reason"] == "insufficient_entries"
+
+
+def test_glossary_messages_include_slide_markdown_when_available(sample_session) -> None:
+    step = GlossaryStep()
+
+    messages = step.get_messages(
+        sample_session,
+        {
+            "summary": "Kurzfassung",
+            "transcription": "Transkriptinhalt",
+            "slide_markdown": "### Page 2\n\nDefinition: Retrieval-Augmented Generation",
+        },
+    )
+
+    assert len(messages) == 2
+    assert "Folieninhalt (Docling/PDF-Extraktion)" in messages[1].content
+    assert "Definition: Retrieval-Augmented Generation" in messages[1].content
