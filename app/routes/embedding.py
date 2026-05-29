@@ -438,11 +438,54 @@ def _record_popularity_interactions(db, recommend_req) -> None:
             event_id=recommend_req.event_id,
         )
     except Exception as pop_exc:
+        db.rollback()
         logger.warning(
             "popularity_record_skipped",
             error=str(pop_exc),
             error_type=type(pop_exc).__name__,
         )
+
+
+def _sanitize_feedback_session_ids(
+    db: Session,
+    accepted_ids: list[int] | None,
+    rejected_ids: list[int] | None,
+    event_id: int | None,
+) -> tuple[list[int], list[int]]:
+    """Filter out non-existent (or wrong-event) session IDs from feedback inputs."""
+    accepted_ids = accepted_ids or []
+    rejected_ids = rejected_ids or []
+    if not (accepted_ids or rejected_ids):
+        return accepted_ids, rejected_ids
+
+    requested_ids = list(dict.fromkeys([*accepted_ids, *rejected_ids]))
+    found_sessions = session_crud.read_many_by_ids(db, requested_ids)
+
+    if event_id is None:
+        valid_ids = set(found_sessions.keys())
+    else:
+        valid_ids = {
+            session_id
+            for session_id, session in found_sessions.items()
+            if session.event_id == event_id
+        }
+
+    filtered_accepted = [sid for sid in accepted_ids if sid in valid_ids]
+    filtered_rejected = [sid for sid in rejected_ids if sid in valid_ids]
+
+    skipped_count = (len(accepted_ids) + len(rejected_ids)) - (
+        len(filtered_accepted) + len(filtered_rejected)
+    )
+    if skipped_count:
+        logger.info(
+            "recommendation_feedback_ids_filtered",
+            requested_ids_count=len(accepted_ids) + len(rejected_ids),
+            valid_ids_count=len(filtered_accepted) + len(filtered_rejected),
+            skipped_ids_count=skipped_count,
+            event_id=event_id,
+        )
+
+    return filtered_accepted, filtered_rejected
 
 
 @router.post(
@@ -531,6 +574,15 @@ async def recommend_sessions(
             event = event_crud.read(db, recommend_req.event_id)
             if event is None:
                 raise HTTPException(status_code=404, detail="Event not found")
+
+        filtered_accepted_ids, filtered_rejected_ids = _sanitize_feedback_session_ids(
+            db=db,
+            accepted_ids=recommend_req.accepted_ids,
+            rejected_ids=recommend_req.rejected_ids,
+            event_id=recommend_req.event_id,
+        )
+        recommend_req.accepted_ids = filtered_accepted_ids
+        recommend_req.rejected_ids = filtered_rejected_ids
 
         (
             effective_query,
