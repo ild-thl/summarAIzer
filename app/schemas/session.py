@@ -172,6 +172,39 @@ class EventPageResponse(BaseModel):
 # ============================================================================
 
 
+class SessionExternalIdBase(BaseModel):
+    """External identifier bound to a source label."""
+
+    id: str = Field(..., min_length=1, max_length=255, description="Source-specific external ID")
+    label: str = Field(..., min_length=1, max_length=100, description="External source label")
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def normalize_id(cls, v: str | int) -> str:
+        """Store all IDs as strings for cross-source compatibility."""
+        return str(v)
+
+
+class SessionExternalIdCreate(SessionExternalIdBase):
+    """Schema for writing session external IDs."""
+
+    pass
+
+
+class SessionExternalIdResponse(SessionExternalIdBase):
+    """Schema for reading session external IDs."""
+
+    id: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        validation_alias="external_id",
+        description="Source-specific external ID",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SessionBase(BaseModel):
     """Base schema for Session with common fields."""
 
@@ -194,6 +227,10 @@ class SessionBase(BaseModel):
     )
     uri: str = Field(..., min_length=1, max_length=255, description="URL-safe identifier")
     event_id: int | None = Field(None, description="Associated event ID")
+    external_ids: list[SessionExternalIdCreate] | None = Field(
+        None,
+        description="External IDs for source systems (e.g. sessionize.com, talque.com)",
+    )
 
     @field_validator("session_format", mode="before")
     @classmethod
@@ -278,6 +315,7 @@ class SessionUpdate(BaseModel):
     language: str | None = Field(None, min_length=2, max_length=10)
     uri: str | None = Field(None, min_length=1, max_length=255)
     event_id: int | None = None
+    external_ids: list[SessionExternalIdCreate] | None = None
 
     @field_validator("session_format", mode="before")
     @classmethod
@@ -329,6 +367,10 @@ class SessionResponse(SessionBase):
         alias="available_content_identifiers",
         description="List of available content identifiers",
     )
+    external_ids: list[SessionExternalIdResponse] = Field(
+        default_factory=list,
+        description="External IDs for this session",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -339,8 +381,10 @@ class SessionResponse(SessionBase):
     def extract_location_rel(cls, data: object) -> object:
         """Map ORM location_rel -> location for serialization."""
         if hasattr(data, "location_rel"):
-            obj = dict(data.__dict__) if hasattr(data, "__dict__") else data
+            obj = dict(data.__dict__) if hasattr(data, "__dict__") else {}
             obj["location"] = data.location_rel
+            if hasattr(data, "external_ids"):
+                obj["external_ids"] = data.external_ids
             return obj
         return data
 
@@ -372,6 +416,10 @@ class SessionListResponse(BaseModel):
     language: str = Field(default="en", description="ISO 639-1 language code")
     uri: str = Field(..., description="URL-safe identifier")
     event_id: int | None = Field(None, description="Associated event ID")
+    external_ids: list[SessionExternalIdResponse] = Field(
+        default_factory=list,
+        description="External IDs for this session",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -380,8 +428,10 @@ class SessionListResponse(BaseModel):
     def extract_location_rel(cls, data: object) -> object:
         """Map ORM location_rel -> location for serialization."""
         if hasattr(data, "location_rel"):
-            obj = dict(data.__dict__) if hasattr(data, "__dict__") else data
+            obj = dict(data.__dict__) if hasattr(data, "__dict__") else {}
             obj["location"] = data.location_rel
+            if hasattr(data, "external_ids"):
+                obj["external_ids"] = data.external_ids
             return obj
         return data
 

@@ -171,6 +171,39 @@ class Session(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    external_ids = relationship(
+        "SessionExternalId",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class SessionExternalId(Base):
+    """Maps externally assigned IDs (Sessionize/Talque/etc.) to a session."""
+
+    __tablename__ = "session_external_ids"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    label = Column(String(100), nullable=False, index=True)
+    external_id = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("label", "external_id", name="uq_session_external_id_global"),
+        UniqueConstraint(
+            "session_id",
+            "label",
+            "external_id",
+            name="uq_session_external_id_per_session",
+        ),
+    )
+
+    session = relationship("Session", back_populates="external_ids")
 
 
 class SessionPopularity(Base):

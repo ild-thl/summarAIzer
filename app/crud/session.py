@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
-from app.database.models import SessionLocation, SessionPopularity, SessionStatus
-from app.schemas.session import SessionCreate, SessionUpdate
+from app.database.models import SessionExternalId, SessionLocation, SessionPopularity, SessionStatus
+from app.schemas.session import SessionCreate, SessionExternalIdCreate, SessionUpdate
 
 logger = structlog.get_logger()
 
@@ -37,6 +37,55 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
     def __init__(self):
         super().__init__(SessionModel)
+
+    def _replace_external_ids(
+        self,
+        db: Session,
+        db_obj: SessionModel,
+        external_ids: list[SessionExternalIdCreate] | list[dict[str, Any]] | None,
+    ) -> None:
+        """Add missing session external IDs when explicitly provided.
+
+        Existing IDs are preserved. IDs already owned by a different session are skipped
+        to avoid hard failures on unique(label, external_id) during sync.
+        """
+        if external_ids is None:
+            return
+
+        current_pairs = {(item.label, item.external_id) for item in db_obj.external_ids}
+        requested_pairs = {
+            (
+                (item.get("label"), str(item.get("id")))
+                if isinstance(item, dict)
+                else (item.label, str(item.id))
+            )
+            for item in external_ids
+        }
+        missing_pairs = requested_pairs - current_pairs
+        if not missing_pairs:
+            return
+
+        # Preserve current rows and only append missing pairs.
+        for label, external_id in missing_pairs:
+            existing_owner = (
+                db.query(SessionExternalId)
+                .filter(
+                    SessionExternalId.label == label,
+                    SessionExternalId.external_id == external_id,
+                )
+                .first()
+            )
+            if existing_owner and existing_owner.session_id != db_obj.id:
+                logger.warning(
+                    "session_external_id_conflict_skipped",
+                    session_id=db_obj.id,
+                    label=label,
+                    external_id=external_id,
+                    existing_session_id=existing_owner.session_id,
+                )
+                continue
+
+            db_obj.external_ids.append(SessionExternalId(label=label, external_id=external_id))
 
     def create(
         self, db: Session, obj_in: SessionCreate, owner_id: int | None = None
@@ -69,6 +118,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                     address=obj_in.location.address,
                     postal_code=obj_in.location.postal_code,
                 )
+            self._replace_external_ids(db=db, db_obj=db_obj, external_ids=obj_in.external_ids)
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
@@ -119,6 +169,26 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     def read_by_uri(self, db: Session, uri: str) -> SessionModel | None:
         """Read a session by URI."""
         return db.query(self.model).filter(self.model.uri == uri.lower()).first()
+
+    def read_by_external_id(
+        self,
+        db: Session,
+        label: str,
+        external_id: str,
+        event_id: int | None = None,
+    ) -> SessionModel | None:
+        """Read a session by labeled external ID."""
+        query = (
+            db.query(self.model)
+            .join(SessionExternalId, SessionExternalId.session_id == self.model.id)
+            .filter(
+                SessionExternalId.label == label,
+                SessionExternalId.external_id == str(external_id),
+            )
+        )
+        if event_id is not None:
+            query = query.filter(self.model.event_id == event_id)
+        return query.first()
 
     def list_all(self, db: Session, skip: int = 0, limit: int = 100) -> list[SessionModel]:
         """List all sessions with pagination."""
@@ -438,6 +508,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
 
             # Handle structured location separately — never set as scalar column
             location_data = update_data.pop("location", None)
+            external_ids = update_data.pop("external_ids", None)
 
             for field, value in update_data.items():
                 setattr(db_obj, field, value)
@@ -446,6 +517,11 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 db_obj=db_obj,
                 location_data=location_data,
                 location_was_provided="location" in obj_in.model_fields_set,
+            )
+            self._replace_external_ids(
+                db=db,
+                db_obj=db_obj,
+                external_ids=external_ids,
             )
 
             db.add(db_obj)
