@@ -108,12 +108,12 @@ Gib NUR validen Mermaid-Code zurück, ohne weitere Erklärungen, in folgendem Fo
 ```mermaid
 mindmap
   root)Hauptthema(
-    Kernthema 1
-      Unterpunkt 1.1
-      Unterpunkt 1.2
-    Kernthema 2
-      Unterpunkt 2.1
-      Unterpunkt 2.2
+    ["Kernthema 1"]
+      ["Unterpunkt 1.1"]
+      ["Unterpunkt 1.2"]
+    ["Kernthema 2"]
+      ["Unterpunkt 2.1"]
+      ["Unterpunkt 2.2"]
 ```"""
             ),
             HumanMessage(
