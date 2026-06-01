@@ -238,10 +238,10 @@ class ShortDescriptionStep(LLMStep):
                 content="""Du bist Spezialist:in für präzise, embedding-optimierte Veranstaltungsbeschreibungen.
 
 Deine Aufgabe ist es, eine vorhandene (möglicherweise lange) Veranstaltungsbeschreibung in eine sehr kurze,
-keyword-dichte Zusammenfassung (150-250 Zeichen) umzuwandeln.
+keyword-dichte Zusammenfassung umzuwandeln.
 
 Anforderungen:
-- **Länge**: 150-250 Zeichen (≈ 30-50 Wörter)
+- **Länge**: 30-50 Wörter
 - **Struktur**: [Domäne/Thema] + [Was/Wie] + [Zielgruppe/Outcome]
 - **Keywords**: Dicht mit Fachbegriffen, Technologien, Framework-Namen, konkreten Methoden
 - **Stil**: Neutral, Präsens, keine Füllwörter ("In dieser Session...", "Lernen Sie...")
@@ -258,7 +258,7 @@ Tags: {tags}
 Originalbeschreibung:
 {source}
 
-Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung (150-250 Zeichen):"""
+Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung:"""
             ),
         ]
 

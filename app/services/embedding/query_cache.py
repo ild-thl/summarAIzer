@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import json
 
+import redis as redis_sync
 import structlog
-from redis import asyncio as redis
 
 logger = structlog.get_logger()
 
@@ -18,13 +20,17 @@ class EmbeddingQueryCache:
         self,
         redis_url: str | None,
         ttl_seconds: int,
-        redis_client: redis.Redis | None = None,
+        redis_client: redis_sync.Redis | None = None,
     ):
         self.ttl_seconds = max(0, ttl_seconds)
         self._client = redis_client
-
+        # Create client eagerly to bind it to the current process context.
         if self._client is None and redis_url and self.ttl_seconds > 0:
-            self._client = redis.from_url(redis_url, decode_responses=True)
+            try:
+                self._client = redis_sync.from_url(redis_url, decode_responses=True)
+            except Exception as exc:
+                logger.warning("embedding_query_cache_client_create_failed", error=str(exc))
+                self._client = None
 
     @property
     def enabled(self) -> bool:
@@ -33,34 +39,48 @@ class EmbeddingQueryCache:
 
     async def get(self, query_text: str) -> list[float] | None:
         """Return cached embedding for a normalized query, if available."""
-        if not self.enabled:
+        if self.ttl_seconds <= 0:
+            return None
+
+        if self._client is None:
             return None
 
         cache_key = self._build_cache_key(query_text)
+
         try:
-            cached_value = await self._client.get(cache_key)
-            if cached_value is None:
-                return None
-
-            embedding = self._deserialize_embedding(cached_value)
-            if embedding is None:
-                await self._client.delete(cache_key)
-                return None
-
-            await self._client.expire(cache_key, self.ttl_seconds)
-            return embedding
+            cached_value = await asyncio.to_thread(self._client.get, cache_key)
         except Exception as exc:
             logger.warning("embedding_query_cache_get_failed", error=str(exc))
             return None
 
+        if cached_value is None:
+            return None
+
+        embedding = self._deserialize_embedding(cached_value)
+        if embedding is None:
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(self._client.delete, cache_key)
+            return None
+
+        # Best-effort expiry refresh; ignore failures
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(self._client.expire, cache_key, self.ttl_seconds)
+
+        return embedding
+
     async def set(self, query_text: str, embedding: list[float]) -> None:
         """Store an embedding for a normalized query."""
-        if not self.enabled or not embedding:
+        if self.ttl_seconds <= 0 or not embedding:
+            return
+
+        if self._client is None:
             return
 
         cache_key = self._build_cache_key(query_text)
         try:
-            await self._client.set(cache_key, json.dumps(embedding), ex=self.ttl_seconds)
+            await asyncio.to_thread(
+                self._client.set, cache_key, json.dumps(embedding), ex=self.ttl_seconds
+            )
         except Exception as exc:
             logger.warning("embedding_query_cache_set_failed", error=str(exc))
 

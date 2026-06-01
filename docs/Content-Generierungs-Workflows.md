@@ -200,9 +200,9 @@ class ImageStep(LLMStep):
 | Identifier | Klasse | Basis-Klasse | Beschreibung |
 |------------|--------|-------------|-------------|
 | `summary` | `SummaryStep` | `LLMStep` | Format-aware Markdown-Zusammenfassung (Vortrag / Diskussion / Workshop) |
-| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | 6-8 umsetzbare Key Takeaways als JSON-Array |
+| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | Key Takeaways als JSON-Array |
 | `tags` | `TagsStep` | `LLMStep` | 2-5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
-| `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` auf 150-250 Zeichen für bessere Embeddings |
+| `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` für bessere Embeddings |
 | `mermaid` | `MermaidStep` | `LLMStep` | Mermaid-Mindmap-Diagramm |
 | `image` | `ImageStep` | `LLMStep` | KI-generiertes Titelbild, Upload zu S3 |
 

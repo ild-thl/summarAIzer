@@ -22,7 +22,9 @@ from app.services.recommendation.service import RecommendationService
 logger = structlog.get_logger()
 
 
-@lru_cache(maxsize=1)
+_cached_service: EmbeddingService | None = None
+
+
 def get_embedding_service() -> EmbeddingService | None:
     """
     Factory function for EmbeddingService with dependency injection.
@@ -42,6 +44,10 @@ def get_embedding_service() -> EmbeddingService | None:
     if not settings.enable_embeddings:
         logger.info("embeddings_disabled_by_config")
         return None
+
+    global _cached_service
+    if _cached_service is not None:
+        return _cached_service
 
     try:
         service = EmbeddingService(
@@ -65,6 +71,7 @@ def get_embedding_service() -> EmbeddingService | None:
             chroma_url=settings.chroma_url,
         )
 
+        _cached_service = service
         return service
 
     except Exception as e:
@@ -128,7 +135,9 @@ def reset_services():
 
     Clears the lru_cache to force re-initialization on next call.
     """
-    get_embedding_service.cache_clear()
+    # Clear cached embedding service and any cached factories
+    global _cached_service
+    _cached_service = None
     get_search_service.cache_clear()
     get_recommendation_service.cache_clear()
     try:
@@ -137,3 +146,13 @@ def reset_services():
         logger.debug("query_refinement_service_cache_clear_failed")
     get_query_refinement_service.cache_clear()
     logger.debug("embedding_services_cache_cleared")
+
+
+def set_embedding_service(service: EmbeddingService) -> None:
+    """Explicitly set the process-scoped EmbeddingService instance.
+
+    Call this from FastAPI startup or Celery worker initialization to ensure the
+    service is created in a safe lifecycle context.
+    """
+    global _cached_service
+    _cached_service = service
