@@ -202,7 +202,7 @@ class SessionExternalIdResponse(SessionExternalIdBase):
         description="Source-specific external ID",
     )
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class SessionBase(BaseModel):
@@ -354,6 +354,47 @@ class SessionUpdate(BaseModel):
         return v.lower() if v else v
 
 
+def _extract_documentation_published_at(data: object) -> datetime | str | None:
+    """Read documentation publish time from persisted artifact metadata."""
+    if isinstance(data, dict):
+        artifact = data.get("published_documentation_artifact")
+    else:
+        artifact = getattr(data, "published_documentation_artifact", None)
+
+    if not isinstance(artifact, dict):
+        return None
+
+    candidates: list[datetime | str] = []
+
+    def _collect_timestamp(payload: object, keys: list[str]) -> None:
+        if not isinstance(payload, dict):
+            return
+
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, (str | datetime)):
+                candidates.append(value)
+
+    primary_keys = ["published_at", "last_published_at", "artifact_published_at", "generated_at"]
+    fallback_keys = ["updated_at"]
+
+    _collect_timestamp(artifact, primary_keys)
+    _collect_timestamp(artifact, fallback_keys)
+
+    for nested_key in ["artifact", "documentation", "meta", "data"]:
+        nested = artifact.get(nested_key)
+        _collect_timestamp(nested, primary_keys)
+        _collect_timestamp(nested, fallback_keys)
+
+    artifacts = artifact.get("artifacts")
+    if isinstance(artifacts, list):
+        for entry in artifacts:
+            _collect_timestamp(entry, primary_keys)
+            _collect_timestamp(entry, fallback_keys)
+
+    return candidates[0] if candidates else None
+
+
 class SessionResponse(SessionBase):
     """Schema for Session response."""
 
@@ -371,6 +412,10 @@ class SessionResponse(SessionBase):
         default_factory=list,
         description="External IDs for this session",
     )
+    documentation_published_at: datetime | None = Field(
+        None,
+        description="Timestamp derived from artifact metadata (updated_at or generated_at)",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -385,7 +430,12 @@ class SessionResponse(SessionBase):
             obj["location"] = data.location_rel
             if hasattr(data, "external_ids"):
                 obj["external_ids"] = data.external_ids
+            obj["documentation_published_at"] = _extract_documentation_published_at(data)
             return obj
+
+        if isinstance(data, dict):
+            data["documentation_published_at"] = _extract_documentation_published_at(data)
+
         return data
 
 
@@ -420,6 +470,14 @@ class SessionListResponse(BaseModel):
         default_factory=list,
         description="External IDs for this session",
     )
+    documentation_published_at: datetime | None = Field(
+        None,
+        description="Timestamp derived from artifact metadata (updated_at or generated_at)",
+    )
+    cover_image_url: HttpUrl | None = Field(
+        None,
+        description="Best-effort cover image URL extracted from published documentation artifact",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -432,7 +490,12 @@ class SessionListResponse(BaseModel):
             obj["location"] = data.location_rel
             if hasattr(data, "external_ids"):
                 obj["external_ids"] = data.external_ids
+            obj["documentation_published_at"] = _extract_documentation_published_at(data)
             return obj
+
+        if isinstance(data, dict):
+            data["documentation_published_at"] = _extract_documentation_published_at(data)
+
         return data
 
 

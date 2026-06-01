@@ -68,40 +68,6 @@ class TestEventDrivenUpdates:
         assert updated_events[0][1]["session_id"] == session_published.id
         assert "changed_fields" in updated_events[0][1]
 
-    def test_documentation_always_rebuilt_for_published_sessions(
-        self, test_db, session_published, monkeypatch
-    ):
-        """Should always rebuild documentation for published sessions on update."""
-        from app.crud.session import session_crud
-        from app.services.documentation_builder import DocumentationBuilder
-
-        # First build documentation
-        DocumentationBuilder.build_documentation(test_db, session_published.id)
-        test_db.refresh(session_published)
-
-        # Mock the builder to track calls
-        build_calls = []
-        original_build = DocumentationBuilder.build_documentation
-
-        def mock_build(db, session_id):
-            build_calls.append(session_id)
-            return original_build(db, session_id)
-
-        monkeypatch.setattr(DocumentationBuilder, "build_documentation", mock_build)
-
-        def mock_read(db, session_id):
-            # Return the session from test_db to avoid database isolation issues
-            return test_db.query(session_published.__class__).filter_by(id=session_id).first()
-
-        monkeypatch.setattr(session_crud, "read", mock_read)
-
-        # Update title (embedding-relevant field)
-        update_data = SessionUpdate(title="Updated Talk Title")
-        session_crud.update(test_db, session_published.id, update_data)
-
-        # Should have called build_documentation
-        assert session_published.id in build_calls
-
     def test_multiple_field_updates_track_all_changes(
         self, test_db, session_published, monkeypatch
     ):

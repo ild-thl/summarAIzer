@@ -98,7 +98,7 @@ class SessionEventBus:
 
 def _handle_session_published(session_id: int, **kwargs) -> None:
     """
-    Handle session_published event - build documentation and queue embedding generation.
+    Handle session_published event - queue embedding generation.
 
     Args:
         session_id: ID of published session
@@ -107,20 +107,6 @@ def _handle_session_published(session_id: int, **kwargs) -> None:
     try:
         # Import here to avoid circular imports
         from app.async_jobs.tasks import generate_session_embedding
-        from app.database.connection import SessionLocal
-        from app.services.documentation_builder import DocumentationBuilder
-
-        # Build published documentation artifact
-        db = SessionLocal()
-        try:
-            DocumentationBuilder.build_documentation(db, session_id)
-            logger.info(
-                "session_documentation_built_on_publish_event",
-                session_id=session_id,
-                **kwargs,
-            )
-        finally:
-            db.close()
 
         # Queue embedding generation asynchronously
         generate_session_embedding.delay(session_id)
@@ -205,10 +191,9 @@ def _handle_session_updated(
     session_id: int, changed_fields: list[str] | None = None, **kwargs
 ) -> None:
     """
-    Handle session_updated event - rebuild documentation and conditionally refresh embeddings.
+    Handle session_updated event - conditionally refresh embeddings.
 
     For published sessions:
-    - Always rebuilds documentation artifact (to capture any content changes)
     - Only refreshes embeddings if embedding-relevant fields changed
 
     Args:
@@ -221,7 +206,6 @@ def _handle_session_updated(
         from app.crud.session import session_crud
         from app.database.connection import SessionLocal
         from app.database.models import SessionStatus
-        from app.services.documentation_builder import DocumentationBuilder
 
         db = SessionLocal()
         try:
@@ -237,13 +221,6 @@ def _handle_session_updated(
 
             # Always rebuild documentation for published sessions
             if session.status == SessionStatus.PUBLISHED:
-                DocumentationBuilder.build_documentation(db, session_id)
-                logger.info(
-                    "session_documentation_rebuilt_on_update_event",
-                    session_id=session_id,
-                    **kwargs,
-                )
-
                 changed_set = set(changed_fields or [])
                 if changed_set:
                     generate_session_embedding.delay(session_id)

@@ -30,7 +30,7 @@ class DocumentationBuilder:
         """
         Build and persist published documentation artifact for a session.
 
-        This is called when a session transitions to PUBLISHED status.
+        This is called explicitly by API actions for published sessions.
         The artifact is a versioned JSON object stored in the session record
         containing all available generated content sections plus core metadata.
 
