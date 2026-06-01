@@ -10,6 +10,7 @@ from app.workflows.steps.positions_step import PositionsStep
 from app.workflows.steps.qna_step import QnAStep
 from app.workflows.steps.quotes_step import QuotesStep
 from app.workflows.steps.short_description_step import ShortDescriptionStep
+from app.workflows.steps.slide_markdown_step import SlideMarkdownStep
 from app.workflows.steps.sondercluster_step import SonderclusterStep
 from app.workflows.steps.summary_step import SummaryStep
 from app.workflows.steps.tags_step import TagsStep
@@ -29,6 +30,7 @@ __all__ = [
     "PositionsStep",
     "QnAStep",
     "QuotesStep",
+    "SlideMarkdownStep",
     "TagsStep",
     "ShortDescriptionStep",
     "SonderclusterStep",

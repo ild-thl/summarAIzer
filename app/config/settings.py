@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     api_title: str = "SummarAIzer API v2"
     api_description: str = "CRUD API for managing sessions and events with secure authentication"
     api_version: str = "2.0.0"
-    uvicorn_workers: int = int(os.getenv("UVICORN_WORKERS", "1"))
     api_base_url: str = os.getenv("API_BASE_URL", "http://localhost:7860")
+    uvicorn_workers: int = int(os.getenv("UVICORN_WORKERS", "1"))
 
     # Environment
     environment: str = os.getenv("ENVIRONMENT", "development")
@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
-    llm_model: str = os.getenv("LLM_MODEL", "apertus-70b-instruct-2509")
+    llm_model: str = os.getenv("LLM_MODEL", "mistral-large-3-675b-instruct-2512")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
@@ -125,15 +125,6 @@ class Settings(BaseSettings):
         os.getenv("RECOMMENDATION_SEMANTIC_CIRCUIT_BREAKER_COOLDOWN_MINUTES", "1")
     )
 
-    # Matomo usage tracking
-    matomo_enabled: bool = os.getenv("MATOMO_ENABLED", "false").lower() == "true"
-    matomo_url: str = os.getenv("MATOMO_URL", "")
-    matomo_site_id: int = int(os.getenv("MATOMO_SITE_ID", "1"))
-    matomo_token_auth: str = os.getenv("MATOMO_TOKEN_AUTH", "")
-    matomo_request_timeout_seconds: float = float(
-        os.getenv("MATOMO_REQUEST_TIMEOUT_SECONDS", "1.5")
-    )
-
     # Chroma Configuration for vector storage
     chroma_url: str = os.getenv("CHROMA_URL", "http://localhost:8000")
     chroma_credentials: str = os.getenv("CHROMA_CREDENTIALS", "")
@@ -146,6 +137,34 @@ class Settings(BaseSettings):
         "https://chat-ai.academiccloud.de/v1/images/generations",
     )
     image_generation_api_key: str = os.getenv("IMAGE_GENERATION_API_KEY", "")
+
+    # Docling PDF conversion configuration
+    docling_api_url: str = os.getenv(
+        "DOCLING_API_URL",
+        "https://chat-ai.academiccloud.de/v1/documents/convert",
+    )
+    docling_api_key: str = os.getenv("DOCLING_API_KEY", "")
+    docling_request_timeout_seconds: float = float(
+        os.getenv("DOCLING_REQUEST_TIMEOUT_SECONDS", "180")
+    )
+    docling_max_retries: int = int(os.getenv("DOCLING_MAX_RETRIES", "0"))
+
+    # Slide markdown extraction strategy
+    slide_markdown_docling_max_file_size_mb: int = int(
+        os.getenv("SLIDE_MARKDOWN_DOCLING_MAX_FILE_SIZE_MB", "3")
+    )
+    slide_markdown_fallback_max_file_size_mb: int = int(
+        os.getenv("SLIDE_MARKDOWN_FALLBACK_MAX_FILE_SIZE_MB", "12")
+    )
+    slide_markdown_fallback_batch_pages: int = int(
+        os.getenv("SLIDE_MARKDOWN_FALLBACK_BATCH_PAGES", "25")
+    )
+    slide_markdown_fallback_max_pages: int = int(
+        os.getenv("SLIDE_MARKDOWN_FALLBACK_MAX_PAGES", "400")
+    )
+    slide_markdown_fallback_max_chars: int = int(
+        os.getenv("SLIDE_MARKDOWN_FALLBACK_MAX_CHARS", "120000")
+    )
 
     # S3 bucket configuration for image storage
     aws_access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
@@ -171,6 +190,15 @@ class Settings(BaseSettings):
     transcription_response_format: str = os.getenv("TRANSCRIPTION_RESPONSE_FORMAT", "text")
     # Whisper temperature (0.0 = greedy decode)
     openai_transcribe_temperature: float = float(os.getenv("OPENAI_TRANSCRIBE_TEMPERATURE", "0.4"))
+
+    # Matomo usage tracking
+    matomo_enabled: bool = os.getenv("MATOMO_ENABLED", "false").lower() == "true"
+    matomo_url: str = os.getenv("MATOMO_URL", "")
+    matomo_site_id: int = int(os.getenv("MATOMO_SITE_ID", "1"))
+    matomo_token_auth: str = os.getenv("MATOMO_TOKEN_AUTH", "")
+    matomo_request_timeout_seconds: float = float(
+        os.getenv("MATOMO_REQUEST_TIMEOUT_SECONDS", "1.5")
+    )
 
     model_config = ConfigDict(env_file=".env", case_sensitive=False)
 

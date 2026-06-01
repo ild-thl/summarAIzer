@@ -2,7 +2,7 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, or_
+from sqlalchemy import String, and_, cast, func, or_
 from sqlalchemy.orm import Session, joinedload
 from starlette.status import (
     HTTP_201_CREATED,
@@ -14,7 +14,7 @@ from starlette.status import (
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event, User
+from app.database.models import Event, SessionStatus, User
 from app.database.models import Session as SessionModel
 from app.schemas.session import (
     PaginationMeta,
@@ -41,6 +41,42 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
+def _extract_cover_image_url(session: SessionModel) -> str | None:
+    """Extract a cover image URL from the published documentation artifact if available."""
+    artifact = session.published_documentation_artifact
+    if not isinstance(artifact, dict):
+        return None
+
+    sections = artifact.get("sections")
+    if not isinstance(sections, list):
+        return None
+
+    preferred_identifiers = {"cover_image", "cover", "hero_image"}
+
+    def _is_image_url(value: object) -> bool:
+        if not isinstance(value, str) or value.strip() == "":
+            return False
+        lowered = value.lower()
+        return any(
+            ext in lowered for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg"]
+        )
+
+    first_any: object | None = None
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+
+        identifier = str(section.get("identifier") or "").strip().lower()
+        url = section.get("resource_url")
+        if _is_image_url(url):
+            if identifier in preferred_identifiers:
+                return str(url)
+            if first_any is None:
+                first_any = url
+
+    return str(first_any) if first_any is not None else None
+
+
 def _resolve_session_sort(sort_by: str, sort_dir: str):
     """Resolve supported session sort options with stable secondary ordering."""
     sort_fields = {
@@ -61,6 +97,169 @@ def _resolve_session_sort(sort_by: str, sort_dir: str):
         return [column.asc(), SessionModel.id.asc()]
 
     return [column.desc(), SessionModel.id.desc()]
+
+
+def _resolve_public_session_sort(sort_by: str, sort_dir: str):
+    """Resolve public session page sort options with stable secondary ordering."""
+    normalized = (sort_by or "start_date").strip().lower()
+    sort_fields = {
+        "start_date": SessionModel.start_datetime,
+        "updated_last": SessionModel.updated_at,
+        "alphabetical": SessionModel.title,
+    }
+    column = sort_fields.get(normalized)
+    if column is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid sort_by. Allowed: start_date,updated_last,alphabetical",
+        )
+
+    normalized_dir = (sort_dir or "asc").strip().lower()
+    if normalized_dir not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Invalid sort_dir. Allowed: asc,desc")
+
+    if normalized == "updated_last" and sort_dir is None:
+        normalized_dir = "desc"
+
+    if normalized_dir == "asc":
+        return [column.asc(), SessionModel.id.asc()]
+
+    return [column.desc(), SessionModel.id.desc()]
+
+
+def _split_csv(value: str | None, *, lowercase: bool = False) -> list[str] | None:
+    """Split a comma-separated string into a list of trimmed values or return None."""
+    if not value:
+        return None
+    items = [v.strip() for v in value.split(",") if v.strip()]
+    return [i.lower() for i in items] if lowercase else items
+
+
+@router.get("/page", response_model=SessionPageResponse)
+async def list_sessions_page(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
+    status: str = Query(
+        None, description="Filter by status - comma-separated (draft, published) - OR logic"
+    ),
+    event_id: int = Query(None, description="Filter by event ID"),
+    session_format: str = Query(
+        None,
+        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
+    ),
+    tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
+    location_cities: str | None = Query(
+        None, description="Filter by city (comma-separated, OR logic)"
+    ),
+    location_names: str | None = Query(
+        None,
+        description="Filter by location name such as stage or room (comma-separated, OR logic)",
+    ),
+    language: str = Query(
+        None,
+        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+    ),
+    duration_min: int = Query(None, ge=0, description="Minimum duration in minutes"),
+    duration_max: int = Query(None, ge=0, description="Maximum duration in minutes"),
+    speaker: str = Query(None, description="Search for speaker name"),
+    time_windows: str | None = Query(
+        None,
+        description='JSON array of time windows, e.g. [{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]',
+    ),
+    search: str = Query(None, description="Full-text search on title, description, and speakers"),
+    sort_by: str = Query(
+        "start_date",
+        description="Sort mode: start_date, updated_last, alphabetical",
+    ),
+    sort_dir: str = Query("asc", description="Sort direction: asc or desc"),
+    exclude_without_artifact: bool = Query(
+        False,
+        description="Exclude sessions without a published documentation artifact",
+    ),
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Paginated public session listing with pagination metadata."""
+    from app.database.models import SessionFormat
+
+    status_list = _validate_and_parse_enum_list(status, SessionStatus, "status") if status else None
+    session_format_list = (
+        _validate_and_parse_enum_list(session_format, SessionFormat, "session_format")
+        if session_format
+        else None
+    )
+
+    language_list = _split_csv(language, lowercase=True)
+
+    location_cities_list = _split_csv(location_cities)
+
+    location_names_list = _split_csv(location_names)
+
+    parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
+
+    tags_list = _split_csv(tags)
+
+    query = db.query(SessionModel).options(joinedload(SessionModel.location_rel))
+
+    if location_cities_list or location_names_list:
+        from app.database.models import SessionLocation
+
+        query = query.outerjoin(SessionLocation, SessionLocation.session_id == SessionModel.id)
+
+    if not current_user:
+        query = query.filter(SessionModel.status == SessionStatus.PUBLISHED.value)
+    elif not is_admin(current_user):
+        query = query.outerjoin(Event, SessionModel.event_id == Event.id).filter(
+            or_(
+                SessionModel.status == SessionStatus.PUBLISHED.value,
+                SessionModel.owner_id == current_user.id,
+                and_(SessionModel.event_id.is_not(None), Event.owner_id == current_user.id),
+            )
+        )
+
+    filters = session_crud._build_session_filters(
+        status=status_list,
+        event_id=event_id,
+        session_format=session_format_list,
+        tags=tags_list,
+        location_cities=location_cities_list,
+        location_names=location_names_list,
+        language=language_list,
+        duration_min=duration_min,
+        duration_max=duration_max,
+        speaker=speaker,
+        time_windows=parsed_time_windows,
+        search=search,
+    )
+
+    for filter_condition in filters:
+        query = query.filter(filter_condition)
+
+    if exclude_without_artifact:
+        # JSON columns may contain JSON null even when SQL value is not NULL.
+        # Exclude both SQL NULL and JSON null to keep only real artifact payloads.
+        query = query.filter(SessionModel.published_documentation_artifact.is_not(None))
+        query = query.filter(cast(SessionModel.published_documentation_artifact, String) != "null")
+
+    total = query.with_entities(func.count(func.distinct(SessionModel.id))).scalar() or 0
+    sort_columns = _resolve_public_session_sort(sort_by, sort_dir)
+    items = query.order_by(*sort_columns).offset(skip).limit(limit).all()
+
+    payload_items: list[SessionListResponse] = []
+    for item in items:
+        item_payload = SessionListResponse.model_validate(item).model_dump(mode="python")
+        item_payload["cover_image_url"] = _extract_cover_image_url(item)
+        payload_items.append(SessionListResponse.model_validate(item_payload))
+
+    return SessionPageResponse(
+        items=payload_items,
+        meta=PaginationMeta(
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + len(items)) < total,
+        ),
+    )
 
 
 @router.get("/me", response_model=SessionPageResponse)
@@ -495,7 +694,7 @@ async def rebuild_all_documentation(
     db: Session = Depends(get_db),
 ):
     """
-    Rebuild documentation artifacts for all published sessions.
+    Rebuild documentation artifacts for all published sessions that already have artifacts.
 
     Iterates over every published session and regenerates its documentation
     artifact. Useful after deploying changes to the artifact-building logic
@@ -503,14 +702,13 @@ async def rebuild_all_documentation(
 
     Requires authentication. Returns counts of rebuilt and failed sessions.
     """
-    from app.database.models import SessionStatus
-
     sessions = session_crud.list_with_filters(
         db,
         status=[SessionStatus.PUBLISHED.value],
         skip=0,
         limit=10000,
     )
+    sessions = [s for s in sessions if s.published_documentation_artifact is not None]
 
     rebuilt = 0
     failed = 0
@@ -530,6 +728,56 @@ async def rebuild_all_documentation(
 
     logger.info("rebuild_all_documentation_complete", rebuilt=rebuilt, failed=failed)
     return {"rebuilt": rebuilt, "failed": failed, "total": len(sessions)}
+
+
+@router.post("/{session_id}/documentation", response_model=SessionResponse)
+async def create_session_documentation(
+    session_id: int,
+    _session: SessionModel = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+):
+    """Build (or rebuild) a documentation artifact for a published session."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if session.status != SessionStatus.PUBLISHED.value:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail="Documentation can only be created for published sessions",
+        )
+
+    artifact = DocumentationBuilder.build_documentation(db, session_id)
+    if artifact is None:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    refreshed = session_crud.read(db, session_id)
+    if refreshed is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    return refreshed
+
+
+@router.delete("/{session_id}/documentation", response_model=SessionResponse)
+async def delete_session_documentation(
+    session_id: int,
+    _session: SessionModel = Depends(require_session_owner),
+    db: Session = Depends(get_db),
+):
+    """Delete existing documentation artifact from a session."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    session.published_documentation_artifact = None
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return session
 
 
 @router.get("/{session_id}/documentation", response_model=SessionDocumentationResponse)

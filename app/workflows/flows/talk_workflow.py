@@ -38,7 +38,7 @@ class TalkWorkflow(BaseWorkflow):
     Format-aware documentation workflow for conference/education sessions.
 
     All paths:
-        transcription → (key_takeaways OR positions) → summary
+        (transcription || slide_markdown) → (key_takeaways OR positions) → summary
         → [format-specific parallel end steps] → END
 
     End steps by format (all run in parallel after summary):
@@ -169,6 +169,14 @@ class TalkWorkflow(BaseWorkflow):
         logger.info("talk_workflow_talk_path", session_format=fmt_value)
         return "key_takeaways"
 
+    async def _transcription_ready_node(self, _state: dict) -> dict:
+        """Join node for both transcription sources (generated vs. pre-existing)."""
+        return {}
+
+    async def _sources_ready_node(self, _state: dict) -> dict:
+        """Barrier node waiting for transcription, slide markdown, and session context."""
+        return {}
+
     def _route_after_summary(self, state: dict) -> list[str]:
         """Fan out to all parallel end steps appropriate for this format."""
         fmt_value = state.get("session_format")
@@ -204,7 +212,7 @@ class TalkWorkflow(BaseWorkflow):
         Build the LangGraph StateGraph for this workflow.
 
         Execution pattern:
-        - Phase 1: Transcription (or load from DB)
+        - Phase 1: Transcription (or load from DB), slide_markdown, and session context in parallel
         - Phase 2: Content extraction (key_takeaways or positions, format-dependent)
         - Phase 3: Summary
         - Phase 4: All remaining steps run in parallel (quotes, mermaid,
@@ -219,6 +227,7 @@ class TalkWorkflow(BaseWorkflow):
 
         # --- Nodes ---
         builder.add_node("transcription", create_step_node("transcription"))
+        builder.add_node("slide_markdown", create_step_node("slide_markdown"))
         builder.add_node("key_takeaways", create_step_node("key_takeaways"))
         builder.add_node("positions", create_step_node("positions"))
         builder.add_node("summary", create_step_node("summary"))
@@ -232,23 +241,32 @@ class TalkWorkflow(BaseWorkflow):
 
         builder.add_node("_load_existing_transcription", self._load_existing_transcription_node)
         builder.add_node("_init_session_context", self._init_session_context_node)
+        builder.add_node("_transcription_ready", self._transcription_ready_node)
+        builder.add_node("_sources_ready", self._sources_ready_node)
 
         # --- Edges ---
 
-        # Phase 1: transcription (or load from DB) → format init
+        # Phase 1: fan out to independent source/context preparation
         builder.add_conditional_edges(START, self._route_from_start)
-        builder.add_edge("transcription", "_init_session_context")
-        builder.add_edge("_load_existing_transcription", "_init_session_context")
+        builder.add_edge(START, "slide_markdown")
+        builder.add_edge(START, "_init_session_context")
+        builder.add_edge("transcription", "_transcription_ready")
+        builder.add_edge("_load_existing_transcription", "_transcription_ready")
 
-        # Phase 2: single content-extraction step (format-dependent)
-        builder.add_conditional_edges("_init_session_context", self._route_after_init)
+        # Phase 2: synchronize prerequisites before format-aware routing
+        builder.add_edge("_transcription_ready", "_sources_ready")
+        builder.add_edge("slide_markdown", "_sources_ready")
+        builder.add_edge("_init_session_context", "_sources_ready")
+
+        # Phase 3: single content-extraction step (format-dependent)
+        builder.add_conditional_edges("_sources_ready", self._route_after_init)
         builder.add_edge("key_takeaways", "summary")
         builder.add_edge("positions", "summary")
 
-        # Phase 3: summary → parallel end steps
+        # Phase 4: summary → parallel end steps
         builder.add_conditional_edges("summary", self._route_after_summary)
 
-        # Phase 4: all end steps terminate the workflow
+        # Phase 5: all end steps terminate the workflow
         builder.add_edge("quotes", END)
         builder.add_edge("qna", END)
         builder.add_edge("glossary", END)

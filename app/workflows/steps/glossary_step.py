@@ -104,6 +104,12 @@ class GlossaryStep(LLMStep):
         speakers = ", ".join(session.speakers) if session.speakers else "Unbekannt"
         transcription = context.get("transcription", "")
         summary = context.get("summary", "")
+        slide_markdown = context.get("slide_markdown", "")
+        slide_block = (
+            f"\nFolieninhalt (Docling/PDF-Extraktion):\n{slide_markdown}\n"
+            if slide_markdown
+            else ""
+        )
 
         return [
             SystemMessage(
@@ -124,6 +130,7 @@ Referent:innen: {speakers}
 
 Zusammenfassung:
 {summary}
+{slide_block}
 
 Transkript:
 {transcription}

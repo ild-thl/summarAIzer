@@ -63,6 +63,16 @@ async def lifespan(app: FastAPI):
 
     initialize_workflows()
     logger.info("application_startup_completed")
+    # Initialize embedding service eagerly during FastAPI startup so all
+    # network clients (HTTP/Redis) are created in the correct process context.
+    if settings.enable_embeddings:
+        try:
+            from app.services.embedding.factory import get_embedding_service
+
+            svc = get_embedding_service()
+            logger.info("fastapi_embedding_service_initialized", initialized=svc is not None)
+        except Exception as e:
+            logger.warning("fastapi_embedding_service_init_failed", error=str(e))
 
     yield
 

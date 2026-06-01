@@ -73,6 +73,7 @@ class ImageStep(LLMStep):
 
         self.image_service = ImageGenerationService(api_url=api_url, api_key=api_key)
         self.s3_service = S3ImageService()
+        self.aws_url = (settings.aws_url or "").rstrip("/")
         self.image_model = model
         self.width = width
         self.height = height
@@ -262,6 +263,8 @@ Create a concise English prompt for a high-quality visualization image that repr
                 public_url=public_url,
             )
 
+            s3_key = self._extract_s3_key(public_url)
+
             # Step 4: Return structured result with S3 URL
             return {
                 "content": public_url,  # Just the URL as content
@@ -270,7 +273,9 @@ Create a concise English prompt for a high-quality visualization image that repr
                     "model": self.image_model,
                     "type": "image_generation",
                     "status": "success",
+                    "resource_url": public_url,
                     "image_url": public_url,
+                    "s3_key": s3_key,
                     "image_prompt": image_prompt,
                     "size": f"{self.width}x{self.height}",
                 },
@@ -288,6 +293,17 @@ Create a concise English prompt for a high-quality visualization image that repr
 
     def __repr__(self) -> str:
         return f"ImageStep(model={self.image_model}, size={self.width}x{self.height})"
+
+    def _extract_s3_key(self, public_url: str) -> str | None:
+        """Extract object key from configured AWS base URL when possible."""
+        if not self.aws_url:
+            return None
+
+        normalized = public_url.strip()
+        prefix = f"{self.aws_url}/"
+        if not normalized.startswith(prefix):
+            return None
+        return normalized[len(prefix) :]
 
 
 # Auto-register this step when imported

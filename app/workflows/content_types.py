@@ -7,6 +7,8 @@ It can be expanded in the future to include validation logic, helper functions, 
 # Content identifiers - semantic meaning of content
 CONTENT_IDENTIFIERS = {
     "transcription": "Source transcription from session audio/video",
+    "slide_deck": "Uploaded slide deck metadata (S3 key + file info)",
+    "slide_markdown": "Markdown extracted from slide deck via Docling",
     "summary": "Generated session summary",
     "tags": "Generated topic tags/keywords",
     "key_takeaways": "Generated key takeaways from session",
@@ -24,6 +26,7 @@ CONTENT_TYPES = {
     "json_array": "JSON array format",
     "json_object": "JSON object format",
     "image_url": "URL to image (S3, etc.)",
+    "image": "Image section type with resource URL metadata",
     "html": "HTML markup (future)",
 }
 

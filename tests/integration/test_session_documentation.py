@@ -253,6 +253,60 @@ class TestSessionDocumentationEndpoint:
         assert image_section["resource_url"] == image_url
         assert image_section["content"] is None
 
+    def test_artifact_extracts_image_url_from_json_content(self, session_published, test_db):
+        """Image section should resolve URL from JSON payload content for S3-backed consistency."""
+        from app.services.documentation_builder import DocumentationBuilder
+
+        image_url = (
+            "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
+            "session_42/generated_image_20260513_150000.png"
+        )
+        create_content(
+            db=test_db,
+            session_id=session_published.id,
+            identifier="image",
+            content_type="image",
+            content=(
+                '{"s3_key":"content/summaraizer/session_42/generated_image_20260513_150000.png",'
+                f'"resource_url":"{image_url}"'
+                "}"
+            ),
+            meta_info={"source": "image_generation"},
+        )
+
+        artifact = DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
+
+        assert artifact is not None
+        image_section = next(s for s in artifact["sections"] if s["identifier"] == "image")
+        assert image_section["resource_url"] == image_url
+        assert image_section["content"] is None
+
+    def test_artifact_exposes_slide_deck_download_resource(self, session_published, test_db):
+        """Slide deck should be represented as link-only section in the published artifact."""
+        from app.services.documentation_builder import DocumentationBuilder
+
+        create_content(
+            db=test_db,
+            session_id=session_published.id,
+            identifier="slide_deck",
+            content_type="json",
+            content='{"s3_key":"content/summaraizer/slides/session_32/deck.pdf","filename":"deck.pdf","size":1234}',
+            meta_info={"filename": "deck.pdf", "size": 1234},
+        )
+
+        artifact = DocumentationBuilder.build_documentation(test_db, session_published.id)
+        test_db.refresh(session_published)
+
+        assert artifact is not None
+        slide_section = next(s for s in artifact["sections"] if s["identifier"] == "slide_deck")
+        assert slide_section["type"] == "resource_link"
+        assert (
+            slide_section["resource_url"]
+            == f"http://localhost:7860/api/v2/sessions/{session_published.id}/slide-files/download"
+        )
+        assert slide_section["content"] is None
+
 
 class TestSessionDocumentationByUriEndpoint:
     """Test the GET /by-uri/{uri}/documentation endpoint."""

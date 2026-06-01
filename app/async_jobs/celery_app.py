@@ -131,6 +131,16 @@ def worker_ready_handler(sender, **_kwargs):
             exc_info=True,
         )
 
+    # Initialize embedding service in worker process to ensure clients
+    # (HTTP/Redis) are created in the correct process and event loop.
+    try:
+        from app.services.embedding.factory import get_embedding_service
+
+        es = get_embedding_service()
+        logger.info("celery_embedding_service_initialized_in_worker", initialized=es is not None)
+    except Exception as e:
+        logger.warning("celery_embedding_service_init_failed", error=str(e))
+
 
 # Import tasks to register them with the app
 # This must be done AFTER the app is created and configured

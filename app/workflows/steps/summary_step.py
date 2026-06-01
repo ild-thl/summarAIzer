@@ -23,6 +23,7 @@ def _build_talk_messages(
     speakers = ", ".join(session.speakers) if session.speakers else "Unbekannt"
     duration = session.duration or 0
     key_takeaways = context.get("key_takeaways", "")
+    slide_markdown = context.get("slide_markdown", "")
     description = session.description or ""
 
     if is_lightning:
@@ -81,6 +82,9 @@ Format: Markdown.{sahnehaeubchen_note}{coverage_instruction}"""
     if key_takeaways:
         human_parts.append(f"\nVorab extrahierte Kernpunkte:\n{key_takeaways}")
 
+    if slide_markdown:
+        human_parts.append(f"\nZusatzkontext aus den Folien (Docling):\n{slide_markdown}")
+
     human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
     human_parts.append(f"\n{task_instruction}")
 
@@ -98,6 +102,7 @@ def _build_workshop_messages(
         session.session_format.value.capitalize() if session.session_format else "Workshop"
     )
     key_takeaways = context.get("key_takeaways", "")
+    slide_markdown = context.get("slide_markdown", "")
     description = session.description or ""
 
     coverage_instruction = (
@@ -138,6 +143,9 @@ Format: Markdown.{coverage_instruction}"""
     if key_takeaways:
         human_parts.append(f"\nVorab extrahierte Kernpunkte:\n{key_takeaways}")
 
+    if slide_markdown:
+        human_parts.append(f"\nZusatzkontext aus den Folien (Docling):\n{slide_markdown}")
+
     human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
     human_parts.append(
         "\nErstelle nun eine strukturierte Markdown-Dokumentation dieser Veranstaltung."
@@ -154,6 +162,7 @@ def _build_discussion_messages(
     speakers = ", ".join(session.speakers) if session.speakers else "Unbekannte Diskutierende"
     duration = session.duration or 0
     positions = context.get("positions", "")
+    slide_markdown = context.get("slide_markdown", "")
     description = session.description or ""
 
     system_message = """Du bist ein Assistent, der Diskussionen und Panel-Gespräche objektiv dokumentiert. Du erstellst ausgewogene, neutrale Berichte mit folgenden Eigenschaften:
@@ -186,6 +195,9 @@ Format: Markdown."""
 
     if positions:
         human_parts.append(f"\nVorab extrahierte Positionen & Zitate:\n{positions}")
+
+    if slide_markdown:
+        human_parts.append(f"\nZusatzkontext aus den Folien (Docling):\n{slide_markdown}")
 
     human_parts.append(f"\nTranskript:\n{context.get('transcription', '')}")
     human_parts.append("\nErstelle nun eine ausgewogene Markdown-Dokumentation dieser Diskussion.")

@@ -54,6 +54,7 @@ structlog==23.2.0
 
 # HTTP & Requests
 requests>=2.31.0
+pypdf>=5.0.0
 
 # Utilities
 python-dateutil
