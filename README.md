@@ -416,11 +416,7 @@ The recommender returns a ranked list of sessions tailored to a user's interests
 
 ### How it works
 
-**1. Query embedding**
-
-One or more free-text queries are accepted (`query: string | string[]`). Each query is embedded independently using the same model that embeds session content. When no query is provided, the recommender falls back to preference-based search using accepted/rejected session IDs.
-
-**2. Optional LLM query refinement**
+**1. Optional LLM query refinement**
 
 When `refine_query: true` is set, the queries are first passed through a LangChain structured-output agent that rewrites them for better retrieval intent and can infer hard filters (format, tags, location) when they are strongly implied by the query text. Trivially short queries (single word or fewer than 20 characters) are skipped to avoid unnecessary LLM calls.
 
@@ -438,20 +434,36 @@ POST /api/v2/sessions/recommend
 }
 ```
 
-**3. Vector search (hard / soft filter modes)**
+**2. Search**
 
-Each query embedding is run against Chroma with the active metadata filters.
+Each query is embedded and runs against Chroma with the active metadata filters to retrieve relevant candidate sessions. When multiple queries are provided, results are merged and deduplicated — keeping the highest similarity score per session.
+
+If no query is given but accepted session IDs are provided, a vector search based on the centroid of accepted session embeddings is performed to find similar sessions to those already accepted by the user.
+
+If no query or accepted sessions are provided, the recommender falls back to a popularity-based ranking of all sessions in the event.
+
+In all cases filters are applied to the search in one of two modes:
+
+The `filter_mode` parameter controls how strictly metadata filters are applied:
 
 - **Hard mode** (default) — Chroma `where` clause enforces all filters strictly. Only matching sessions are retrieved.
 - **Soft mode** — The search runs without metadata filters from the start. Sessions receive a filter compliance penalty in the final score instead of being excluded.
 
-When multiple queries are provided, results are merged and deduplicated — keeping the highest similarity score per session.
-
-**4. Scoring**
+**3. Scoring**
 
 Each candidate session receives a normalized composite score $\in [0, 1]$:
-
-$$\text{score} = \frac{\sum_i s_i \cdot w_i}{\sum_i w_i}$$
+$$
+\begin{align*}
+\begin{array}{ll}
+\text{score} = \dfrac{\sum_i s_i \cdot w_i}{\sum_i w_i}
+&
+\begin{array}{l}
+s_i = \text{component score} \\
+w_i = \text{component weight}
+\end{array}
+\end{array}
+\end{align*}
+$$
 
 | Component | Weight (default) | Description |
 |---|---|---|
@@ -459,15 +471,17 @@ $$\text{score} = \frac{\sum_i s_i \cdot w_i}{\sum_i w_i}$$
 | **Liked cluster similarity** | 0.3 (`liked_embedding_weight`) | Similarity to the centroid of accepted session embeddings |
 | **Inverted disliked similarity** | 0.2 (`disliked_embedding_weight`) | $1 - \text{sim}(\text{disliked})$ — penalises sessions close to rejected ones |
 | **Filter compliance** | 0.5 (`filter_margin_weight`) | Ratio of active filters matched (only active in soft mode) |
+| **Popularity** | 0.0 (`popularity_weight`, `exploration_weight`) | event-scoped log-normalized acceptance popularity (0–1) derived from session acceptance/rejection counters; supports an optional exploration bonus for cold-start items, that can temporarily boost unseen sessions to help cold-start scenarios. |
 
 All weights are request parameters and can be tuned per call.
 
-After scoring, an optional diversity re-ranking step can be applied. When `diversity_weight > 0`, a greedy MMR-style pass re-orders the ranked candidates before the final cut to avoid clusters of near-identical results. This is separate from the weighted score above — it reorders already-scored candidates rather than contributing to their individual scores. Diversity is measured as a blend of embedding dissimilarity (40%) and categorical metadata novelty across tags, format, language, and speakers (60%).
+**Diversity re-ranking**
+After scoring, an optional diversity re-ranking step can be applied. When `diversity_weight > 0`, a greedy MMR-style pass re-orders the ranked candidates before the final cut to avoid clusters of near-identical results. This is separate from the weighted score above — it reorders already-scored candidates rather than contributing to their individual scores. Diversity is measured as a categorical metadata novelty across tags, format, language, and speakers.
 
-**5. Goal modes**
+**4. Goal modes**
 
-- **`similarity`** (default) — Returns the top-N highest-scoring sessions globally.
-- **`plan`** — Runs a scheduling optimizer after scoring that selects a non-overlapping set of sessions fitting within provided time windows, respecting minimum break times and filling schedule gaps.
+- **`similarity`** (default) — Returns the top-N highest-scoring sessions globally. Ideal for users looking for the most relevant sessions based on their query and preferences, without strict constraints on scheduling.
+- **`plan`** — Runs a scheduling optimizer after scoring that selects a non-overlapping set of sessions fitting within provided time windows, respecting minimum break times and tries to fill gaps in a second pass. This is ideal for users looking for a personalized schedule recommendation that fits within their availability during the event.
 
 ---
 

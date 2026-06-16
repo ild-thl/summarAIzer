@@ -105,13 +105,13 @@ User                   API             ExecutionService       Celery Worker     
 
 Die verwendeten LLMs werden per `ChatModelConfig` pro Step konfiguriert. Defaults aus `.env` können überschrieben werden:
 
-| Step | Standard-Modell | Eigenschaft |
-|------|----------------|-------------|
-| `summary` | `mistral-large-3-675b-instruct-2512` | `temperature=0.7`, `max_tokens=3000` |
-| `key_takeaways` | `mistral-large-3-675b-instruct-2512` | `temperature=0.6`, `max_tokens=1500` |
-| `tags` | `mistral-large-3-675b-instruct-2512` | `temperature=0.5`, `max_tokens=500` |
-| `short_description` | `mistral-large-3-675b-instruct-2512` | `temperature=0.3`, `max_tokens=300` |
-| `mermaid` | `devstral-2-123b-instruct-2512` | `temperature=0.2`, `max_tokens=2000` |
+Beispielkonfiguration pro Step:
+
+| Step        | Standard-Modell                      | Eigenschaft                          | Begründung                                                                                      |
+|-------------|--------------------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------|
+| `summary`   | `mistral-large-3-675b-instruct-2512` | `temperature=0.3`, `max_tokens=5000` | Großes Modell mit guten sprachlichen Fähigkeiten für ausführliche, kohärente Zusammenfassungen. |
+| `mermaid`   | `devstral-2-123b-instruct-2512`      | `temperature=0.2`, `max_tokens=1500` | Coding-optimiertes Modell für zuverlässige Mermaid-Syntax-Generierung.                          |
+| `wordcloud` | `meta-llama-3.1-8b-instruct`         | `temperature=0.1`, `max_tokens=500`  | Kleines, schnelles Modell für einfache Aufgaben wie Wortwolken-Generierung.                     |
 
 ---
 
@@ -198,13 +198,19 @@ class ImageStep(LLMStep):
 ## Vorhandene Steps
 
 | Identifier | Klasse | Basis-Klasse | Beschreibung |
-|------------|--------|-------------|-------------|
-| `summary` | `SummaryStep` | `LLMStep` | Format-aware Markdown-Zusammenfassung (Vortrag / Diskussion / Workshop) |
-| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | Key Takeaways als JSON-Array |
-| `tags` | `TagsStep` | `LLMStep` | 2-5 kategorie-Tags; erhält manuelle Tags, ersetzt nur generierte |
-| `short_description` | `ShortDescriptionStep` | `WorkflowStep` | Komprimiert `short_description` für bessere Embeddings |
+|------------|--------|-------------|---------------|
+| `transcription` | `TranscriptionStep` | `WorkflowStep` | Erzeugt eine Transkription anhand eines Youtube-Links oder anhand von zuvor hochgeladenen Audio-Dateien |
+| `slide_markdown` | `SlideMarkdownStep` | `WorkflowStep` | Konvertiert einen zuvor hochgeldadene PDF-Foliensatz zu Markdown, um ihn als Kontext für andere Steps nutzbar zu machen |
+| `summary` | `SummaryStep` | `LLMStep` | Ausgiebige Zusammenfassung mit unterschidlichen Inhaltspunkten und Fokustehmen je nach Session-Format |
+| `key_takeaways` | `KeyTakeawaysStep` | `LLMStep` | Zusammenfassung der Kernaussagen |
+| `positions` | `PositionsStep` | `LLMStep` | Zusamenfassung der unterschiedlichen Positionen je Person einer Diskussionsrunde |
+| `tags` | `TagsStep` | `LLMStep` | Erzeugt 2-5 Tags |
 | `mermaid` | `MermaidStep` | `LLMStep` | Mermaid-Mindmap-Diagramm |
+| `wordcloud` | `WordCloudStep` | `LLMStep` | Die relevantesten Schlagworte nach Häufigkeit sortiert als JSON-Array, für Wortwolken-Visualisierung |
 | `image` | `ImageStep` | `LLMStep` | KI-generiertes Titelbild, Upload zu S3 |
+| `qna` | `QnAStep` | `LLMStep` | 3-5 Fragen & Antworten zum Inhalt |
+| `glossary` | `GlossaryStep` | `LLMStep` | Glossar wichtiger Begriffe als JSON-Array |
+| `sondercluster` | `SonderclusterStep` | `LLMStep` | Generiert eine kurze Einordnung der Session in Kontext eines UFF-Sonderclusters sofern die Session per Tag einem Sondercluster zugeordnet ist. |
 
 ---
 
