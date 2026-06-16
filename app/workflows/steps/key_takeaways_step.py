@@ -53,11 +53,6 @@ class KeyTakeawaysStep(LLMStep):
         is_lightning = session.session_format == SessionFormat.LIGHTNING_TALK
         count = _LIGHTNING_TALK_COUNT if is_lightning else _DEFAULT_COUNT
         format_label = session.session_format.value if session.session_format else "Vortrag"
-        description_block = (
-            f"\n\nSession-Beschreibung und Problemstellung:\n{session.description}"
-            if session.description
-            else ""
-        )
 
         return [
             SystemMessage(
@@ -67,7 +62,7 @@ Deine Aufgabe ist es, {count} spezifische, inhaltlich eigenständige Kernpunkte 
 - Klar und prägnant formuliert sein (1-2 Sätze)
 - Einen eigenständigen Informationswert haben
 - Direkt aus dem Inhalt der Veranstaltung stammen (keine Erfindungen)
-- Für Teilnehmende relevant oder umsetzbar sein
+- Für Teilnehmende relevant und auf die Problemstellung aus der Session-Beschreibung bezogen sein
 
 Gib AUSSCHLIESSLICH eine Markdown-Liste zurück, ohne weitere Einleitungen oder Erklärungen.
 Beispiel:
@@ -78,7 +73,10 @@ Beispiel:
             HumanMessage(
                 content=f"""Veranstaltungstitel: {session.title}
 Format: {format_label}
-Referent:innen: {", ".join(session.speakers) if session.speakers else "Unbekannt"}{description_block}
+Referent:innen: {", ".join(session.speakers) if session.speakers else "Unbekannt"}
+
+Session-Beschreibung:
+{session.description or 'Keine Beschreibung verfügbar.'}
 
 Transkript:
 {context.get('transcription', '')}

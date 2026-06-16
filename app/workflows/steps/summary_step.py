@@ -28,28 +28,24 @@ def _build_talk_messages(
 
     if is_lightning:
         sections_text = (
-            "1. **Kontext & Einordnung** – Worum geht es? Einordnung in den größeren Zusammenhang, 2-3 Sätze\n"
-            "2. **Kernaussage** – Die zentrale inhaltliche Botschaft dieses Lightning Talks\n"
-            "3. **Argumente & Belege** – Stützende Belege, Zahlen oder Beispiele (weglassen wenn nicht ableitbar)\n"
-            "4. **Handlungsempfehlung** – Konkrete Empfehlung oder Botschaft (weglassen wenn nicht ableitbar)"
+            "1. **Kontext** – Worum geht es? Kurze Einordnung in den Themenzusammenhang, 2 Sätze\n"
+            "2. **Kernaussage** – Die zentrale inhaltliche Botschaft dieses Lightning Talks inkl. Argumente, Fakten, Zahlen, Quellen die im Material genannt wurden\n"
+            "4. **Fazit** – Konkrete Handlungsempfehlung oder Botschaft (weglassen wenn nicht ableitbar)"
         )
         length_instruction = "\nHalte die Zusammenfassung kompakt (max. ~250 Wörter)."
         task_instruction = (
             "Erstelle nun eine kompakte Markdown-Zusammenfassung dieses Lightning Talks."
         )
-        sahnehaeubchen_note = ""
     else:
         sections_text = (
-            "1. **Kontext & Einordnung** – Worum geht es? Kontext und Einordnung in den Themenzusammenhang, 2-4 Sätze\n"
-            "2. **Kernaussagen** – Die wichtigsten inhaltlichen Punkte (max 2-6); adressiert die Problemstellung aus der Session-Beschreibung\n"
-            "3. **Argumente & Belege** – Fakten, Zahlen und Beispiele; nur falls vorhanden\n"
-            "4. **Handlungsempfehlung** – Konkrete Empfehlung oder Botschaft; nur falls ableitbar alternativ kuzes Fazit"
+            "1. **Kontext** – Worum geht es? Kurze Einordnung in den Themenzusammenhang , 2-4 Sätze\n"
+            "2. **Kernaussagen** – Die wichtigsten inhaltlichen Punkte (max 5) inkl. Argumente, Fakten, Zahlen, Quellen die im Material genannt wurden\n"
+            "4. **Fazit** – Konkrete Handlungsempfehlung oder Botschaft; nur falls ableitbar alternativ kuzes Fazit"
         )
         length_instruction = ""
         task_instruction = (
             "Erstelle nun eine strukturierte Markdown-Zusammenfassung dieses Vortrags."
         )
-        sahnehaeubchen_note = "\n\nAbschnitte 4 und 5 weglassen statt mit Platzhaltern füllen."
 
     coverage_instruction = (
         "\n\nDecke in der Zusammenfassung alle vorab extrahierten Kernpunkte vollständig ab."
@@ -60,15 +56,16 @@ def _build_talk_messages(
     system_message = f"""Du bist ein Assistent, der Vorträge und Impuls-Präsentationen dokumentiert. Du erstellst präzise, gut lesbare Zusammenfassungen mit folgenden Eigenschaften:
 
 - Klare, sachliche Sprache auf Deutsch
-- Keine Halluzinationen: Ausschließlich Inhalte aus Transkription und Kernpunkten verwenden
+- Keine Halluzinationen: Ausschließlich Inhalte aus Transkription, Präsentationsfolie und Kernpunkten verwenden
+- Transkriptionen können kleinere Fehler enthalten, diese dürfen korrigert werden, wenn der Kontext dies eindeutig erlaubt (z.B. offensichtliche Tippfehler oder falsch transkribierte Fachbegriffe), aber erfinde keine Informationen, die nicht im Kontext enthalten sind.
 - Strukturierte Gliederung mit maximal zwei Überschriftsebenen
+- Gendern mit Doppelpunkt, z.B. Referent:innen, Teilnehmer:innen
 - Keine wörtlichen Zitate aus der Transkription
-- Fachbegriffe und Tool-Namen exakt aus dem Original übernehmen
 
 Deine Zusammenfassung enthält diese Abschnitte:
 {sections_text}{length_instruction}
 
-Format: Markdown.{sahnehaeubchen_note}{coverage_instruction}"""
+Format: Markdown.{coverage_instruction}"""
 
     human_parts = [
         f"Veranstaltung: {session.title}",
@@ -113,10 +110,12 @@ def _build_workshop_messages(
 
     system_message = f"""Du bist ein Assistent, der Workshops, Trainings und Lab-Sessions dokumentiert. Du erstellst praxisnahe, strukturierte Dokumentationen mit folgenden Eigenschaften:
 
-- Klare, anleitende Sprache auf Deutsch
-- Keine Erfindungen: Ausschließlich Inhalte aus Transkription und Kernpunkten verwenden
+- Klare, sachliche Sprache auf Deutsch
+- Keine Halluzinationen: Ausschließlich Inhalte aus Transkription, Präsentationsfolie und Kernpunkten verwenden
+- Transkriptionen können kleinere Fehler enthalten, diese dürfen korrigert werden, wenn der Kontext dies eindeutig erlaubt (z.B. offensichtliche Tippfehler oder falsch transkribierte Fachbegriffe), aber erfinde keine Informationen, die nicht im Kontext enthalten sind.
+- Strukturierte Gliederung mit maximal zwei Überschriftsebenen
+- Gendern mit Doppelpunkt, z.B. Referent:innen, Teilnehmer:innen
 - Besonderer Fokus auf vermittelte Methoden, Tools und praktische Aktivitäten
-- Übungen und ihre Zielsetzungen explizit benennen – nicht nur erwähnen, dass Übungen stattfanden
 - Keine wörtlichen Zitate aus der Transkription
 
 Deine Zusammenfassung enthält diese Abschnitte (Workshop):
@@ -124,7 +123,7 @@ Deine Zusammenfassung enthält diese Abschnitte (Workshop):
 2. **Methodik & Ablauf** – Ablauf und eingesetzte Methoden und Frameworks
 3. **Kerninhalte** – Inhaltliche Substanz; adressiert die Problemstellung aus der Session-Beschreibung
 4. **Arbeitsergebnisse** – Erkenntnisse und Outputs aus Gruppenarbeit oder Arbeitsphasen (wenn ableitbar)
-5. **Handlungsempfehlung & Transfer** – Wie können die Inhalte in der Praxis angewendet werden? (wenn ableitbar)
+5. **Transfer** – Wie können die Inhalte in der Praxis angewendet werden? (wenn ableitbar)
 
 Abschnitte 4-5 weglassen wenn kein Material vorhanden.
 
@@ -167,7 +166,11 @@ def _build_discussion_messages(
 
     system_message = """Du bist ein Assistent, der Diskussionen und Panel-Gespräche objektiv dokumentiert. Du erstellst ausgewogene, neutrale Berichte mit folgenden Eigenschaften:
 
-- Neutrale, berichtende Sprache auf Deutsch – keine eigene Position
+- Neutrale, sachliche Sprache auf Deutsch – keine eigene Position
+- Keine Halluzinationen: Ausschließlich Inhalte aus Transkription, Präsentationsfolie und Kernpunkten verwenden
+- Transkriptionen können kleinere Fehler enthalten, diese dürfen korrigert werden, wenn der Kontext dies eindeutig erlaubt (z.B. offensichtliche Tippfehler oder falsch transkribierte Fachbegriffe), aber erfinde keine Informationen, die nicht im Kontext enthalten sind.
+- Strukturierte Gliederung mit maximal zwei Überschriftsebenen
+- Gendern mit Doppelpunkt, z.B. Referent:innen, Teilnehmer:innen
 - Verschiedene Perspektiven fair und vollständig darstellen
 - Sprecher:innen namentlich zuordnen, soweit aus dem Transkript erkennbar
 - Mehrheitsmeinungen und Minderheitsmeinungen klar unterscheiden
@@ -175,12 +178,11 @@ def _build_discussion_messages(
 - Keine wörtlichen Zitate aus der Transkription
 
 Deine Zusammenfassung enthält diese Abschnitte:
-1. **Kontext & Einordnung** – Ausgangsfrage, These oder Rahmensetzung der Diskussion
-2. **Diskussionslinien** – Zentrale Fragestellungen und Positionen; adressiert die Problemstellung
-3. **Perspektiven der Beteiligten** – Position A, Position B etc. mit namentlicher Zuordnung
-4. **Argumente & Belege** – Stützende Fakten und Beispiele je Perspektive
+1. **Kontext** – Ausgangsfrage, These oder Rahmensetzung der Diskussion
+2. **Diskussionslinien** – Zentrale Fragestellungen; adressiert die Problemstellung
+3. **Kernaussagen** – Position A, Position B etc. mit namentlicher Zuordnung, inkl Stützende Fakten, Belege und Beispiele je Perspektive
 5. **Offene Fragen** – Was blieb ungeklärt? (weglassen wenn kein Material)
-6. **Ergebnis & Handlungsempfehlung** – Was wurde (vorläufig) geklärt? Was nehmen Teilnehmende mit? (weglassen wenn kein Material)
+6. **Ergebnis** – Was wurde (vorläufig) geklärt? Was nehmen Teilnehmende mit? (weglassen wenn kein Material)
 
 Format: Markdown."""
 

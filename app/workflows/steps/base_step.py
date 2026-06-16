@@ -332,6 +332,8 @@ class WorkflowStep(ABC):
             content_type=content.get("content_type", "plain_text"),
             workflow_execution_id=execution_id,
             meta_info=content.get("meta_info"),
+            ai_generated=True,
+            editorially_reviewed=False,
         )
 
         # Add to session's available content identifiers

@@ -27,7 +27,7 @@ def merge_dicts(left: dict, right: dict) -> dict:
 
 
 # Format groups used for routing decisions
-_DISCUSSION_FORMATS = {SessionFormat.DISCUSSION}
+_DISCUSSION_FORMAT = SessionFormat.DISCUSSION
 _WORKSHOP_FORMATS = {SessionFormat.WORKSHOP, SessionFormat.TRAINING, SessionFormat.LAB}
 _LIGHTNING_FORMAT = SessionFormat.LIGHTNING_TALK
 _INPUT_FORMAT = SessionFormat.INPUT
@@ -43,20 +43,11 @@ class TalkWorkflow(BaseWorkflow):
 
     End steps by format (all run in parallel after summary):
 
-    Input (long talk):
-        → quotes + mermaid + qna + glossary + tags + image
+    Input (long talk) / Discussion / Panel:
+        → quotes + mermaid + qna + glossary + image
 
-    Lightning Talk (short):
-        → glossary + tags + image
-
-    Workshop / Training / Lab:
-        → glossary + tags + image
-
-    Discussion / Panel:
-        → quotes + qna + glossary + tags + image
-
-    Other / unknown:
-        → glossary + tags + image
+    Lightning Talk (short) / Workshop / Training / Lab / Other / unknown:
+        → glossary + image
 
     The transcription step is skipped when a transcription already exists in the database.
     Session format is loaded from the database and stored in state to drive routing.
@@ -162,7 +153,7 @@ class TalkWorkflow(BaseWorkflow):
         fmt_value = state.get("session_format")
         fmt = self._parse_session_format(fmt_value)
 
-        if fmt in _DISCUSSION_FORMATS:
+        if fmt == _DISCUSSION_FORMAT:
             logger.info("talk_workflow_discussion_path", session_format=fmt_value)
             return "positions"
 
@@ -182,19 +173,13 @@ class TalkWorkflow(BaseWorkflow):
         fmt_value = state.get("session_format")
         fmt = self._parse_session_format(fmt_value)
 
-        if fmt in _DISCUSSION_FORMATS:
-            logger.info("talk_workflow_post_summary_discussion", session_format=fmt_value)
-            steps = ["quotes", "qna", "glossary", "tags", "image", "wordcloud"]
-        elif fmt == _INPUT_FORMAT:
+        if fmt in (_INPUT_FORMAT, _DISCUSSION_FORMAT):
             logger.info("talk_workflow_post_summary_input_talk", session_format=fmt_value)
-            steps = ["quotes", "mermaid", "qna", "glossary", "tags", "image", "wordcloud"]
-        elif fmt in _WORKSHOP_FORMATS:
-            logger.info("talk_workflow_post_summary_workshop", session_format=fmt_value)
-            steps = ["glossary", "tags", "image", "wordcloud"]
+            steps = ["quotes", "mermaid", "qna", "glossary", "image", "wordcloud"]
         else:
-            # LIGHTNING_TALK, OTHER, None
+            # LIGHTNING_TALK, WORKSHOPS, OTHER, None
             logger.info("talk_workflow_post_summary_end", session_format=fmt_value)
-            steps = ["glossary", "tags", "image", "wordcloud"]
+            steps = ["glossary", "image", "wordcloud"]
 
         # Conditionally add Sondercluster step when session carries a cluster tag.
         session_tags = state.get("session_tags") or []
@@ -215,8 +200,7 @@ class TalkWorkflow(BaseWorkflow):
         - Phase 1: Transcription (or load from DB), slide_markdown, and session context in parallel
         - Phase 2: Content extraction (key_takeaways or positions, format-dependent)
         - Phase 3: Summary
-        - Phase 4: All remaining steps run in parallel (quotes, mermaid,
-                   tags, image - selection depends on format)
+        - Phase 4: All remaining steps run in parallel (quotes, mermaid, image - selection depends on format)
 
         Returns:
             Compiled LangGraph StateGraph ready to invoke
@@ -234,8 +218,8 @@ class TalkWorkflow(BaseWorkflow):
         builder.add_node("quotes", create_step_node("quotes"))
         builder.add_node("qna", create_step_node("qna"))
         builder.add_node("glossary", create_step_node("glossary"))
+        builder.add_node("wordcloud", create_step_node("wordcloud"))
         builder.add_node("mermaid", create_step_node("mermaid"))
-        builder.add_node("tags", create_step_node("tags"))
         builder.add_node("image", create_step_node("image"))
         builder.add_node("sondercluster", create_step_node("sondercluster"))
 
@@ -270,8 +254,8 @@ class TalkWorkflow(BaseWorkflow):
         builder.add_edge("quotes", END)
         builder.add_edge("qna", END)
         builder.add_edge("glossary", END)
+        builder.add_edge("wordcloud", END)
         builder.add_edge("mermaid", END)
-        builder.add_edge("tags", END)
         builder.add_edge("image", END)
         builder.add_edge("sondercluster", END)
 

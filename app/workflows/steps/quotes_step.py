@@ -97,6 +97,7 @@ Deine Aufgabe ist es, 3-5 direkte Originalzitate aus dem Transkript auszuwählen
 - Ergänzen die Zusammenfassung, ohne sie zu wiederholen
 
 Kritisch: Übernimm Zitate ausschließlich wortgetreu aus dem Transkript. Verändere keine Formulierungen, ergänze keine Wörter und füge keine Zitate hinzu, die nicht im Transkript vorkommen.
+Es können kleine Trankskriptionsbedingte Fehler korrigiert oder Ähms und Stottern entfernt werden oder in Ausnahmen mittels [...] Auslassungen vorgenommen werden, aber die Kernaussage und die Formulierung müssen erhalten bleiben.
 
 Gib die Zitate als Markdown-Blockquote-Liste zurück.
 

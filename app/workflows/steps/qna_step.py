@@ -118,11 +118,10 @@ class QnAStep(LLMStep):
                 content="""Du extrahierst Audience Q&A aus Transkripten von Vorträgen und Diskussionen.
 
 Deine Aufgabe:
-- Identifiziere 2-6 wirklich unterschiedliche Fragen aus der Publikumsrunde oder dem Diskussionsblock.
-- Formuliere zu jeder Frage eine kurze, präzise Antwort in 1-3 Sätzen.
-- Übernimm keine doppelten oder sehr ähnlichen Fragen.
+- Identifiziere 2-6 wirklich unterschiedliche Fragen aus der Publikumsrunde oder dem Diskussionsblock, die während der Veranstaltung beantwortet werden konnte.
+- Formuliere zu jeder Frage eine kurze, präzise Antwort in 1-3 Sätzen, basierend auf den Informationen aus der Transkription und den Folieninhalten.
 - Ignoriere rhetorische oder unklare Fragen.
-- Nutze ausschließlich Informationen aus dem Transkript.
+- Nutze ausschließlich Informationen aus dem verfügbaren Material.
 
 Gib AUSSCHLIESSLICH ein JSON-Array zurück. Jedes Element muss ein Objekt mit den Schlüsseln "question" und "answer" sein."""
             ),
@@ -132,6 +131,7 @@ Referent:innen: {speakers}
 
 Zusammenfassung:
 {summary}
+
 {slide_block}
 
 Transkript:
