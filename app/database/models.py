@@ -67,6 +67,14 @@ class AudioFileProcessingStatus(str, Enum):
     FAILED = "failed"
 
 
+class SessionOwnershipClaimStatus(str, Enum):
+    """Lifecycle status for session ownership claims."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class SessionLocation(Base):
     """Structured location for a session (room, stage, venue, etc.)."""
 
@@ -136,7 +144,6 @@ class Session(Base):
     event_id = Column(
         Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     available_content_identifiers = Column(
         JSON, default=list, nullable=False
     )  # ["transcription", "summary", "tags"]
@@ -152,7 +159,6 @@ class Session(Base):
 
     # Relationships
     event = relationship("Event", back_populates="sessions")
-    owner = relationship("User", back_populates="sessions", foreign_keys=[owner_id])
     content_items = relationship(
         "GeneratedContent", back_populates="session", cascade="all, delete-orphan"
     )
@@ -173,6 +179,26 @@ class Session(Base):
     )
     external_ids = relationship(
         "SessionExternalId",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    owner_links = relationship(
+        "SessionOwner",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    owners = relationship(
+        "User",
+        secondary="session_owners",
+        back_populates="owned_sessions",
+        primaryjoin="Session.id == SessionOwner.session_id",
+        secondaryjoin="User.id == SessionOwner.user_id",
+        overlaps="owner_links",
+    )
+    ownership_claims = relationship(
+        "SessionOwnershipClaim",
         back_populates="session",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -233,6 +259,92 @@ class SessionPopularity(Base):
     session = relationship("Session", back_populates="popularity")
 
 
+class SessionOwner(Base):
+    """Many-to-many owner assignment for sessions."""
+
+    __tablename__ = "session_owners"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    added_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("session_id", "user_id", name="uq_session_owner_pair"),)
+
+    session = relationship(
+        "Session",
+        back_populates="owner_links",
+        overlaps="owners,owned_sessions",
+    )
+    user = relationship(
+        "User",
+        foreign_keys=[user_id],
+        back_populates="session_owner_links",
+        overlaps="owners,owned_sessions",
+    )
+    added_by = relationship("User", foreign_keys=[added_by_user_id])
+
+
+class SessionOwnershipClaim(Base):
+    """Request to gain owner access to a session."""
+
+    __tablename__ = "session_ownership_claims"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    requester_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    status = Column(
+        String(50),
+        default=SessionOwnershipClaimStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    request_note = Column(Text, nullable=True)
+    review_note = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "requester_user_id",
+            "status",
+            name="uq_session_claim_status_pair",
+        ),
+    )
+
+    session = relationship("Session", back_populates="ownership_claims")
+    requester = relationship(
+        "User",
+        foreign_keys=[requester_user_id],
+        back_populates="session_ownership_claims",
+    )
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
+
+
 class User(Base):
     """Generic user model supporting both API service accounts and human users."""
 
@@ -252,7 +364,27 @@ class User(Base):
     # Relationships
     api_keys = relationship("APIKey", back_populates="user", cascade="all, delete-orphan")
     events = relationship("Event", back_populates="owner")
-    sessions = relationship("Session", back_populates="owner")
+    session_owner_links = relationship(
+        "SessionOwner",
+        foreign_keys="SessionOwner.user_id",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        overlaps="owners,owned_sessions",
+    )
+    owned_sessions = relationship(
+        "Session",
+        secondary="session_owners",
+        back_populates="owners",
+        primaryjoin="User.id == SessionOwner.user_id",
+        secondaryjoin="Session.id == SessionOwner.session_id",
+        overlaps="session_owner_links,owner_links,user,session",
+    )
+    session_ownership_claims = relationship(
+        "SessionOwnershipClaim",
+        foreign_keys="SessionOwnershipClaim.requester_user_id",
+        back_populates="requester",
+        cascade="all, delete-orphan",
+    )
 
 
 class APIKey(Base):

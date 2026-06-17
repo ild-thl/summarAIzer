@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.crud.generated_content import create_content
 from app.database.models import Session as SessionModel
-from app.database.models import SessionStatus
+from app.database.models import SessionOwner, SessionStatus
 from app.schemas.session import SessionDocumentationResponse
 
 
@@ -22,11 +22,18 @@ def session_published(test_db, sample_event, sample_user):
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.PUBLISHED,
-        owner_id=sample_user.id,
     )
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
 
     # Add generated content
     create_content(
@@ -58,11 +65,18 @@ def session_draft(test_db, sample_event, sample_user):
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.DRAFT,
-        owner_id=sample_user.id,
     )
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
     return session
 
 
@@ -349,11 +363,18 @@ class TestDocumentationEventHandler:
             start_datetime=now,
             end_datetime=now + timedelta(hours=1),
             status=SessionStatus.DRAFT,  # Start as draft
-            owner_id=sample_user.id,
         )
         test_db.add(session)
         test_db.commit()
         test_db.refresh(session)
+        test_db.add(
+            SessionOwner(
+                session_id=session.id,
+                user_id=sample_user.id,
+                added_by_user_id=sample_user.id,
+            )
+        )
+        test_db.commit()
 
         # Add content
         create_content(
@@ -402,11 +423,18 @@ class TestDocumentationEventHandler:
             start_datetime=now,
             end_datetime=now + timedelta(hours=1),
             status=SessionStatus.PUBLISHED,
-            owner_id=sample_user.id,
         )
         test_db.add(session)
         test_db.commit()
         test_db.refresh(session)
+        test_db.add(
+            SessionOwner(
+                session_id=session.id,
+                user_id=sample_user.id,
+                added_by_user_id=sample_user.id,
+            )
+        )
+        test_db.commit()
 
         # Add only one content type
         create_content(

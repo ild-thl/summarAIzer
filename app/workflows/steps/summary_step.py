@@ -34,6 +34,7 @@ def _build_talk_messages(
         )
         length_instruction = "\nHalte die Zusammenfassung kompakt (max. ~250 Wörter)."
         task_instruction = (
+            "Sollte die Session eine Reihe von Lightning Talks enthalten, fasse jeden Talk einzeln entsprechend der obigen Struktur zusammen. Nummeriere die Talks entsprechend ihrer Reihenfolge im Material (z.B. Talk 1, Talk 2 etc.).\n\n"
             "Erstelle nun eine kompakte Markdown-Zusammenfassung dieses Lightning Talks."
         )
     else:
@@ -178,8 +179,7 @@ def _build_discussion_messages(
 - Keine wörtlichen Zitate aus der Transkription
 
 Deine Zusammenfassung enthält diese Abschnitte:
-1. **Kontext** – Ausgangsfrage, These oder Rahmensetzung der Diskussion
-2. **Diskussionslinien** – Zentrale Fragestellungen; adressiert die Problemstellung
+1. **Kontext** – Ausgangsfrage, These oder Rahmensetzung der Diskussion, Zentrale Fragestellungen; adressiert die Problemstellung
 3. **Kernaussagen** – Position A, Position B etc. mit namentlicher Zuordnung, inkl Stützende Fakten, Belege und Beispiele je Perspektive
 5. **Offene Fragen** – Was blieb ungeklärt? (weglassen wenn kein Material)
 6. **Ergebnis** – Was wurde (vorläufig) geklärt? Was nehmen Teilnehmende mit? (weglassen wenn kein Material)

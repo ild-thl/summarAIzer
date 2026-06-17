@@ -17,6 +17,7 @@ from app.database.models import (
     EventStatus,
     SessionFormat,
     SessionLocation,
+    SessionOwner,
     SessionStatus,
     User,
 )
@@ -259,12 +260,19 @@ def sample_session(test_db, sample_event, sample_user):
         language="en",
         uri="test-session",
         event_id=sample_event.id,
-        owner_id=sample_user.id,
     )
     session.location_rel = SessionLocation(name="Room 101")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
     return session
 
 
@@ -285,12 +293,19 @@ def sample_session_no_event(test_db, sample_user):
         language="en",
         uri="standalone-session",
         event_id=None,
-        owner_id=sample_user.id,
     )
     session.location_rel = SessionLocation(name="Room 202")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
     return session
 
 
@@ -378,11 +393,18 @@ def session_with_owner(test_db, event_with_owner, sample_user):
         status=SessionStatus.DRAFT,
         uri="owned-session",
         event_id=event_with_owner.id,
-        owner_id=sample_user.id,
     )
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
     return session
 
 
@@ -403,12 +425,19 @@ def published_session(test_db, sample_event, sample_user):
         language="en",
         uri="published-test-session",
         event_id=sample_event.id,
-        owner_id=sample_user.id,
     )
     session.location_rel = SessionLocation(name="Room 101")
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
     return session
 
 

@@ -5,7 +5,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
-from app.database.models import EventStatus, SessionFormat, SessionStatus
+from app.database.models import (
+    EventStatus,
+    SessionFormat,
+    SessionOwnershipClaimStatus,
+    SessionStatus,
+)
 
 # ============================================================================
 # Location Schemas
@@ -399,7 +404,7 @@ class SessionResponse(SessionBase):
     """Schema for Session response."""
 
     id: int = Field(..., description="Session ID")
-    owner_id: int | None = Field(None, description="Session owner ID")
+    owner_ids: list[int] = Field(default_factory=list, description="Session owner user IDs")
     location: SessionLocationResponse | None = Field(
         None, description="Structured session location"
     )
@@ -428,6 +433,8 @@ class SessionResponse(SessionBase):
         if hasattr(data, "location_rel"):
             obj = dict(data.__dict__) if hasattr(data, "__dict__") else {}
             obj["location"] = data.location_rel
+            if hasattr(data, "owners"):
+                obj["owner_ids"] = sorted({owner.id for owner in data.owners})
             if hasattr(data, "external_ids"):
                 obj["external_ids"] = data.external_ids
             obj["documentation_published_at"] = _extract_documentation_published_at(data)
@@ -504,6 +511,58 @@ class SessionPageResponse(BaseModel):
 
     items: list[SessionListResponse] = Field(default_factory=list)
     meta: PaginationMeta
+
+
+class SessionOwnerLinkResponse(BaseModel):
+    """Represents a session owner assignment."""
+
+    session_id: int
+    user_id: int
+    user_name: str | None = None  # username from owner's User record
+    user_keycloak_id: str | None = None
+    email: str | None = None  # email from owner's User record
+    added_by_user_id: int | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SessionOwnerAddRequest(BaseModel):
+    """Request payload to add a session owner."""
+
+    user_id: int = Field(..., ge=1)
+
+
+class SessionOwnershipClaimCreate(BaseModel):
+    """Request payload to create an ownership claim."""
+
+    request_note: str | None = Field(None, max_length=4000)
+
+
+class SessionOwnershipClaimReview(BaseModel):
+    """Request payload for approve/reject claim review."""
+
+    review_note: str | None = Field(None, max_length=4000)
+
+
+class SessionOwnershipClaimResponse(BaseModel):
+    """Represents a session ownership claim."""
+
+    id: int
+    session_id: int
+    requester_user_id: int
+    requester_email: str | None = None
+    requester_name: str | None = None  # username from requester's User record
+    requester_keycloak_id: str | None = None
+    status: SessionOwnershipClaimStatus
+    request_note: str | None = None
+    review_note: str | None = None
+    reviewed_by_user_id: int | None = None
+    reviewed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TimeWindow(BaseModel):

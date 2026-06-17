@@ -1,6 +1,7 @@
 """CRUD operations for Session model."""
 
 from collections.abc import Iterable
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -10,7 +11,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.crud.base import CRUDBase
 from app.database.models import Session as SessionModel
-from app.database.models import SessionExternalId, SessionLocation, SessionPopularity, SessionStatus
+from app.database.models import (
+    SessionExternalId,
+    SessionLocation,
+    SessionOwner,
+    SessionOwnershipClaim,
+    SessionOwnershipClaimStatus,
+    SessionPopularity,
+    SessionStatus,
+)
 from app.schemas.session import SessionCreate, SessionExternalIdCreate, SessionUpdate
 
 logger = structlog.get_logger()
@@ -88,7 +97,7 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db_obj.external_ids.append(SessionExternalId(label=label, external_id=external_id))
 
     def create(
-        self, db: Session, obj_in: SessionCreate, owner_id: int | None = None
+        self, db: Session, obj_in: SessionCreate, initial_owner_user_id: int | None = None
     ) -> SessionModel:
         """Create a new session."""
         try:
@@ -107,7 +116,6 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
                 language=obj_in.language,
                 uri=obj_in.uri,
                 event_id=obj_in.event_id,
-                owner_id=owner_id,
                 available_content_identifiers=[],
             )
             if obj_in.location is not None:
@@ -122,12 +130,21 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             db.add(db_obj)
             db.commit()
             db.refresh(db_obj)
+
+            if initial_owner_user_id is not None:
+                self.add_owner(
+                    db,
+                    db_obj.id,
+                    initial_owner_user_id,
+                    added_by_user_id=initial_owner_user_id,
+                )
+
             logger.info(
                 "session_created",
                 session_id=db_obj.id,
                 uri=db_obj.uri,
                 event_id=db_obj.event_id,
-                owner_id=owner_id,
+                initial_owner_user_id=initial_owner_user_id,
             )
 
             _invalidate_query_refinement_cache({db_obj.event_id})
@@ -597,6 +614,192 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
     def count_by_event(self, db: Session, event_id: int) -> int:
         """Count sessions in an event."""
         return db.query(self.model).filter(self.model.event_id == event_id).count()
+
+    def is_session_owner(self, db: Session, session_id: int, user_id: int) -> bool:
+        """Return whether the user is linked as owner for the given session."""
+        link = (
+            db.query(SessionOwner)
+            .filter(
+                SessionOwner.session_id == session_id,
+                SessionOwner.user_id == user_id,
+            )
+            .first()
+        )
+        return link is not None
+
+    def list_owners(self, db: Session, session_id: int) -> list[dict]:
+        """List owner links for a session with user details."""
+        from app.database.models import User
+
+        owners = (
+            db.query(
+                SessionOwner.session_id,
+                SessionOwner.user_id,
+                SessionOwner.added_by_user_id,
+                SessionOwner.created_at,
+                User.username.label("user_name"),
+                User.email,
+                User.keycloak_sub.label("user_keycloak_id"),
+            )
+            .join(User, SessionOwner.user_id == User.id)
+            .filter(SessionOwner.session_id == session_id)
+            .order_by(SessionOwner.created_at.asc(), SessionOwner.id.asc())
+            .all()
+        )
+
+        return [
+            {
+                "session_id": owner.session_id,
+                "user_id": owner.user_id,
+                "user_name": owner.user_name,
+                "email": owner.email,
+                "user_keycloak_id": owner.user_keycloak_id,
+                "added_by_user_id": owner.added_by_user_id,
+                "created_at": owner.created_at,
+            }
+            for owner in owners
+        ]
+
+    def add_owner(
+        self,
+        db: Session,
+        session_id: int,
+        user_id: int,
+        added_by_user_id: int | None,
+    ) -> SessionOwner:
+        """Add a user as session owner if not already linked."""
+        existing = (
+            db.query(SessionOwner)
+            .filter(
+                SessionOwner.session_id == session_id,
+                SessionOwner.user_id == user_id,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+
+        owner_link = SessionOwner(
+            session_id=session_id,
+            user_id=user_id,
+            added_by_user_id=added_by_user_id,
+        )
+        db.add(owner_link)
+        db.commit()
+        db.refresh(owner_link)
+        return owner_link
+
+    def remove_owner(
+        self,
+        db: Session,
+        session_id: int,
+        user_id: int,
+    ) -> bool:
+        """Remove a user as session owner. Returns True if successful, False if not found."""
+        owner_link = (
+            db.query(SessionOwner)
+            .filter(
+                SessionOwner.session_id == session_id,
+                SessionOwner.user_id == user_id,
+            )
+            .first()
+        )
+        if owner_link is None:
+            return False
+
+        db.delete(owner_link)
+        db.commit()
+        return True
+
+    def create_ownership_claim(
+        self,
+        db: Session,
+        session_id: int,
+        requester_user_id: int,
+        request_note: str | None,
+    ) -> SessionOwnershipClaim:
+        """Create an ownership claim if no pending claim exists for requester and session."""
+        existing_pending = (
+            db.query(SessionOwnershipClaim)
+            .filter(
+                SessionOwnershipClaim.session_id == session_id,
+                SessionOwnershipClaim.requester_user_id == requester_user_id,
+                SessionOwnershipClaim.status == SessionOwnershipClaimStatus.PENDING.value,
+            )
+            .first()
+        )
+        if existing_pending is not None:
+            return existing_pending
+
+        claim = SessionOwnershipClaim(
+            session_id=session_id,
+            requester_user_id=requester_user_id,
+            status=SessionOwnershipClaimStatus.PENDING.value,
+            request_note=request_note,
+        )
+        db.add(claim)
+        db.commit()
+        db.refresh(claim)
+        return claim
+
+    def list_ownership_claims(self, db: Session, session_id: int) -> list[SessionOwnershipClaim]:
+        """List ownership claims for a session sorted by newest first."""
+        return (
+            db.query(SessionOwnershipClaim)
+            .filter(SessionOwnershipClaim.session_id == session_id)
+            .order_by(SessionOwnershipClaim.created_at.desc(), SessionOwnershipClaim.id.desc())
+            .all()
+        )
+
+    def read_ownership_claim(
+        self,
+        db: Session,
+        session_id: int,
+        claim_id: int,
+    ) -> SessionOwnershipClaim | None:
+        """Read a claim by id scoped to a session."""
+        return (
+            db.query(SessionOwnershipClaim)
+            .filter(
+                SessionOwnershipClaim.id == claim_id,
+                SessionOwnershipClaim.session_id == session_id,
+            )
+            .first()
+        )
+
+    def review_ownership_claim(
+        self,
+        db: Session,
+        claim: SessionOwnershipClaim,
+        reviewer_user_id: int,
+        approve: bool,
+        review_note: str | None,
+    ) -> SessionOwnershipClaim:
+        """Approve or reject a pending ownership claim."""
+        if claim.status != SessionOwnershipClaimStatus.PENDING.value:
+            return claim
+
+        claim.status = (
+            SessionOwnershipClaimStatus.APPROVED.value
+            if approve
+            else SessionOwnershipClaimStatus.REJECTED.value
+        )
+        claim.review_note = review_note
+        claim.reviewed_by_user_id = reviewer_user_id
+        claim.reviewed_at = datetime.utcnow()
+        db.add(claim)
+        db.commit()
+        db.refresh(claim)
+
+        if claim.status == SessionOwnershipClaimStatus.APPROVED.value:
+            self.add_owner(
+                db,
+                session_id=claim.session_id,
+                user_id=claim.requester_user_id,
+                added_by_user_id=reviewer_user_id,
+            )
+
+        return claim
 
     def add_available_content_identifier(
         self, db: Session, session_id: int, identifier: str
