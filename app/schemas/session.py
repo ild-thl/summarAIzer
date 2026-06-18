@@ -565,6 +565,24 @@ class SessionOwnershipClaimResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SessionOwnershipClaimSummaryResponse(BaseModel):
+    """Represents a pending ownership claim together with session metadata."""
+
+    claim_id: int
+    session_id: int
+    session_title: str
+    event_id: int | None = None
+    event_title: str | None = None
+    requester_user_id: int
+    requester_email: str | None = None
+    requester_name: str | None = None
+    requester_keycloak_id: str | None = None
+    request_note: str | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TimeWindow(BaseModel):
     """Single time window with inclusive bounds."""
 

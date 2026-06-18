@@ -2,7 +2,7 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import String, and_, cast, func, or_
+from sqlalchemy import String, and_, cast, exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 from starlette.status import (
     HTTP_201_CREATED,
@@ -16,6 +16,7 @@ from app.crud.session import session_crud
 from app.database.connection import get_db
 from app.database.models import (
     Event,
+    SessionOwner,
     SessionOwnershipClaim,
     SessionOwnershipClaimStatus,
     SessionStatus,
@@ -32,6 +33,7 @@ from app.schemas.session import (
     SessionOwnershipClaimCreate,
     SessionOwnershipClaimResponse,
     SessionOwnershipClaimReview,
+    SessionOwnershipClaimSummaryResponse,
     SessionPageResponse,
     SessionResponse,
     SessionUpdate,
@@ -839,6 +841,74 @@ async def list_session_ownership_claims(
         return enriched
 
     return [c for c in enriched if c["requester_user_id"] == current_user.id]
+
+
+@router.get(
+    "/ownership-claims/open",
+    response_model=list[SessionOwnershipClaimSummaryResponse],
+)
+async def list_open_ownership_claims(
+    event_id: int | None = Query(None, description="Optional event scope"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List pending ownership claims for sessions the current user can manage."""
+    query = (
+        db.query(
+            SessionOwnershipClaim.id.label("claim_id"),
+            SessionOwnershipClaim.session_id.label("session_id"),
+            SessionModel.title.label("session_title"),
+            SessionModel.event_id.label("event_id"),
+            Event.title.label("event_title"),
+            SessionOwnershipClaim.requester_user_id.label("requester_user_id"),
+            User.email.label("requester_email"),
+            User.username.label("requester_name"),
+            User.keycloak_sub.label("requester_keycloak_id"),
+            SessionOwnershipClaim.request_note.label("request_note"),
+            SessionOwnershipClaim.created_at.label("created_at"),
+        )
+        .join(SessionModel, SessionOwnershipClaim.session_id == SessionModel.id)
+        .outerjoin(Event, SessionModel.event_id == Event.id)
+        .outerjoin(User, SessionOwnershipClaim.requester_user_id == User.id)
+        .filter(SessionOwnershipClaim.status == SessionOwnershipClaimStatus.PENDING.value)
+        .order_by(SessionOwnershipClaim.created_at.desc(), SessionOwnershipClaim.id.desc())
+    )
+
+    if event_id is not None:
+        query = query.filter(SessionModel.event_id == event_id)
+
+    if not is_admin(current_user):
+        owner_exists = exists().where(
+            and_(
+                SessionOwner.session_id == SessionModel.id,
+                SessionOwner.user_id == current_user.id,
+            )
+        )
+        query = query.filter(
+            or_(
+                owner_exists,
+                SessionModel.event.has(Event.owner_id == current_user.id),
+            )
+        )
+
+    rows = query.all()
+
+    return [
+        {
+            "claim_id": row.claim_id,
+            "session_id": row.session_id,
+            "session_title": row.session_title,
+            "event_id": row.event_id,
+            "event_title": row.event_title,
+            "requester_user_id": row.requester_user_id,
+            "requester_email": row.requester_email,
+            "requester_name": row.requester_name,
+            "requester_keycloak_id": row.requester_keycloak_id,
+            "request_note": row.request_note,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
 
 
 @router.post(
