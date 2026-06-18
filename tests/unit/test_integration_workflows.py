@@ -147,11 +147,10 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
     slide_markdown_step = create_mock_step(
         identifier="slide_markdown", context_requirements=[], generate_result=_noop
     )
-    learning_objectives_step = create_mock_step(
-        identifier="learning_objectives", context_requirements=["summary"], generate_result=_noop
-    )
-    tags_step = create_mock_step(
-        identifier="tags", context_requirements=[], generate_result={**_noop, "content": "Tags"}
+    wordcloud_step = create_mock_step(
+        identifier="wordcloud",
+        context_requirements=[],
+        generate_result={**_noop, "content": "Tags"},
     )
     image_step = create_mock_step(
         identifier="image", context_requirements=["summary"], generate_result=_noop
@@ -170,8 +169,7 @@ async def test_talk_workflow_loads_existing_transcription_when_step_is_skipped(
         glossary_step,
         slide_markdown_step,
         mermaid_step,
-        learning_objectives_step,
-        tags_step,
+        wordcloud_step,
         image_step,
         sondercluster_step,
     ]:

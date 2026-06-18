@@ -71,6 +71,9 @@ Gib das Ergebnis als strukturierte Markdown-Liste zurück."""
 Diskutierende: {speakers}
 Dauer: {duration} Minuten
 
+Session-Beschreibung:
+{session.description or 'Keine Beschreibung verfügbar.'}
+
 Transkript:
 {context.get('transcription', '')}
 

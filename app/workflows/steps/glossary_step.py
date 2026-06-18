@@ -110,23 +110,29 @@ class GlossaryStep(LLMStep):
             if slide_markdown
             else ""
         )
+        description_block = (
+            f"\n\nSession-Beschreibung:\n{session.description}\n" if session.description else ""
+        )
 
         return [
             SystemMessage(
                 content="""Du extrahierst ein kompaktes Fachglossar aus technischen oder domänenspezifischen Vorträgen.
 
 Deine Aufgabe:
-- Wähle 5-8 spezialisierte Begriffe, die für das Verständnis der Session wirklich wichtig sind.
+- Wähle 4-8 spezialisierte Begriffe, die für das Verständnis der Session wirklich wichtig sind.
 - Bevorzuge Fachbegriffe, Projekt-/Tool-Namen, Methoden, Akronyme und domänenspezifische Konzepte.
 - Gib zu jedem Begriff eine kurze Definition in genau einem Satz.
 - Vermeide allgemeine Wörter oder offensichtliche Füllbegriffe.
-- Nutze ausschließlich Informationen aus dem Transkript und der Zusammenfassung.
+- Nutze ausschließlich Begriffe aus den Folien und der Session-Beschreibung. Erfinde keine Begriffe oder Definitionen.
+- Die Transkription kann fehlerhaft sein, vertraue also mehr der Beschreibung und den Folien, wenn es um die Schreibweise von besimmten Akronymen oder Fachbegriffen geht.
 
 Gib AUSSCHLIESSLICH ein JSON-Array zurück. Jedes Element muss ein Objekt mit den Schlüsseln "term" und "definition" sein."""
             ),
             HumanMessage(
                 content=f"""Veranstaltung: {session.title}
 Referent:innen: {speakers}
+
+{description_block}
 
 Zusammenfassung:
 {summary}

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.database.models import Event
+from app.database.models import Event, SessionOwner
 from app.database.models import Session as SessionModel
 
 
@@ -112,11 +112,18 @@ class TestDashboardScopedLists:
             status="draft",
             uri="foreign-owned-in-my-event",
             event_id=event_id,
-            owner_id=foreign_owner.id,
         )
         test_db.add(foreign_session)
         test_db.commit()
         test_db.refresh(foreign_session)
+        test_db.add(
+            SessionOwner(
+                session_id=foreign_session.id,
+                user_id=foreign_owner.id,
+                added_by_user_id=foreign_owner.id,
+            )
+        )
+        test_db.commit()
 
         response = client.get(
             "/api/v2/sessions/me?sort_by=created_at&sort_dir=asc",

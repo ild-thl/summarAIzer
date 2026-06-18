@@ -240,9 +240,9 @@ async def create_session_in_event(
             detail=f"Session with URI '{session_in.uri}' already exists in this event",
         )
 
-    # Create session with owner_id set
+    # Create session with initial owner membership
     session_in.event_id = event_id
-    db_session = session_crud.create(db, session_in, owner_id=current_user.id)
+    db_session = session_crud.create(db, session_in, initial_owner_user_id=current_user.id)
     return db_session
 
 
@@ -310,6 +310,6 @@ async def sync_session(
     else:
         # Create new session - returns 201 (resource created)
         session_in.event_id = event_id
-        created = session_crud.create(db, session_in, owner_id=current_user.id)
+        created = session_crud.create(db, session_in, initial_owner_user_id=current_user.id)
         response.status_code = HTTP_201_CREATED
         return created

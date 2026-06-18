@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from app.crud.generated_content import create_content
 from app.database.models import Session as SessionModel
-from app.database.models import SessionStatus
+from app.database.models import SessionOwner, SessionStatus
 
 
 def test_download_slide_file_returns_pdf(client, test_db, sample_event, sample_user, monkeypatch):
@@ -18,11 +18,18 @@ def test_download_slide_file_returns_pdf(client, test_db, sample_event, sample_u
         start_datetime=now,
         end_datetime=now + timedelta(hours=1),
         status=SessionStatus.PUBLISHED,
-        owner_id=sample_user.id,
     )
     test_db.add(session)
     test_db.commit()
     test_db.refresh(session)
+    test_db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=sample_user.id,
+            added_by_user_id=sample_user.id,
+        )
+    )
+    test_db.commit()
 
     create_content(
         db=test_db,

@@ -2,7 +2,7 @@
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import String, and_, cast, func, or_
+from sqlalchemy import String, and_, cast, exists, func, or_
 from sqlalchemy.orm import Session, joinedload
 from starlette.status import (
     HTTP_201_CREATED,
@@ -14,19 +14,33 @@ from starlette.status import (
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event, SessionStatus, User
+from app.database.models import (
+    Event,
+    SessionOwner,
+    SessionOwnershipClaim,
+    SessionOwnershipClaimStatus,
+    SessionStatus,
+    User,
+)
 from app.database.models import Session as SessionModel
 from app.schemas.session import (
     PaginationMeta,
     SessionCreate,
     SessionDocumentationResponse,
     SessionListResponse,
+    SessionOwnerAddRequest,
+    SessionOwnerLinkResponse,
+    SessionOwnershipClaimCreate,
+    SessionOwnershipClaimResponse,
+    SessionOwnershipClaimReview,
+    SessionOwnershipClaimSummaryResponse,
     SessionPageResponse,
     SessionResponse,
     SessionUpdate,
 )
 from app.security.auth import (
     can_access_session_content,
+    can_manage_session,
     get_current_user,
     get_current_user_optional,
     is_admin,
@@ -212,7 +226,7 @@ async def list_sessions_page(
         query = query.outerjoin(Event, SessionModel.event_id == Event.id).filter(
             or_(
                 SessionModel.status == SessionStatus.PUBLISHED.value,
-                SessionModel.owner_id == current_user.id,
+                SessionModel.owners.any(User.id == current_user.id),
                 and_(SessionModel.event_id.is_not(None), Event.owner_id == current_user.id),
             )
         )
@@ -293,7 +307,7 @@ async def list_my_sessions(
     if not is_admin(current_user):
         query = query.outerjoin(Event, SessionModel.event_id == Event.id).filter(
             or_(
-                SessionModel.owner_id == current_user.id,
+                SessionModel.owners.any(User.id == current_user.id),
                 and_(SessionModel.event_id.is_not(None), Event.owner_id == current_user.id),
             )
         )
@@ -375,7 +389,7 @@ async def create_session(
                 detail="Permission denied: you do not own this event",
             )
 
-    db_session = session_crud.create(db, session_in, owner_id=current_user.id)
+    db_session = session_crud.create(db, session_in, initial_owner_user_id=current_user.id)
     return db_session
 
 
@@ -659,6 +673,348 @@ async def delete_session(
     """Delete a session (owner only)."""
     session_crud.delete(db, session_id)
     return None
+
+
+@router.get("/{session_id}/owners", response_model=list[SessionOwnerLinkResponse])
+async def list_session_owners(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List owner links for a session (manageable users only)."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_manage_session(session, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    return session_crud.list_owners(db, session.id)
+
+
+@router.post("/{session_id}/owners", response_model=SessionOwnerLinkResponse)
+async def add_session_owner(
+    session_id: int,
+    payload: SessionOwnerAddRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add a session owner (admin, event owner, or current session owner)."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_manage_session(session, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    user = db.query(User).filter(User.id == payload.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
+
+    owner_link = session_crud.add_owner(
+        db,
+        session_id=session.id,
+        user_id=payload.user_id,
+        added_by_user_id=current_user.id,
+    )
+
+    # Enrich with user info
+    return {
+        "session_id": owner_link.session_id,
+        "user_id": owner_link.user_id,
+        "user_name": user.username,
+        "user_keycloak_id": getattr(user, "keycloak_sub", None),
+        "email": user.email,
+        "added_by_user_id": owner_link.added_by_user_id,
+        "created_at": owner_link.created_at,
+    }
+
+
+@router.delete("/{session_id}/owners/{user_id}", status_code=HTTP_204_NO_CONTENT)
+async def remove_session_owner(
+    session_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a session owner (admin, event owner, or current session owner)."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_manage_session(session, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    removed = session_crud.remove_owner(db, session.id, user_id)
+    if not removed:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Owner link not found")
+
+    return None
+
+
+@router.post("/{session_id}/ownership-claims", response_model=SessionOwnershipClaimResponse)
+async def request_session_ownership_claim(
+    session_id: int,
+    payload: SessionOwnershipClaimCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Create an ownership claim request for the authenticated user."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if session_crud.is_session_owner(db, session.id, current_user.id):
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail="User is already a session owner")
+
+    claim = session_crud.create_ownership_claim(
+        db,
+        session_id=session.id,
+        requester_user_id=current_user.id,
+        request_note=payload.request_note,
+    )
+
+    # Enrich with user info
+    requester = db.query(User).filter(User.id == current_user.id).first()
+    return {
+        "id": claim.id,
+        "session_id": claim.session_id,
+        "requester_user_id": claim.requester_user_id,
+        "requester_email": requester.email if requester else None,
+        "requester_name": requester.username if requester else None,
+        "requester_keycloak_id": getattr(requester, "keycloak_sub", None) if requester else None,
+        "status": claim.status,
+        "request_note": claim.request_note,
+        "review_note": claim.review_note,
+        "reviewed_by_user_id": claim.reviewed_by_user_id,
+        "reviewed_at": claim.reviewed_at,
+        "created_at": claim.created_at,
+        "updated_at": claim.updated_at,
+    }
+
+
+@router.get("/{session_id}/ownership-claims", response_model=list[SessionOwnershipClaimResponse])
+async def list_session_ownership_claims(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List ownership claims. Reviewers see all; requesters see own claims only."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Enrich claims with requester user data (keycloak id, username, email).
+    rows = (
+        db.query(
+            SessionOwnershipClaim,
+            User.username.label("requester_name"),
+            User.email.label("requester_email"),
+            User.keycloak_sub.label("requester_keycloak_id"),
+        )
+        .outerjoin(User, SessionOwnershipClaim.requester_user_id == User.id)
+        .filter(SessionOwnershipClaim.session_id == session_id)
+        .order_by(SessionOwnershipClaim.created_at.desc(), SessionOwnershipClaim.id.desc())
+        .all()
+    )
+
+    enriched = [
+        {
+            "id": row[0].id,
+            "session_id": row[0].session_id,
+            "requester_user_id": row[0].requester_user_id,
+            "requester_name": row[1],
+            "requester_email": row[2],
+            "requester_keycloak_id": row[3],
+            "status": row[0].status,
+            "request_note": row[0].request_note,
+            "review_note": row[0].review_note,
+            "reviewed_by_user_id": row[0].reviewed_by_user_id,
+            "reviewed_at": row[0].reviewed_at,
+            "created_at": row[0].created_at,
+            "updated_at": row[0].updated_at,
+        }
+        for row in rows
+    ]
+
+    if can_manage_session(session, current_user, db):
+        return enriched
+
+    return [c for c in enriched if c["requester_user_id"] == current_user.id]
+
+
+@router.get(
+    "/ownership-claims/open",
+    response_model=list[SessionOwnershipClaimSummaryResponse],
+)
+async def list_open_ownership_claims(
+    event_id: int | None = Query(None, description="Optional event scope"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List pending ownership claims for sessions the current user can manage."""
+    query = (
+        db.query(
+            SessionOwnershipClaim.id.label("claim_id"),
+            SessionOwnershipClaim.session_id.label("session_id"),
+            SessionModel.title.label("session_title"),
+            SessionModel.event_id.label("event_id"),
+            Event.title.label("event_title"),
+            SessionOwnershipClaim.requester_user_id.label("requester_user_id"),
+            User.email.label("requester_email"),
+            User.username.label("requester_name"),
+            User.keycloak_sub.label("requester_keycloak_id"),
+            SessionOwnershipClaim.request_note.label("request_note"),
+            SessionOwnershipClaim.created_at.label("created_at"),
+        )
+        .join(SessionModel, SessionOwnershipClaim.session_id == SessionModel.id)
+        .outerjoin(Event, SessionModel.event_id == Event.id)
+        .outerjoin(User, SessionOwnershipClaim.requester_user_id == User.id)
+        .filter(SessionOwnershipClaim.status == SessionOwnershipClaimStatus.PENDING.value)
+        .order_by(SessionOwnershipClaim.created_at.desc(), SessionOwnershipClaim.id.desc())
+    )
+
+    if event_id is not None:
+        query = query.filter(SessionModel.event_id == event_id)
+
+    if not is_admin(current_user):
+        owner_exists = exists().where(
+            and_(
+                SessionOwner.session_id == SessionModel.id,
+                SessionOwner.user_id == current_user.id,
+            )
+        )
+        query = query.filter(
+            or_(
+                owner_exists,
+                SessionModel.event.has(Event.owner_id == current_user.id),
+            )
+        )
+
+    rows = query.all()
+
+    return [
+        {
+            "claim_id": row.claim_id,
+            "session_id": row.session_id,
+            "session_title": row.session_title,
+            "event_id": row.event_id,
+            "event_title": row.event_title,
+            "requester_user_id": row.requester_user_id,
+            "requester_email": row.requester_email,
+            "requester_name": row.requester_name,
+            "requester_keycloak_id": row.requester_keycloak_id,
+            "request_note": row.request_note,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+
+
+@router.post(
+    "/{session_id}/ownership-claims/{claim_id}/approve",
+    response_model=SessionOwnershipClaimResponse,
+)
+async def approve_session_ownership_claim(
+    session_id: int,
+    claim_id: int,
+    payload: SessionOwnershipClaimReview,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Approve an ownership claim and add requester as session owner."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_manage_session(session, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    claim = session_crud.read_ownership_claim(db, session.id, claim_id)
+    if claim is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Claim not found")
+    if claim.status != SessionOwnershipClaimStatus.PENDING.value:
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail="Claim already reviewed")
+
+    # perform review and return enriched response
+
+    # Enrich response with requester's keycloak id for cross-service notifications
+    reviewed = session_crud.review_ownership_claim(
+        db,
+        claim=claim,
+        reviewer_user_id=current_user.id,
+        approve=True,
+        review_note=payload.review_note,
+    )
+
+    requester = db.query(User).filter(User.id == reviewed.requester_user_id).one_or_none()
+    return {
+        "id": reviewed.id,
+        "session_id": reviewed.session_id,
+        "requester_user_id": reviewed.requester_user_id,
+        "requester_name": getattr(requester, "username", None) if requester else None,
+        "requester_email": getattr(requester, "email", None) if requester else None,
+        "requester_keycloak_id": getattr(requester, "keycloak_sub", None) if requester else None,
+        "status": reviewed.status,
+        "request_note": reviewed.request_note,
+        "review_note": reviewed.review_note,
+        "reviewed_by_user_id": reviewed.reviewed_by_user_id,
+        "reviewed_at": reviewed.reviewed_at,
+        "created_at": reviewed.created_at,
+        "updated_at": reviewed.updated_at,
+    }
+
+
+@router.post(
+    "/{session_id}/ownership-claims/{claim_id}/reject",
+    response_model=SessionOwnershipClaimResponse,
+)
+async def reject_session_ownership_claim(
+    session_id: int,
+    claim_id: int,
+    payload: SessionOwnershipClaimReview,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reject an ownership claim without granting privileges."""
+    session = session_crud.read(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_manage_session(session, current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+
+    claim = session_crud.read_ownership_claim(db, session.id, claim_id)
+    if claim is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Claim not found")
+    if claim.status != SessionOwnershipClaimStatus.PENDING.value:
+        raise HTTPException(status_code=HTTP_409_CONFLICT, detail="Claim already reviewed")
+
+    # perform review and return enriched response
+    reviewed = session_crud.review_ownership_claim(
+        db,
+        claim=claim,
+        reviewer_user_id=current_user.id,
+        approve=False,
+        review_note=payload.review_note,
+    )
+
+    requester = db.query(User).filter(User.id == reviewed.requester_user_id).one_or_none()
+    return {
+        "id": reviewed.id,
+        "session_id": reviewed.session_id,
+        "requester_user_id": reviewed.requester_user_id,
+        "requester_name": getattr(requester, "username", None) if requester else None,
+        "requester_email": getattr(requester, "email", None) if requester else None,
+        "requester_keycloak_id": getattr(requester, "keycloak_sub", None) if requester else None,
+        "status": reviewed.status,
+        "request_note": reviewed.request_note,
+        "review_note": reviewed.review_note,
+        "reviewed_by_user_id": reviewed.reviewed_by_user_id,
+        "reviewed_at": reviewed.reviewed_at,
+        "created_at": reviewed.created_at,
+        "updated_at": reviewed.updated_at,
+    }
 
 
 @router.get("/event/{event_id}/sessions", response_model=list[SessionListResponse])

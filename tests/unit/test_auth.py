@@ -365,7 +365,7 @@ class TestAuthorizationHierarchy:
         event_id = event_response.json()["id"]
 
         from app.database.models import Session as SessionModel
-        from app.database.models import User
+        from app.database.models import SessionOwner, User
 
         # Create a different user as direct session owner
         session_owner = User(username="hierarchy-session-owner", type="api")
@@ -382,11 +382,18 @@ class TestAuthorizationHierarchy:
             end_datetime=now + timedelta(hours=1),
             uri="foreign-owned-session",
             event_id=event_id,
-            owner_id=session_owner.id,
         )
         test_db.add(foreign_owned_session)
         test_db.commit()
         test_db.refresh(foreign_owned_session)
+        test_db.add(
+            SessionOwner(
+                session_id=foreign_owned_session.id,
+                user_id=session_owner.id,
+                added_by_user_id=session_owner.id,
+            )
+        )
+        test_db.commit()
 
         response = client.patch(
             f"/api/v2/sessions/{foreign_owned_session.id}",

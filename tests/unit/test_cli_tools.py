@@ -16,6 +16,7 @@ from app.database.models import (
     APIKey,
     Base,
     SessionFormat,
+    SessionOwner,
     SessionStatus,
     User,
     WorkflowExecution,
@@ -36,8 +37,8 @@ def _build_test_db(tmp_path: Path) -> tuple[str, sessionmaker]:
     return database_url, sessionmaker(bind=engine)
 
 
-def _create_session(session_factory: sessionmaker) -> SessionModel:
-    """Create a minimal session row for workflow execution tests."""
+def _create_session(session_factory: sessionmaker) -> int:
+    """Create a minimal session row for workflow execution tests and return its ID."""
     db = session_factory()
     user = User(username="workflow-user", email="wf@example.com", type="api", is_active=True)
     db.add(user)
@@ -55,14 +56,22 @@ def _create_session(session_factory: sessionmaker) -> SessionModel:
         session_format=SessionFormat.OTHER,
         language="en",
         uri=f"cli-workflow-session-{user.id}",
-        owner_id=user.id,
         available_content_identifiers=[],
     )
     db.add(session)
     db.commit()
     db.refresh(session)
+    db.add(
+        SessionOwner(
+            session_id=session.id,
+            user_id=user.id,
+            added_by_user_id=user.id,
+        )
+    )
+    db.commit()
+    session_id = session.id
     db.close()
-    return session
+    return session_id
 
 
 class TestAdminApiKeysCli:
@@ -182,10 +191,10 @@ class TestWorkflowTasksCli:
         database_url, session_factory = _build_test_db(tmp_path)
         monkeypatch.setenv("DATABASE_URL", database_url)
 
-        session = _create_session(session_factory)
+        session_id = _create_session(session_factory)
         db = session_factory()
         execution = WorkflowExecution(
-            session_id=session.id,
+            session_id=session_id,
             target="summary",
             status=WorkflowExecutionStatus.RUNNING,
             celery_task_id="workflow-1",
@@ -233,10 +242,10 @@ class TestWorkflowTasksCli:
         database_url, session_factory = _build_test_db(tmp_path)
         monkeypatch.setenv("DATABASE_URL", database_url)
 
-        session = _create_session(session_factory)
+        session_id = _create_session(session_factory)
         db = session_factory()
         execution = WorkflowExecution(
-            session_id=session.id,
+            session_id=session_id,
             target="summary",
             status=WorkflowExecutionStatus.RUNNING,
             celery_task_id="workflow-2",
@@ -302,10 +311,10 @@ class TestWorkflowTasksCli:
         database_url, session_factory = _build_test_db(tmp_path)
         monkeypatch.setenv("DATABASE_URL", database_url)
 
-        session = _create_session(session_factory)
+        session_id = _create_session(session_factory)
         db = session_factory()
         execution = WorkflowExecution(
-            session_id=session.id,
+            session_id=session_id,
             target="summary",
             status=WorkflowExecutionStatus.QUEUED,
             celery_task_id="workflow-3",

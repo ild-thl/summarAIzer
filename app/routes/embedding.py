@@ -15,7 +15,7 @@ from app.schemas.session import (
     SessionResponse,
     SessionWithScore,
 )
-from app.security.auth import get_current_user
+from app.security.auth import can_manage_session, get_current_user
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_recommend_usage
 
@@ -184,7 +184,7 @@ async def refresh_session_embedding(
     if not session:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if session.owner_id != current_user.id:
+    if not can_manage_session(session, current_user, db):
         raise HTTPException(status_code=403, detail="Forbidden - session ownership required")
 
     logger.info(

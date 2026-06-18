@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import get_settings
 from app.database.connection import get_db
-from app.database.models import APIKey, Event, User
+from app.database.models import APIKey, Event, SessionOwner, User
 from app.database.models import Session as SessionModel
 
 logger = structlog.get_logger()
@@ -418,7 +418,16 @@ def can_manage_session(session: SessionModel, current_user: User, db: Session) -
     if is_admin(current_user):
         return True
 
-    if session.owner_id == current_user.id:
+    is_linked_owner = (
+        db.query(SessionOwner)
+        .filter(
+            SessionOwner.session_id == session.id,
+            SessionOwner.user_id == current_user.id,
+        )
+        .first()
+        is not None
+    )
+    if is_linked_owner:
         return True
 
     if session.event_id is None:
@@ -534,7 +543,7 @@ def can_access_session_content(
     if is_admin(current_user):
         return True
 
-    if session.owner_id == current_user.id:
+    if any(owner.id == current_user.id for owner in session.owners):
         return True
 
     if session.event is not None and session.event.owner_id == current_user.id:
