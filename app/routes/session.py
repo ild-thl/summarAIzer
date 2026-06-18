@@ -866,13 +866,33 @@ async def approve_session_ownership_claim(
     if claim.status != SessionOwnershipClaimStatus.PENDING.value:
         raise HTTPException(status_code=HTTP_409_CONFLICT, detail="Claim already reviewed")
 
-    return session_crud.review_ownership_claim(
+    # perform review and return enriched response
+
+    # Enrich response with requester's keycloak id for cross-service notifications
+    reviewed = session_crud.review_ownership_claim(
         db,
         claim=claim,
         reviewer_user_id=current_user.id,
         approve=True,
         review_note=payload.review_note,
     )
+
+    requester = db.query(User).filter(User.id == reviewed.requester_user_id).one_or_none()
+    return {
+        "id": reviewed.id,
+        "session_id": reviewed.session_id,
+        "requester_user_id": reviewed.requester_user_id,
+        "requester_name": getattr(requester, "username", None) if requester else None,
+        "requester_email": getattr(requester, "email", None) if requester else None,
+        "requester_keycloak_id": getattr(requester, "keycloak_sub", None) if requester else None,
+        "status": reviewed.status,
+        "request_note": reviewed.request_note,
+        "review_note": reviewed.review_note,
+        "reviewed_by_user_id": reviewed.reviewed_by_user_id,
+        "reviewed_at": reviewed.reviewed_at,
+        "created_at": reviewed.created_at,
+        "updated_at": reviewed.updated_at,
+    }
 
 
 @router.post(
@@ -900,13 +920,31 @@ async def reject_session_ownership_claim(
     if claim.status != SessionOwnershipClaimStatus.PENDING.value:
         raise HTTPException(status_code=HTTP_409_CONFLICT, detail="Claim already reviewed")
 
-    return session_crud.review_ownership_claim(
+    # perform review and return enriched response
+    reviewed = session_crud.review_ownership_claim(
         db,
         claim=claim,
         reviewer_user_id=current_user.id,
         approve=False,
         review_note=payload.review_note,
     )
+
+    requester = db.query(User).filter(User.id == reviewed.requester_user_id).one_or_none()
+    return {
+        "id": reviewed.id,
+        "session_id": reviewed.session_id,
+        "requester_user_id": reviewed.requester_user_id,
+        "requester_name": getattr(requester, "username", None) if requester else None,
+        "requester_email": getattr(requester, "email", None) if requester else None,
+        "requester_keycloak_id": getattr(requester, "keycloak_sub", None) if requester else None,
+        "status": reviewed.status,
+        "request_note": reviewed.request_note,
+        "review_note": reviewed.review_note,
+        "reviewed_by_user_id": reviewed.reviewed_by_user_id,
+        "reviewed_at": reviewed.reviewed_at,
+        "created_at": reviewed.created_at,
+        "updated_at": reviewed.updated_at,
+    }
 
 
 @router.get("/event/{event_id}/sessions", response_model=list[SessionListResponse])
