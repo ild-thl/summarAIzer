@@ -47,6 +47,7 @@ from app.security.auth import (
     require_session_owner,
 )
 from app.services.documentation_builder import DocumentationBuilder
+from app.crud import generated_content as content_crud
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_list_sessions_usage
 
@@ -1067,13 +1068,28 @@ async def rebuild_all_documentation(
     sessions = [s for s in sessions if s.published_documentation_artifact is not None]
 
     rebuilt = 0
+    deleted = 0
     failed = 0
 
     for session in sessions:
         try:
-            result = DocumentationBuilder.build_documentation(db, session.id)
-            if result is not None:
-                rebuilt += 1
+            # Check if there is any generated content for the session
+            contents = content_crud.list_for_session(db, session.id)
+            if contents and len(contents) > 0:
+                # Rebuild documentation only when generated content exists
+                result = DocumentationBuilder.build_documentation(db, session.id)
+                if result is not None:
+                    rebuilt += 1
+                else:
+                    # Treat a None result as a failure to rebuild
+                    failed += 1
+            else:
+                # No generated content: remove existing artifact (cleanup)
+                session.published_documentation_artifact = None
+                db.add(session)
+                db.commit()
+                db.refresh(session)
+                deleted += 1
         except Exception as exc:
             logger.error(
                 "rebuild_documentation_failed",
@@ -1082,8 +1098,14 @@ async def rebuild_all_documentation(
             )
             failed += 1
 
-    logger.info("rebuild_all_documentation_complete", rebuilt=rebuilt, failed=failed)
-    return {"rebuilt": rebuilt, "failed": failed, "total": len(sessions)}
+    logger.info(
+        "rebuild_all_documentation_complete",
+        rebuilt=rebuilt,
+        deleted=deleted,
+        failed=failed,
+    )
+
+    return {"rebuilt": rebuilt, "deleted": deleted, "failed": failed, "total": len(sessions)}
 
 
 @router.post("/{session_id}/documentation", response_model=SessionResponse)
