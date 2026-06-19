@@ -601,3 +601,67 @@ async def download_slide_file(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
     )
+
+
+@router.get("/{session_id}/slide-files/embed")
+async def embed_slide_file(
+    session_id: int,
+    current_user: User = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Serve the slide deck PDF with embed-friendly headers.
+
+    This endpoint mirrors the download endpoint but is intended to be used
+    as an iframe src. It returns the PDF with `Content-Disposition: inline`
+    and does not add any `X-Frame-Options` header so that it can be embedded
+    by the hub frontend. Note that a reverse proxy must also not inject
+    frame-denying headers.
+    """
+    # Reuse the same logic as download_slide_file to enforce access rules
+    db_session = session_crud.read(db, session_id)
+    if not db_session:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if not can_access_session_content(db_session, current_user):
+        logger.warning(
+            "slide_embed_access_denied",
+            session_id=session_id,
+            status=db_session.status,
+            user_id=current_user.id if current_user else None,
+        )
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    db_content = content_crud.get_content_by_identifier(db, session_id, "slide_deck")
+    if not db_content:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Slide deck not found")
+
+    payload = _parse_slide_payload(db_content.content)
+    s3_key = payload.get("s3_key") if payload else None
+    filename = payload.get("filename") if payload else None
+    if not isinstance(s3_key, str) or not s3_key.strip():
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail="Slide deck metadata is missing S3 key",
+        )
+
+    s3 = get_s3_slide_service()
+    try:
+        data = s3.download_slide(s3_key)
+    except Exception as exc:
+        logger.error(
+            "slide_embed_failed",
+            session_id=session_id,
+            s3_key=s3_key,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND, detail="Slide deck file not found"
+        ) from exc
+
+    safe_filename = filename if isinstance(filename, str) and filename.strip() else "slides.pdf"
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+    )
