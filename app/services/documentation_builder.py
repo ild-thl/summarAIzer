@@ -147,6 +147,7 @@ class DocumentationBuilder:
         section_type = content.content_type
         section_content = content.content
         section_resource_url = None
+        section_embed_url = None
 
         if content.identifier == TRANSCRIPTION_IDENTIFIER:
             # Avoid embedding very large transcription blobs in the artifact payload.
@@ -159,6 +160,7 @@ class DocumentationBuilder:
         elif content.identifier == SLIDE_DECK_IDENTIFIER:
             section_type = "resource_link"
             section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/download"
+            section_embed_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/embed"
             section_content = None
         elif section_type in URL_SECTION_TYPES:
             section_resource_url = _extract_resource_url(content.content, content.meta_info)
@@ -180,6 +182,7 @@ class DocumentationBuilder:
             title=_get_section_title(content.identifier),
             content=section_content,
             resource_url=section_resource_url,
+            embed_url=section_embed_url,
             order=order,
             source=content.meta_info.get("source") if content.meta_info else None,
             ai_generated=bool(content.ai_generated),

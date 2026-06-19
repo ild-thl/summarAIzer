@@ -1058,6 +1058,10 @@ class DocumentationSection(BaseModel):
     resource_url: HttpUrl | None = Field(
         None, description="External resource link for media or downloads"
     )
+    embed_url: HttpUrl | None = Field(
+        None,
+        description="Optional embeddable URL for iframe embedding (prefer this over resource_url)",
+    )
     order: int = Field(default=0, description="Display order in documentation")
     source: str | None = Field(
         None, description="Where content originated: workflow, manual, upload"
