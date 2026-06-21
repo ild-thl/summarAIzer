@@ -96,7 +96,7 @@ class QnAStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="mistral-large-3-675b-instruct-2512",
+            model="gemma-4-31b-it",
             temperature=0.1,
             max_tokens=1400,
             top_p=0.9,
