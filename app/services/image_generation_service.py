@@ -29,6 +29,7 @@ class ImageGenerationService:
             api_key: API key for authentication with Academic Cloud API
         """
         self.api_url = api_url or "https://chat-ai.academiccloud.de/v1/images/generations"
+        self.edit_api_url = "https://chat-ai.academiccloud.de/v1/images/edits/"
         self.api_key = api_key
 
     def _validate_inputs(
@@ -240,3 +241,286 @@ class ImageGenerationService:
                 "count": 0,
                 "errors": [str(e)],
             }
+
+    def edit_image(  # noqa: C901
+        self,
+        base_image_path: str | Path,
+        prompt: str,
+        width: int = 1024,
+        height: int = 768,
+    ) -> dict[str, Any]:
+        """Edit an existing image using a text prompt via Academic Cloud API.
+
+        Note: This method has elevated complexity due to comprehensive error handling
+        for multiple response formats (JSON and binary PNG) and various edge cases.
+        """
+        try:
+            # Validate inputs using helper method
+            is_valid, error_msg = self._validate_edit_image_inputs(
+                base_image_path, prompt, width, height
+            )
+            if not is_valid:
+                return {"success": False, "error": error_msg}
+
+            logger.debug(f"Editing image with prompt: {prompt}")
+
+            data = {
+                "prompt": prompt.strip(),
+            }
+
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "inference-service": "image-edit-2511",
+            }
+
+            with open(base_image_path, "rb") as image_file:
+                files = {"image": image_file}
+
+                response = perform_rate_limited_request(
+                    lambda: requests.post(
+                        self.edit_api_url,
+                        files=files,
+                        data=data,
+                        headers=headers,
+                        timeout=120,
+                    ),
+                    operation_name="image_editing",
+                )
+
+            logger.info(f"API response status: {response.status_code}")
+            logger.info(f"API response headers: {dict(response.headers)}")
+
+            if response.status_code == 200:
+                try:
+                    # Try to parse as JSON first (in case API returns JSON format)
+                    try:
+                        json_data = response.json()
+                        logger.info("API returned JSON response")
+
+                        # Check if it has the expected structure
+                        if json_data.get("data"):
+                            images = json_data["data"]
+                            logger.info(
+                                f"Successfully edited image (JSON format, {len(images)} images)"
+                            )
+                            return {"success": True, "images": images}
+                        else:
+                            error_msg = "JSON response missing data"
+                            logger.error(error_msg)
+                            return {"success": False, "error": error_msg}
+                    except ValueError:
+                        # Not JSON, treat as binary PNG data
+                        image_data = response.content
+                        logger.info(
+                            f"API returned binary response (content-type: {response.headers.get('content-type')})"
+                        )
+                        logger.info(f"Response length: {len(image_data)} bytes")
+
+                        # Verify it looks like a PNG
+                        if len(image_data) > 8 and image_data[:8] == b"\x89PNG\r\n\x1a\n":
+                            logger.info("Valid PNG header detected")
+                        else:
+                            # Check if it's an HTML error page
+                            if image_data.startswith(b"<!DOCTYPE html>") or image_data.startswith(
+                                b"<html"
+                            ):
+                                logger.error("API returned HTML error page instead of PNG")
+                                logger.error(f"HTML content preview: {image_data[:200]}")
+                                return {
+                                    "success": False,
+                                    "error": "API returned HTML error page - check authentication and parameters",
+                                }
+                            else:
+                                logger.error(
+                                    f"Invalid PNG header: {image_data[:min(50, len(image_data))]}"
+                                )
+                                return {"success": False, "error": "Invalid PNG data received"}
+
+                        if image_data:
+                            # Convert binary data to base64 for consistency with other methods
+                            import base64
+
+                            base64_data = base64.b64encode(image_data).decode("utf-8")
+
+                            # Verify the base64 encoding is valid by decoding it back
+                            try:
+                                decoded_verification = base64.b64decode(base64_data)
+                                if decoded_verification != image_data:
+                                    logger.error(
+                                        f"Base64 encoding/decoding mismatch! Original: {len(image_data)}, Decoded: {len(decoded_verification)}"
+                                    )
+                                    return {
+                                        "success": False,
+                                        "error": "Base64 encoding verification failed",
+                                    }
+                            except Exception as e:
+                                logger.error(f"Base64 verification failed: {e!s}")
+                                return {"success": False, "error": f"Base64 encoding error: {e!s}"}
+
+                            # Return in the same format as generate_image for compatibility
+                            images = [{"b64_json": base64_data}]
+                            logger.info(
+                                f"Successfully edited image ({len(image_data)} bytes -> base64: {len(base64_data)} chars)"
+                            )
+                            return {"success": True, "images": images}
+
+                    error_msg = "API returned empty response"
+                    logger.error(error_msg)
+                    return {"success": False, "error": error_msg}
+                except Exception as e:
+                    error_msg = f"Failed to process binary response: {e!s}"
+                    logger.error(error_msg)
+                    return {"success": False, "error": error_msg}
+
+            try:
+                # Try to parse as JSON first (for error responses)
+                error_data = response.json()
+                error_msg = self._extract_error_message(error_data)
+            except Exception as e:
+                # If not JSON, use text content or binary info
+                if response.content:
+                    error_msg = (
+                        f"HTTP {response.status_code}: {len(response.content)} bytes binary data"
+                    )
+                else:
+                    error_msg = (
+                        response.text[:500] if response.text else f"HTTP {response.status_code}"
+                    )
+                logger.error(f"Failed to parse error response: {e!s}")
+
+            full_error = f"API error {response.status_code}: {error_msg}"
+            logger.error(full_error)
+            logger.error(f"Response headers: {dict(response.headers)}")
+            return {"success": False, "error": full_error}
+
+        except requests.exceptions.Timeout:
+            error_msg = "Image editing timed out (120 seconds)"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except requests.exceptions.ConnectionError as e:
+            error_msg = f"Failed to connect to image editing service: {e!s}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Request error: {e!s}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            error_msg = f"Unexpected error: {e!s}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+
+    def _validate_edit_image_inputs(
+        self, base_image_path: str | Path, prompt: str, width: int, height: int
+    ) -> tuple[bool, str | None]:
+        """Validate inputs for image editing."""
+        if not prompt or len(prompt.strip()) == 0:
+            return False, "Prompt cannot be empty"
+
+        if width <= 0 or height <= 0:
+            return False, "Width and height must be positive"
+
+        if not self.api_key:
+            error_msg = (
+                "No API key configured for image editing. "
+                "Set IMAGE_GENERATION_API_KEY environment variable."
+            )
+            logger.error(error_msg)
+            return False, error_msg
+
+        # Convert path to string if it's a Path object
+        if isinstance(base_image_path, Path):
+            base_image_path = str(base_image_path)
+
+        # Check if base image exists
+        if not Path(base_image_path).exists():
+            return False, f"Base image not found: {base_image_path}"
+
+        return True, None
+
+    def _handle_json_response(self, response_data: dict) -> tuple[bool, list | None, str | None]:
+        """Handle JSON response from image editing API."""
+        if response_data.get("data"):
+            images = response_data["data"]
+            logger.info(f"Successfully edited image (JSON format, {len(images)} images)")
+            return True, images, None
+
+        error_msg = "JSON response missing data"
+        logger.error(error_msg)
+        return False, None, error_msg
+
+    def _handle_binary_response(self, image_data: bytes) -> tuple[bool, list | None, str | None]:
+        """Handle binary PNG response from image editing API."""
+        logger.info("API returned binary response (content-type: text/html;charset=utf-8)")
+        logger.info(f"Response length: {len(image_data)} bytes")
+
+        # Verify it looks like a PNG
+        if len(image_data) > 8 and image_data[:8] == b"\x89PNG\r\n\x1a\n":
+            logger.info("Valid PNG header detected")
+        else:
+            # Check if it's an HTML error page
+            if image_data.startswith(b"<!DOCTYPE html>") or image_data.startswith(b"<html"):
+                logger.error("API returned HTML error page instead of PNG")
+                logger.error(f"HTML content preview: {image_data[:200]}")
+                return (
+                    False,
+                    None,
+                    "API returned HTML error page - check authentication and parameters",
+                )
+            else:
+                logger.error(f"Invalid PNG header: {image_data[:min(50, len(image_data))]}")
+                return False, None, "Invalid PNG data received"
+
+        # Convert binary data to base64 for consistency
+        import base64
+
+        base64_data = base64.b64encode(image_data).decode("utf-8")
+
+        # Verify the base64 encoding is valid
+        try:
+            decoded_verification = base64.b64decode(base64_data)
+            if decoded_verification != image_data:
+                logger.error(
+                    f"Base64 encoding/decoding mismatch! Original: {len(image_data)}, Decoded: {len(decoded_verification)}"
+                )
+                return False, None, "Base64 encoding verification failed"
+        except Exception as e:
+            logger.error(f"Base64 verification failed: {e!s}")
+            return False, None, f"Base64 encoding error: {e!s}"
+
+        # Return in the same format as generate_image
+        images = [{"b64_json": base64_data}]
+        logger.info(
+            f"Successfully edited image ({len(image_data)} bytes -> base64: {len(base64_data)} chars)"
+        )
+        return True, images, None
+
+    def _process_api_response(self, response: requests.Response) -> dict[str, Any]:
+        """Process API response and return appropriate result."""
+        logger.info(f"API response status: {response.status_code}")
+        logger.info(f"API response headers: {dict(response.headers)}")
+
+        if response.status_code == 200:
+            try:
+                # Try to parse as JSON first
+                try:
+                    json_data = response.json()
+                    logger.info("API returned JSON response")
+                    success, images, error = self._handle_json_response(json_data)
+                    if success:
+                        return {"success": True, "images": images}
+                    return {"success": False, "error": error}
+                except ValueError:
+                    # Handle binary response
+                    image_data = response.content
+                    success, images, error = self._handle_binary_response(image_data)
+                    if success:
+                        return {"success": True, "images": images}
+                    return {"success": False, "error": error}
+            except Exception as e:
+                error_msg = f"Unexpected error processing response: {e!s}"
+                logger.error(error_msg)
+                return {"success": False, "error": error_msg}
+
+        # Handle non-200 responses
+        return self._handle_api_error_response(response)

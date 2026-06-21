@@ -11,6 +11,7 @@ from starlette.status import (
     HTTP_409_CONFLICT,
 )
 
+from app.crud import generated_content as content_crud
 from app.crud.event import event_crud
 from app.crud.session import session_crud
 from app.database.connection import get_db
@@ -47,7 +48,6 @@ from app.security.auth import (
     require_session_owner,
 )
 from app.services.documentation_builder import DocumentationBuilder
-from app.crud import generated_content as content_crud
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_list_sessions_usage
 
