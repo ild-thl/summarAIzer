@@ -44,10 +44,10 @@ class TalkWorkflow(BaseWorkflow):
     End steps by format (all run in parallel after summary):
 
     Input (long talk) / Discussion / Panel:
-        → quotes + mermaid + qna + glossary + image
+        → mermaid + qna + image
 
     Lightning Talk (short) / Workshop / Training / Lab / Other / unknown:
-        → glossary + image
+        → image
 
     The transcription step is skipped when a transcription already exists in the database.
     Session format is loaded from the database and stored in state to drive routing.
@@ -175,11 +175,11 @@ class TalkWorkflow(BaseWorkflow):
 
         if fmt in (_INPUT_FORMAT, _DISCUSSION_FORMAT):
             logger.info("talk_workflow_post_summary_input_talk", session_format=fmt_value)
-            steps = ["quotes", "mermaid", "qna", "glossary", "image", "wordcloud"]
+            steps = ["mermaid", "qna", "image", "wordcloud"]
         else:
             # LIGHTNING_TALK, WORKSHOPS, OTHER, None
             logger.info("talk_workflow_post_summary_end", session_format=fmt_value)
-            steps = ["glossary", "image", "wordcloud"]
+            steps = ["image", "wordcloud"]
 
         # Conditionally add Sondercluster step when session carries a cluster tag.
         session_tags = state.get("session_tags") or []
@@ -200,7 +200,7 @@ class TalkWorkflow(BaseWorkflow):
         - Phase 1: Transcription (or load from DB), slide_markdown, and session context in parallel
         - Phase 2: Content extraction (key_takeaways or positions, format-dependent)
         - Phase 3: Summary
-        - Phase 4: All remaining steps run in parallel (quotes, mermaid, image - selection depends on format)
+        - Phase 4: All remaining steps run in parallel (mermaid, image - selection depends on format)
 
         Returns:
             Compiled LangGraph StateGraph ready to invoke
@@ -215,9 +215,7 @@ class TalkWorkflow(BaseWorkflow):
         builder.add_node("key_takeaways", create_step_node("key_takeaways"))
         builder.add_node("positions", create_step_node("positions"))
         builder.add_node("summary", create_step_node("summary"))
-        builder.add_node("quotes", create_step_node("quotes"))
         builder.add_node("qna", create_step_node("qna"))
-        builder.add_node("glossary", create_step_node("glossary"))
         builder.add_node("wordcloud", create_step_node("wordcloud"))
         builder.add_node("mermaid", create_step_node("mermaid"))
         builder.add_node("image", create_step_node("image"))
@@ -251,9 +249,7 @@ class TalkWorkflow(BaseWorkflow):
         builder.add_conditional_edges("summary", self._route_after_summary)
 
         # Phase 5: all end steps terminate the workflow
-        builder.add_edge("quotes", END)
         builder.add_edge("qna", END)
-        builder.add_edge("glossary", END)
         builder.add_edge("wordcloud", END)
         builder.add_edge("mermaid", END)
         builder.add_edge("image", END)
