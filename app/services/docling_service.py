@@ -67,8 +67,8 @@ class DoclingService:
             error_text = response.text[:1000] if response.text else "No response body"
             logger.error(
                 "docling_request_non_200",
-                status_code=response.status_code,
-                body=error_text,
+                error=f"Status {response.status_code}: {error_text}",
+                exc_info=True,
             )
             return {
                 "success": False,
