@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RATE_LIMITER = InMemoryRateLimiter(
     requests_per_second=1,
     check_every_n_seconds=0.1,
-    max_bucket_size=10,
+    max_bucket_size=1,
 )
 
 RETRYABLE_STATUS_CODES = {429, 503}
@@ -49,7 +49,7 @@ def perform_rate_limited_request(
                 raise
 
             delay_seconds = _retry_delay_seconds(attempt=attempt)
-            logger.warning(
+            logger.info(
                 "provider_request_exception_retrying operation=%s attempt=%s/%s delay=%.2fs error_type=%s error=%s",
                 operation_name,
                 attempt + 1,
@@ -69,7 +69,7 @@ def perform_rate_limited_request(
             attempt=attempt,
             retry_after_header=response.headers.get("Retry-After"),
         )
-        logger.warning(
+        logger.info(
             "provider_request_retrying operation=%s attempt=%s/%s delay=%.2fs status=%s",
             operation_name,
             attempt + 1,

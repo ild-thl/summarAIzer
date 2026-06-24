@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from langchain.chat_models import init_chat_model
 
 from app.config.settings import get_settings
@@ -31,9 +32,14 @@ class ChatModelConfig:
             "temperature": get_settings().llm_temperature,
             "max_tokens": get_settings().llm_max_tokens,
             "top_p": get_settings().llm_top_p,
-            "max_retries": 5,
+            "max_retries": 3,
             "rate_limiter": DEFAULT_RATE_LIMITER,
-            "timeout": get_settings().llm_request_timeout_seconds,
+            "timeout": httpx.Timeout(
+                connect=12.0,
+                write=90.0,
+                read=get_settings().llm_request_timeout_seconds,
+                pool=30.0,
+            ),
         }
 
         if self.temperature is not None:
