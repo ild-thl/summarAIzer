@@ -1,14 +1,14 @@
 """Service wrapper for Docling document conversion API."""
 
-import logging
 from typing import Any
 
 import requests
+import structlog
 
 from app.config.settings import get_settings
 from app.services.provider_request_control import perform_rate_limited_request
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class DoclingService:

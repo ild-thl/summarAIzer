@@ -1,15 +1,15 @@
 """Service for image generation via external AI APIs."""
 
 import base64
-import logging
 from pathlib import Path
 from typing import Any
 
 import requests
+import structlog
 
 from app.services.provider_request_control import perform_rate_limited_request
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 class ImageGenerationService:

@@ -1,11 +1,11 @@
 """Service for building published session documentation artifacts."""
 
 import json
-import logging
 from collections import OrderedDict
 from datetime import datetime
 from urllib.parse import urlparse
 
+import structlog
 from sqlalchemy.orm import Session as SQLSession
 
 from app.config.settings import get_settings
@@ -14,7 +14,7 @@ from app.crud.session import session_crud
 from app.database.models import SessionStatus
 from app.schemas.session import DocumentationSection, SessionDocumentationResponse
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 TRANSCRIPTION_IDENTIFIER = "transcription"
 SLIDE_DECK_IDENTIFIER = "slide_deck"
