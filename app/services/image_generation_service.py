@@ -100,7 +100,6 @@ class ImageGenerationService:
         height: int = 768,
         model: str = "flux",
         num_images: int = 1,
-        quality: str = "standard",
     ) -> dict[str, Any]:
         """Generate images from a text prompt using Academic Cloud API."""
         try:
@@ -113,7 +112,6 @@ class ImageGenerationService:
                 "size": f"{width}x{height}",
                 "model": model,
                 "n": num_images,
-                "quality": quality,
                 "response_format": "b64_json",
             }
 
