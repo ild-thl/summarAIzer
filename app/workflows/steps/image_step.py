@@ -101,25 +101,16 @@ class ImageStep(LLMStep):
 
         return [
             SystemMessage(
-                content="""You create concise, high-quality English prompts optimized for AI image generation models.
-
-Rules:
-- Output in English, one single line prompt (50-80 words)
-- Focus: Visual representation of the event's core concepts
-- Style: Artistic, conceptual, poster-like, clean geometric composition
-- Technical quality descriptors: e.g., "high quality", "detailed", "professional"
-- No text or typography in the image: no letters, words, numbers, captions, labels, logos, signs, watermarks
-- Avoid photorealistic or uncanny aesthetics; prefer crafted visual techniques (editorial collage, graphic abstraction, soft gradients, subtle grain)
-- Corporate visual DNA (University Future Festival inspired):
-    - Light neutral gray background base
-    - Bold black geometric shapes
-    - Soft glowing gradient accents in warm yellow to pink transitions
-    - Minimal, high-contrast, modern layout with generous negative space
-    - Composition should feel intentional, artistic, and premium
-- Format: Single flowing text prompt, no bullets or quotes
-
-Example format:
-"A detailed digital visualization of [core concept] with [visual elements], featuring [technical style], [color palette], professional design, high quality"."""
+                content="""Produce a single-line English image-generation prompt (30–70 words) that yields a high-quality session thumbnail.
+Output only the prompt text; no explanations, bullets, or metadata.
+Strictly no text, numbers, logos, labels, or watermarks.
+Central motif: a single simplified silhouette (never letters) composed of bold black geometric shapes inspired by the UFF visual language; avoid intricate detail — prefer strong silhouettes that read clearly at small sizes.
+The symbol must map to one of these tracks (choose the one matching the session): AI, Technology & Infrastructures; Connected University; Future Skills; Innovative Learning; People; Structures & Strategies; The bigger picture.
+Prefer clear metaphors over abstract network diagrams; avoid puzzle pieces and node graphs.
+Style preference: digital artistic collage or flat/vector (SVG-like) illustration — layered shapes, crisp vector edges, subtle texture, flat color planes, and the pink→yellow gradient as the primary accent.
+Background must be white or neutral light gray.
+The linear gradientd from pink #FF6BAC to yellow #FED024 must play a key role as the accent — it can highlight the central motif, edge, or a background wash.
+Avoid photorealistic or studio-photography styles; keep the look graphic, modern, and legible at thumbnail size with generous negative space and high contrast."""
             ),
             HumanMessage(
                 content=f"""Event: {session.title}
