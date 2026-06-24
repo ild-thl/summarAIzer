@@ -50,7 +50,6 @@ class ImageStep(LLMStep):
         model: str = "flux",
         width: int = 1024,
         height: int = 768,
-        quality: str = "standard",
     ):
         """
         Initialize the combined image generation step.
@@ -61,7 +60,6 @@ class ImageStep(LLMStep):
             model: Model for image generation (default: "flux")
             width: Image width in pixels (default: 1024)
             height: Image height in pixels (default: 768)
-            quality: Quality level - "standard" or "hd" (default: "standard")
         """
         super().__init__()
 
@@ -77,7 +75,6 @@ class ImageStep(LLMStep):
         self.image_model = model
         self.width = width
         self.height = height
-        self.quality = quality
 
         # Warn if no API key configured
         if not api_key:
@@ -89,7 +86,7 @@ class ImageStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
-            model="mistral-large-3-675b-instruct-2512",
+            model="gemma-4-31b-it",
             temperature=0.7,  # Moderate for creativity but consistency
             max_tokens=300,  # Short and concise
             top_p=0.95,
@@ -175,7 +172,6 @@ Create a concise English prompt for a high-quality visualization image that repr
                 height=self.height,
                 model=self.image_model,
                 num_images=1,  # Only single image per execution
-                quality=self.quality,
             )
 
             if not result.get("success"):
