@@ -159,14 +159,22 @@ def _build_zip_bytes(
     return buf.getvalue()
 
 
-def _session_metadata_header(s_obj: SessionModel) -> str:
-    """Return a small YAML-like metadata header for a session or empty string."""
-    fmt = getattr(s_obj, "session_format", None)
-    fmt_val = getattr(fmt, "value", str(fmt)) if fmt is not None else None
-    tags = s_obj.tags or []
-    tags_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
-    speakers = s_obj.speakers or []
-    speaker_names: list[str] = []
+def _fmt_value(obj: object) -> str | None:
+    return getattr(obj, "value", str(obj)) if obj is not None else None
+
+
+def _tags_str(obj: SessionModel) -> str | None:
+    tags = getattr(obj, "tags", None) or []
+    if isinstance(tags, list) and tags:
+        return ", ".join(tags)
+    if tags:
+        return str(tags)
+    return None
+
+
+def _speakers_str(obj: SessionModel) -> str | None:
+    speakers = getattr(obj, "speakers", None) or []
+    names: list[str] = []
     if isinstance(speakers, list):
         for sp in speakers:
             if isinstance(sp, dict):
@@ -174,8 +182,40 @@ def _session_metadata_header(s_obj: SessionModel) -> str:
             else:
                 name = str(sp)
             if name:
-                speaker_names.append(name)
-    speakers_str = ", ".join(speaker_names)
+                names.append(name)
+    return ", ".join(names) if names else None
+
+
+def _timeframe(obj: SessionModel) -> str | None:
+    start = getattr(obj, "start_datetime", None)
+    end = getattr(obj, "end_datetime", None)
+    if start and end:
+        try:
+            start_local = start.astimezone()
+            end_local = end.astimezone()
+        except Exception:
+            start_local = start
+            end_local = end
+        return f"{start_local.strftime('%d.%m.%Y %H:%M')} - {end_local.strftime('%d.%m.%Y %H:%M')}"
+    return None
+
+
+def _location_str(obj: SessionModel) -> str | None:
+    loc = getattr(obj, "location_rel", None)
+    if not loc:
+        return None
+    parts = [p for p in [getattr(loc, "name", None), getattr(loc, "city", None)] if p]
+    return ", ".join(parts) if parts else None
+
+
+def _session_metadata_header(s_obj: SessionModel) -> str:
+    """Return a small YAML-like metadata header for a session or empty string."""
+    fmt = getattr(s_obj, "session_format", None)
+    fmt_val = _fmt_value(fmt)
+    tags_str = _tags_str(s_obj)
+    speakers_str = _speakers_str(s_obj)
+    timeframe_formatted = _timeframe(s_obj)
+    location_str = _location_str(s_obj)
     language = getattr(s_obj, "language", None)
 
     meta_lines: list[str] = ["---"]
@@ -184,9 +224,13 @@ def _session_metadata_header(s_obj: SessionModel) -> str:
     if tags_str:
         meta_lines.append(f"Tags: {tags_str}")
     if language:
-        meta_lines.append(f"Language: {language}")
+        meta_lines.append(f"Sprache: {language}")
     if speakers_str:
-        meta_lines.append(f"Speakers: {speakers_str}")
+        meta_lines.append(f"Referent:innen: {speakers_str}")
+    if timeframe_formatted:
+        meta_lines.append(f"Zeitfenster: {timeframe_formatted}")
+    if location_str:
+        meta_lines.append(f"Ort: {location_str}")
 
     if len(meta_lines) == 1:
         return ""
@@ -442,11 +486,19 @@ def _export_event_summaries_response(
     if not event:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
 
-    if event.status != EventStatus.PUBLISHED and not can_manage_event(event, current_user):
+    # Allow public access for published events. For non-published events
+    # require an authenticated manager/owner. Use short-circuiting so
+    # `can_manage_event` is not called with `None`.
+    if event.status != EventStatus.PUBLISHED and (
+        current_user is None or not can_manage_event(event, current_user)
+    ):
         raise HTTPException(status_code=403, detail="Permission denied")
 
     sessions = session_crud.list_by_event(db, event_id)
     eligible_sessions = [s for s in sessions if s.published_documentation_artifact]
+    # Order sessions by start_datetime (oldest first). Sessions without a start_datetime
+    # are placed at the end.
+    eligible_sessions.sort(key=lambda s: (s.start_datetime is None, s.start_datetime))
     if not eligible_sessions:
         raise HTTPException(
             status_code=HTTP_404_NOT_FOUND, detail="No published sessions with artifacts found"
