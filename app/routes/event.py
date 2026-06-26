@@ -1,7 +1,11 @@
 """API routes for Event management."""
 
+import io
+import zipfile
+
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.status import (
@@ -12,9 +16,12 @@ from starlette.status import (
 )
 
 from app.crud.event import event_crud
+from app.crud.generated_content import (
+    get_content_by_identifier as get_generated_content_by_identifier,
+)
 from app.crud.session import session_crud
 from app.database.connection import get_db
-from app.database.models import Event, User
+from app.database.models import Event, EventStatus, User
 from app.database.models import Session as SessionModel
 from app.schemas.session import (
     EventCreate,
@@ -26,7 +33,9 @@ from app.schemas.session import (
     SessionUpdate,
 )
 from app.security.auth import (
+    can_manage_event,
     get_current_user,
+    get_current_user_optional,
     is_admin,
     require_event_owner,
 )
@@ -86,6 +95,104 @@ async def create_event(
 
     db_event = event_crud.create(db, event_in, owner_id=current_user.id)
     return db_event
+
+
+def _add_session_files(
+    zf: zipfile.ZipFile,
+    event_obj: Event,
+    s_obj: SessionModel,
+    db_s: Session,
+    include_metadata: bool = True,
+) -> None:
+    """Add summary and transcription files for a single session into the provided ZipFile."""
+    event_part = event_obj.uri or f"event-{event_obj.id}"
+    session_part = s_obj.uri or f"session-{s_obj.id}"
+    base_path = f"{event_part}/{session_part}/"
+
+    # Summary
+    summary_text = None
+    gen = get_generated_content_by_identifier(db_s, s_obj.id, "summary")
+    if gen:
+        summary_text = gen.content
+
+    if summary_text:
+        header = _session_metadata_header(s_obj) if include_metadata else ""
+        zf.writestr(base_path + "summary.md", header + summary_text)
+
+    # Transcription
+    gen_t = get_generated_content_by_identifier(db_s, s_obj.id, "transcription")
+    if gen_t and gen_t.content:
+        zf.writestr(base_path + "transcript.txt", gen_t.content)
+
+
+def _build_zip_bytes(
+    event_obj: Event,
+    sessions_list: list[SessionModel],
+    db_s: Session,
+    include_metadata: bool = True,
+) -> bytes:
+    """Build a ZIP archive bytes containing session summaries and transcriptions."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for s in sessions_list:
+            _add_session_files(zf, event_obj, s, db_s, include_metadata)
+        # Build top-level index markdown listing included sessions and links
+        event_part = event_obj.uri or f"event-{event_obj.id}"
+        index_lines: list[str] = [
+            f"# {event_obj.title or event_part}",
+            "",
+            "## Zusammenfassungen der Sessions",
+            "",
+        ]
+        for s in sessions_list:
+            session_part = s.uri or f"session-{s.id}"
+            title = s.title or session_part
+            summary_path = f"{event_part}/{session_part}/summary.md"
+            trans_path = f"{event_part}/{session_part}/transcript.txt"
+            index_lines.append(
+                f"- **{title}** — [Zusammenfassung]({summary_path}) | [Transkript]({trans_path})"
+            )
+        index_content = "\n".join(index_lines) + "\n"
+        zf.writestr("index.md", index_content)
+
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _session_metadata_header(s_obj: SessionModel) -> str:
+    """Return a small YAML-like metadata header for a session or empty string."""
+    fmt = getattr(s_obj, "session_format", None)
+    fmt_val = getattr(fmt, "value", str(fmt)) if fmt is not None else None
+    tags = s_obj.tags or []
+    tags_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+    speakers = s_obj.speakers or []
+    speaker_names: list[str] = []
+    if isinstance(speakers, list):
+        for sp in speakers:
+            if isinstance(sp, dict):
+                name = sp.get("name") or sp.get("displayName") or sp.get("username")
+            else:
+                name = str(sp)
+            if name:
+                speaker_names.append(name)
+    speakers_str = ", ".join(speaker_names)
+    language = getattr(s_obj, "language", None)
+
+    meta_lines: list[str] = ["---"]
+    if fmt_val:
+        meta_lines.append(f"Format: {fmt_val}")
+    if tags_str:
+        meta_lines.append(f"Tags: {tags_str}")
+    if language:
+        meta_lines.append(f"Language: {language}")
+    if speakers_str:
+        meta_lines.append(f"Speakers: {speakers_str}")
+
+    if len(meta_lines) == 1:
+        return ""
+
+    meta_lines.append("---\n")
+    return "\n".join(meta_lines)
 
 
 @router.get("/me", response_model=EventPageResponse)
@@ -313,3 +420,38 @@ async def sync_session(
         created = session_crud.create(db, session_in, initial_owner_user_id=current_user.id)
         response.status_code = HTTP_201_CREATED
         return created
+
+
+@router.get("/{event_id}/export/summaries-zip")
+async def export_event_summaries_zip(
+    event_id: int,
+    include_metadata: bool = Query(
+        True, description="Include session metadata header in summary files"
+    ),
+    current_user: User | None = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    return _export_event_summaries_response(event_id, current_user, db, include_metadata)
+
+
+def _export_event_summaries_response(
+    event_id: int, current_user: User | None, db: Session, include_metadata: bool = True
+) -> StreamingResponse:
+    """Helper that builds and returns the StreamingResponse for an event export."""
+    event = event_crud.read(db, event_id)
+    if not event:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Event not found")
+
+    if event.status != EventStatus.PUBLISHED and not can_manage_event(event, current_user):
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    sessions = session_crud.list_by_event(db, event_id)
+    eligible_sessions = [s for s in sessions if s.published_documentation_artifact]
+    if not eligible_sessions:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND, detail="No published sessions with artifacts found"
+        )
+
+    zip_bytes = _build_zip_bytes(event, eligible_sessions, db, include_metadata)
+    headers = {"Content-Disposition": f"attachment; filename=event-{event.id}-summaries.zip"}
+    return StreamingResponse(iter([zip_bytes]), media_type="application/zip", headers=headers)
