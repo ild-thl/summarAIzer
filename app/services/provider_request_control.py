@@ -1,13 +1,13 @@
 """Shared throttling and retry helpers for outbound provider HTTP requests."""
 
-import logging
 import time
 from collections.abc import Callable
 
 import requests
+import structlog
 from langchain_core.rate_limiters import InMemoryRateLimiter
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 # Shared across chat, image generation, and Whisper calls within a worker process.
 DEFAULT_RATE_LIMITER = InMemoryRateLimiter(
