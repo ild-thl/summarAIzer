@@ -1,8 +1,5 @@
 """API routes for Event management."""
 
-import io
-import zipfile
-
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
@@ -16,9 +13,6 @@ from starlette.status import (
 )
 
 from app.crud.event import event_crud
-from app.crud.generated_content import (
-    get_content_by_identifier as get_generated_content_by_identifier,
-)
 from app.crud.session import session_crud
 from app.database.connection import get_db
 from app.database.models import Event, EventStatus, User
@@ -39,6 +33,7 @@ from app.security.auth import (
     is_admin,
     require_event_owner,
 )
+from app.services.session_export import build_zip_bytes
 
 logger = structlog.get_logger()
 
@@ -97,146 +92,7 @@ async def create_event(
     return db_event
 
 
-def _add_session_files(
-    zf: zipfile.ZipFile,
-    event_obj: Event,
-    s_obj: SessionModel,
-    db_s: Session,
-    include_metadata: bool = True,
-) -> None:
-    """Add summary and transcription files for a single session into the provided ZipFile."""
-    event_part = event_obj.uri or f"event-{event_obj.id}"
-    session_part = s_obj.uri or f"session-{s_obj.id}"
-    base_path = f"{event_part}/{session_part}/"
-
-    # Summary
-    summary_text = None
-    gen = get_generated_content_by_identifier(db_s, s_obj.id, "summary")
-    if gen:
-        summary_text = gen.content
-
-    if summary_text:
-        header = _session_metadata_header(s_obj) if include_metadata else ""
-        zf.writestr(base_path + "summary.md", header + summary_text)
-
-    # Transcription
-    gen_t = get_generated_content_by_identifier(db_s, s_obj.id, "transcription")
-    if gen_t and gen_t.content:
-        zf.writestr(base_path + "transcript.txt", gen_t.content)
-
-
-def _build_zip_bytes(
-    event_obj: Event,
-    sessions_list: list[SessionModel],
-    db_s: Session,
-    include_metadata: bool = True,
-) -> bytes:
-    """Build a ZIP archive bytes containing session summaries and transcriptions."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for s in sessions_list:
-            _add_session_files(zf, event_obj, s, db_s, include_metadata)
-        # Build top-level index markdown listing included sessions and links
-        event_part = event_obj.uri or f"event-{event_obj.id}"
-        index_lines: list[str] = [
-            f"# {event_obj.title or event_part}",
-            "",
-            "## Zusammenfassungen der Sessions",
-            "",
-        ]
-        for s in sessions_list:
-            session_part = s.uri or f"session-{s.id}"
-            title = s.title or session_part
-            summary_path = f"{event_part}/{session_part}/summary.md"
-            trans_path = f"{event_part}/{session_part}/transcript.txt"
-            index_lines.append(
-                f"- **{title}** — [Zusammenfassung]({summary_path}) | [Transkript]({trans_path})"
-            )
-        index_content = "\n".join(index_lines) + "\n"
-        zf.writestr("index.md", index_content)
-
-    buf.seek(0)
-    return buf.getvalue()
-
-
-def _fmt_value(obj: object) -> str | None:
-    return getattr(obj, "value", str(obj)) if obj is not None else None
-
-
-def _tags_str(obj: SessionModel) -> str | None:
-    tags = getattr(obj, "tags", None) or []
-    if isinstance(tags, list) and tags:
-        return ", ".join(tags)
-    if tags:
-        return str(tags)
-    return None
-
-
-def _speakers_str(obj: SessionModel) -> str | None:
-    speakers = getattr(obj, "speakers", None) or []
-    names: list[str] = []
-    if isinstance(speakers, list):
-        for sp in speakers:
-            if isinstance(sp, dict):
-                name = sp.get("name") or sp.get("displayName") or sp.get("username")
-            else:
-                name = str(sp)
-            if name:
-                names.append(name)
-    return ", ".join(names) if names else None
-
-
-def _timeframe(obj: SessionModel) -> str | None:
-    start = getattr(obj, "start_datetime", None)
-    end = getattr(obj, "end_datetime", None)
-    if start and end:
-        try:
-            start_local = start.astimezone()
-            end_local = end.astimezone()
-        except Exception:
-            start_local = start
-            end_local = end
-        return f"{start_local.strftime('%d.%m.%Y %H:%M')} - {end_local.strftime('%d.%m.%Y %H:%M')}"
-    return None
-
-
-def _location_str(obj: SessionModel) -> str | None:
-    loc = getattr(obj, "location_rel", None)
-    if not loc:
-        return None
-    parts = [p for p in [getattr(loc, "name", None), getattr(loc, "city", None)] if p]
-    return ", ".join(parts) if parts else None
-
-
-def _session_metadata_header(s_obj: SessionModel) -> str:
-    """Return a small YAML-like metadata header for a session or empty string."""
-    fmt = getattr(s_obj, "session_format", None)
-    fmt_val = _fmt_value(fmt)
-    tags_str = _tags_str(s_obj)
-    speakers_str = _speakers_str(s_obj)
-    timeframe_formatted = _timeframe(s_obj)
-    location_str = _location_str(s_obj)
-    language = getattr(s_obj, "language", None)
-
-    meta_lines: list[str] = ["---"]
-    if fmt_val:
-        meta_lines.append(f"Format: {fmt_val}")
-    if tags_str:
-        meta_lines.append(f"Tags: {tags_str}")
-    if language:
-        meta_lines.append(f"Sprache: {language}")
-    if speakers_str:
-        meta_lines.append(f"Referent:innen: {speakers_str}")
-    if timeframe_formatted:
-        meta_lines.append(f"Zeitfenster: {timeframe_formatted}")
-    if location_str:
-        meta_lines.append(f"Ort: {location_str}")
-
-    if len(meta_lines) == 1:
-        return ""
-
-    meta_lines.append("---\n")
-    return "\n".join(meta_lines)
+# `_add_session_files` and `_build_zip_bytes` moved to `app.services.session_export`.
 
 
 @router.get("/me", response_model=EventPageResponse)
@@ -472,14 +328,24 @@ async def export_event_summaries_zip(
     include_metadata: bool = Query(
         True, description="Include session metadata header in summary files"
     ),
+    plain_text: bool = Query(
+        False,
+        description="Return plain-text .txt files without index or metadata (cleaned of markdown/html)",
+    ),
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
-    return _export_event_summaries_response(event_id, current_user, db, include_metadata)
+    return _export_event_summaries_response(
+        event_id, current_user, db, include_metadata, plain_text
+    )
 
 
 def _export_event_summaries_response(
-    event_id: int, current_user: User | None, db: Session, include_metadata: bool = True
+    event_id: int,
+    current_user: User | None,
+    db: Session,
+    include_metadata: bool = True,
+    plain_text: bool = False,
 ) -> StreamingResponse:
     """Helper that builds and returns the StreamingResponse for an event export."""
     event = event_crud.read(db, event_id)
@@ -504,6 +370,6 @@ def _export_event_summaries_response(
             status_code=HTTP_404_NOT_FOUND, detail="No published sessions with artifacts found"
         )
 
-    zip_bytes = _build_zip_bytes(event, eligible_sessions, db, include_metadata)
+    zip_bytes = build_zip_bytes(event, eligible_sessions, db, include_metadata, plain_text)
     headers = {"Content-Disposition": f"attachment; filename=event-{event.id}-summaries.zip"}
     return StreamingResponse(iter([zip_bytes]), media_type="application/zip", headers=headers)
