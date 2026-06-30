@@ -68,7 +68,7 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
-    llm_model: str = os.getenv("LLM_MODEL", "mistral-large-3-675b-instruct-2512")
+    llm_model: str = os.getenv("LLM_MODEL", "gemma-4-31b-it")
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
