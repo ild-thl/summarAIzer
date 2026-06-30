@@ -7,13 +7,14 @@ from typing import Any
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
-
+settings = get_settings()
 _GLOSSARY_MIN_ENTRIES = 5
 _GLOSSARY_MAX_ENTRIES = 8
 
@@ -94,7 +95,7 @@ class GlossaryStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model=settings.llm_model_medium,
             temperature=0.1,
             max_tokens=1200,
             top_p=0.9,

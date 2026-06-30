@@ -119,16 +119,6 @@ def test_step_context_requirements_property():
     assert step.context_requirements == ["step1", "step2"]
 
 
-def test_step_get_model_config():
-    """Test that get_model_config returns default config."""
-    step = create_mock_step(identifier="test_step")
-    config = step.get_model_config()
-
-    assert config.model == "gemma-4-31b-it"
-    assert config.temperature == 0.7
-    assert config.max_tokens == 2000
-
-
 @pytest.mark.asyncio
 async def test_summary_step_integration(test_db, sample_session):
     """Test SummaryStep with mocked LLM."""

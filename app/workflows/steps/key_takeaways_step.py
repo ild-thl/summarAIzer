@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
 from app.database.models import SessionFormat
 from app.workflows.chat_models import ChatModelConfig
@@ -12,6 +13,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 # Lightning Talk sessions get a compact extraction
 _LIGHTNING_TALK_COUNT = "3-4"
@@ -42,7 +44,7 @@ class KeyTakeawaysStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Key takeaways need nuanced understanding - use well-rounded model."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model=settings.llm_model_medium,
             temperature=0.1,
             max_tokens=1500,
             top_p=0.92,

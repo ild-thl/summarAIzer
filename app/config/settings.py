@@ -68,17 +68,17 @@ class Settings(BaseSettings):
     # LLM Configuration
     llm_base_url: str = os.getenv("LLM_BASE_URL", "")
     llm_api_key: str = os.getenv("LLM_API_KEY", "")
-    llm_model: str = os.getenv("LLM_MODEL", "gemma-4-31b-it")
+    llm_model_default: str = os.getenv("LLM_MODEL_DEFAULT", "")
+    llm_model_large: str = os.getenv("LLM_MODEL_LARGE", llm_model_default)
+    llm_model_medium: str = os.getenv("LLM_MODEL_MEDIUM", llm_model_default)
+    llm_model_small: str = os.getenv("LLM_MODEL_SMALL", llm_model_default)
+    llm_model_coding: str = os.getenv("LLM_MODEL_CODING", llm_model_default)
+    llm_model_structured_output: str = os.getenv("LLM_MODEL_STRUCTURED_OUTPUT", llm_model_default)
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
     llm_top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
     llm_request_timeout_seconds: float = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "300"))
-
-    # LLM Model for structured output tasks (e.g., query refinement, slot filling)
-    llm_model_structured_output: str = os.getenv(
-        "LLM_MODEL_STRUCTURED_OUTPUT", "qwen3-30b-a3b-instruct-2507"
-    )
 
     # Embedding Configuration for semantic search
     enable_embeddings: bool = os.getenv("ENABLE_EMBEDDINGS", "true").lower() == "true"

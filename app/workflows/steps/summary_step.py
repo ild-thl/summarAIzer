@@ -5,6 +5,7 @@ from typing import Any
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
 from app.database.models import SessionFormat
 from app.workflows.chat_models import ChatModelConfig
@@ -12,6 +13,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 def _build_talk_messages(
@@ -237,7 +239,7 @@ class SummaryStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Summary needs good context comprehension and longer output."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model=settings.llm_model_large,
             temperature=0.3,
             max_tokens=5000,
             top_p=0.95,

@@ -14,6 +14,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 class ImageStep(LLMStep):
@@ -63,8 +64,6 @@ class ImageStep(LLMStep):
         """
         super().__init__()
 
-        settings = get_settings()
-
         # Use provided values or fallback to settings
         api_url = api_url or settings.image_generation_api_url
         api_key = api_key or settings.image_generation_api_key
@@ -86,7 +85,7 @@ class ImageStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Image description generation needs creative, concise output."""
         return ChatModelConfig(
-            model="gemma-4-31b-it",
+            model=settings.llm_model_medium,
             temperature=0.7,  # Moderate for creativity but consistency
             max_tokens=300,  # Short and concise
             top_p=0.95,
