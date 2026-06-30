@@ -7,6 +7,7 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
+from app.config.settings import get_settings
 from app.database.models import GeneratedContent
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
@@ -14,6 +15,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 class TagsStep(LLMStep):
@@ -44,7 +46,7 @@ class TagsStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Tags are shorter outputs - use configured model settings."""
         return ChatModelConfig(
-            model="qwen3-30b-a3b-instruct-2507",
+            model=settings.llm_model_structured_output,
             temperature=0.5,  # Lower for consistent tagging
             max_tokens=500,  # Tags are brief
             top_p=0.9,

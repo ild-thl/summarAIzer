@@ -6,12 +6,14 @@ from typing import Any
 import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from app.config.settings import get_settings
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
 from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 def _extract_mermaid_code(response: Any) -> str:
@@ -82,7 +84,7 @@ class MermaidStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Mermaid generation needs structured output - low temperature for consistency."""
         return ChatModelConfig(
-            model="devstral-2-123b-instruct-2512",
+            model=settings.llm_model_coding,
             temperature=0.2,
             max_tokens=1500,
             top_p=0.9,

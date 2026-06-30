@@ -10,6 +10,7 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
+from app.config.settings import get_settings
 from app.config.wordcloud_stopwords import ALL_STOP_WORDS
 from app.database.models import Session as SessionModel
 from app.workflows.chat_models import ChatModelConfig
@@ -17,6 +18,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 _WORDCLOUD_RERANK_CANDIDATES = 50
 _WORDCLOUD_FALLBACK_WORDS = 25
@@ -142,7 +144,7 @@ class WordcloudStep(LLMStep):
 
     def get_model_config(self) -> ChatModelConfig:
         return ChatModelConfig(
-            model="meta-llama-3.1-8b-instruct",
+            model=settings.llm_model_small,
             temperature=0.1,
             max_tokens=500,
             top_p=0.9,

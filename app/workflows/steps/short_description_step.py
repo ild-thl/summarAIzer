@@ -6,6 +6,7 @@ import structlog
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from sqlalchemy.orm import Session
 
+from app.config.settings import get_settings
 from app.crud.session import session_crud
 from app.database.models import Session as SessionModel
 from app.schemas.session import SessionUpdate
@@ -14,6 +15,7 @@ from app.workflows.execution_context import StepRegistry
 from app.workflows.steps.llm_step import LLMStep
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 class ShortDescriptionStep(LLMStep):
@@ -31,10 +33,6 @@ class ShortDescriptionStep(LLMStep):
     min_description_length: int = 20
     max_description_length: int = 250  # Target length (soft limit)
     hard_max_length: int = 350  # Absolute maximum before truncation (hard limit with margin)
-    temperature: float = 0.3  # Low for factual compression
-    max_tokens: int = 300  # Give LLM room to stay within margin
-    top_p: float = 0.9  # Moderate for some variability in phrasing
-    model_name: str = "gemma-4-31b-it"  # Model with good context handling for compression
 
     @property
     def identifier(self) -> str:
@@ -49,10 +47,10 @@ class ShortDescriptionStep(LLMStep):
     def get_model_config(self) -> ChatModelConfig:
         """Configuration for description optimization - low temperature for consistency."""
         return ChatModelConfig(
-            model=self.model_name,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            top_p=self.top_p,
+            model=settings.llm_model_medium,
+            temperature=0.3,
+            max_tokens=300,
+            top_p=0.9,
         )
 
     async def _validate_and_prepare_context(
@@ -248,14 +246,16 @@ Anforderungen:
 
 Gib AUSSCHLIESSLICH die optimierte Beschreibung zurück, nichts anderes."""
             ),
-            HumanMessage(content=f"""Veranstaltungstitel: {session.title}
+            HumanMessage(
+                content=f"""Veranstaltungstitel: {session.title}
 Referent:innen: {speakers}
 Tags: {tags}
 
 Originalbeschreibung:
 {source}
 
-Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung:"""),
+Erstelle nun eine optimierte, embedding-freundliche Kurzbeschreibung:"""
+            ),
         ]
 
     def _save_to_db(

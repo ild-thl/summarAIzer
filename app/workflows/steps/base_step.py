@@ -7,11 +7,13 @@ import structlog
 from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy.orm import Session
 
+from app.config.settings import get_settings
 from app.crud import generated_content as content_crud
 from app.crud.session import session_crud
 from app.workflows.chat_models import ChatModelConfig, create_chat_model
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 class WorkflowStep(ABC):
@@ -67,24 +69,15 @@ class WorkflowStep(ABC):
         Override this method in subclasses to customize model, temperature, max_tokens, etc.
         for task-specific optimization.
 
-        Example:
-            def get_model_config(self) -> ChatModelConfig:
-                return ChatModelConfig(
-                    model="gemma-4-31b-it",
-                    temperature=0.7,
-                    max_tokens=2000,
-                    top_p=0.95,
-                )
-
         Returns:
             ChatModelConfig with model settings for this step
         """
         # Default configuration - steps override for optimization
         return ChatModelConfig(
-            model="gemma-4-31b-it",
-            temperature=0.7,
-            max_tokens=2000,
-            top_p=None,
+            model=settings.llm_model_default,
+            temperature=settings.llm_temperature,
+            max_tokens=settings.llm_max_tokens,
+            top_p=settings.llm_top_p,
         )
 
     def get_model(self) -> BaseChatModel:
@@ -297,7 +290,7 @@ class WorkflowStep(ABC):
             {
                 "content": "actual content string",
                 "content_type": "markdown|json_array|plain_text|...",
-                "meta_info": {"model": "gemma-4-31b-it", "type": "generated_summary", ...}
+                "meta_info": {"model": "model_name", "type": "generated_summary", ...}
             }
         """
         pass
