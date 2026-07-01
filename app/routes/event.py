@@ -310,7 +310,7 @@ async def sync_session(
         updated = session_crud.update(
             db,
             existing.id,
-            SessionUpdate.model_validate(session_in.model_dump(mode="json"), exclude_unset=True),
+            SessionUpdate.model_validate(session_in.model_dump(mode="json", exclude_unset=True)),
         )
         response.status_code = HTTP_201_CREATED
         return updated
