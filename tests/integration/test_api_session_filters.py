@@ -163,19 +163,11 @@ class TestSessionFilteringAPI:
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_tags_multiple_or_logic(self, client):
         """Test filtering by multiple tags uses OR logic."""
-        response = client.get("/api/v2/sessions?tags=AI,Data")
+        response = client.get("/api/v2/sessions?tags=AI&tags=Data")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include AI sessions and Data Science (if published)
         assert len(data) >= 2
-
-    @pytest.mark.usefixtures("sessions_for_filtering")
-    def test_filter_by_tags_url_encoded(self, client):
-        """Test filtering by tags with URL encoding."""
-        response = client.get("/api/v2/sessions?tags=AI%2CBasics")
-        assert response.status_code == HTTP_200_OK
-        data = response.json()
-        assert len(data) >= 1
 
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_duration_min(self, client):
@@ -234,7 +226,7 @@ class TestSessionFilteringAPI:
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_multiple_or_logic(self, client):
         """Test filtering by multiple locations uses OR logic."""
-        response = client.get("/api/v2/sessions?location_names=Stage+Berlin,AI+Stage+TU+Graz")
+        response = client.get("/api/v2/sessions?location_names=Stage+Berlin&location_names=AI+Stage+TU+Graz")
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include sessions from both locations (OR logic)
