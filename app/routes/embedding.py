@@ -267,21 +267,23 @@ async def search_similar_sessions(
     query: str = Query(..., min_length=1, max_length=8000, description="Query text to search"),
     limit: int = Query(10, ge=1, le=100, description="Max results"),
     event_id: int | None = Query(None, description="Filter by event ID"),
-    session_format: str | None = Query(
+    session_format: list[str] | None = Query(
         None,
-        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
+        description="Filter by session format - repeat the param for multiple values (input, lightning talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
-    tags: str | None = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location_cities: str | None = Query(
-        None, description="Filter by city (comma-separated, OR logic)"
+    tags: list[str] | None = Query(
+        None, description="Filter by tags - repeat the param for multiple values (OR logic)"
     ),
-    location_names: str | None = Query(
+    location_cities: list[str] | None = Query(
+        None, description="Filter by city - repeat the param for multiple values (OR logic)"
+    ),
+    location_names: list[str] | None = Query(
         None,
-        description="Filter by location name such as stage or room (comma-separated, OR logic)",
+        description="Filter by location name such as stage or room - repeat the param for multiple values (OR logic)",
     ),
-    language: str | None = Query(
+    language: list[str] | None = Query(
         None,
-        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+        description="Filter by language - repeat the param for multiple values (ISO 639-1 code, e.g., en,de) - OR logic",
     ),
     duration_min: int | None = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int | None = Query(None, ge=0, description="Maximum duration in minutes"),
@@ -300,10 +302,10 @@ async def search_similar_sessions(
     - **query**: Text to search (will be embedded and matched semantically)
     - **limit**: Maximum number of results (1-100)
     - **event_id**: Optional filter by event ID (applied at DB level)
-    - **session_format**: Optional filter by format - comma-separated (Input, Lighting Talk, Diskussion, workshop, Training, lab, other) - OR logic
-    - **tags**: Optional filter by tags (comma-separated, OR logic - matches any tag)
-    - **location**: Optional filter by location (comma-separated, OR logic - matches any location)
-    - **language**: Optional filter by language code - comma-separated (e.g., en, de, fr) - OR logic
+    - **session_format**: Optional filter by format - repeat the param for multiple values (Input, Lighting Talk, Diskussion, workshop, Training, lab, other) - OR logic
+    - **tags**: Optional filter by tags - repeat the param for multiple values (OR logic - matches any tag)
+    - **location**: Optional filter by location - repeat the param for multiple values (OR logic - matches any location)
+    - **language**: Optional filter by language code - repeat the param for multiple values (e.g., en, de, fr) - OR logic
     - **duration_min**: Optional minimum duration in minutes
     - **duration_max**: Optional maximum duration in minutes
     - **time_windows**: Optional JSON array of windows; sessions must fit within at least one window
@@ -311,9 +313,9 @@ async def search_similar_sessions(
     **Examples:**
     - `/api/v2/sessions/search/similar?query=machine+learning`
     - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en`
-    - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en,de`
-    - `/api/v2/sessions/search/similar?query=ethics&tags=ai,security&session_format=workshop,input`
-    - `/api/v2/sessions/search/similar?query=keynote&location=Landing:Stage+Berlin,AI:Stage+TU+Graz`
+    - `/api/v2/sessions/search/similar?query=AI&event_id=5&language=en&language=de`
+    - `/api/v2/sessions/search/similar?query=ethics&tags=ai&tags=security&session_format=workshop&session_format=input`
+    - `/api/v2/sessions/search/similar?query=keynote&location_names=Landing:Stage+Berlin&location_names=AI:Stage+TU+Graz`
     - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (timeframe)
     - `/api/v2/sessions/search/similar?query=learning&duration_min=30&duration_max=90`
     - `/api/v2/sessions/search/similar?query=workshop&time_windows=[{"start":"2024-01-01T00:00:00","end":"2024-12-31T23:59:59"}]`
@@ -327,7 +329,7 @@ async def search_similar_sessions(
     try:
         from app.database.models import SessionFormat
 
-        # Validate and parse session_format (comma-separated enum values)
+        # Validate and parse session_format (repeat-param enum values)
         session_format_list = None
         if session_format:
             from app.routes.session import _validate_and_parse_enum_list
@@ -336,21 +338,13 @@ async def search_similar_sessions(
                 session_format, SessionFormat, "session_format"
             )
 
-        # Parse language (comma-separated, normalize to lowercase for consistency)
-        language_list = None
-        if language:
-            language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
+        # Parse language (repeat param, normalize to lowercase for consistency)
+        language_list = [lang.strip().lower() for lang in language] if language else None
 
-        # Parse tags and locations (comma-separated)
-        tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-        location_cities_list = (
-            [c.strip() for c in location_cities.split(",") if c.strip()]
-            if location_cities
-            else None
-        )
-        location_names_list = (
-            [n.strip() for n in location_names.split(",") if n.strip()] if location_names else None
-        )
+        # Tags and locations (repeat param)
+        tags_list = [t.strip() for t in tags] if tags else None
+        location_cities_list = [c.strip() for c in location_cities] if location_cities else None
+        location_names_list = [n.strip() for n in location_names] if location_names else None
 
         # Parse unified time windows
         parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)

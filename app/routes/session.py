@@ -142,37 +142,35 @@ def _resolve_public_session_sort(sort_by: str, sort_dir: str):
     return [column.desc(), SessionModel.id.desc()]
 
 
-def _split_csv(value: str | None, *, lowercase: bool = False) -> list[str] | None:
-    """Split a comma-separated string into a list of trimmed values or return None."""
-    if not value:
-        return None
-    items = [v.strip() for v in value.split(",") if v.strip()]
-    return [i.lower() for i in items] if lowercase else items
-
-
 @router.get("/page", response_model=SessionPageResponse)
 async def list_sessions_page(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=200, description="Maximum records to return"),
-    status: str = Query(
-        None, description="Filter by status - comma-separated (draft, published) - OR logic"
+    status: list[str] | None = Query(
+        None,
+        description="Filter by status - repeat parameter or multiple values (draft, published) - OR logic",
     ),
     event_id: int = Query(None, description="Filter by event ID"),
-    session_format: str = Query(
+    session_format: list[str] | None = Query(
         None,
-        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
+        description="Filter by session format - repeat parameter or multiple values (input, lightning talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
-    tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location_cities: str | None = Query(
-        None, description="Filter by city (comma-separated, OR logic)"
+    tags: list[str] | None = Query(
+        None, description="Filter by tags (repeat param or multiple values, OR logic)"
     ),
-    location_names: str | None = Query(
+    location_cities: list[str] | None = Query(
+        None, description="Filter by city (repeat param or multiple values, OR logic)"
+    ),
+    location_names: list[str] | None = Query(
         None,
-        description="Filter by location name such as stage or room (comma-separated, OR logic)",
+        description=(
+            "Filter by location name such as stage or room. Provide multiple values by repeating the param: ",
+            "location_names=NameA&location_names=NameB. Use standard percent-encoding for reserved characters.",
+        ),
     ),
-    language: str = Query(
+    language: list[str] | None = Query(
         None,
-        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+        description="Filter by language - repeat param or multiple values (ISO 639-1 code, e.g., en,de) - OR logic",
     ),
     duration_min: int = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int = Query(None, ge=0, description="Maximum duration in minutes"),
@@ -204,15 +202,15 @@ async def list_sessions_page(
         else None
     )
 
-    language_list = _split_csv(language, lowercase=True)
+    language_list = [language.lower() for language in language] if language else None
 
-    location_cities_list = _split_csv(location_cities)
+    location_cities_list = location_cities if location_cities else None
 
-    location_names_list = _split_csv(location_names)
+    location_names_list = location_names if location_names else None
 
     parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
 
-    tags_list = _split_csv(tags)
+    tags_list = tags if tags else None
 
     query = db.query(SessionModel).options(joinedload(SessionModel.location_rel))
 
@@ -479,12 +477,18 @@ async def get_session_by_external_id(
     return db_session
 
 
-def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> list[str] | None:
-    """Validate and parse comma-separated enum values."""
+def _validate_and_parse_enum_list(
+    value: list[str] | None, enum_class, field_name: str
+) -> list[str] | None:
+    """Validate enum values provided as a list of strings.
+
+    The API expects repeated query params for multi-valued enums, e.g.
+    `?status=published&status=draft`.
+    """
     if not value:
         return None
 
-    values_list = [v.strip() for v in value.split(",") if v.strip()]
+    values_list = [v.strip() for v in value if isinstance(v, str) and v.strip()]
     valid_values = [e.value for e in enum_class]
 
     for v in values_list:
@@ -505,25 +509,28 @@ def _validate_and_parse_enum_list(value: str, enum_class, field_name: str) -> li
 async def list_sessions(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum records to return"),
-    status: str = Query(
-        None, description="Filter by status - comma-separated (draft, published) - OR logic"
+    status: list[str] | None = Query(
+        None,
+        description="Filter by status - repeat the param for multiple values (draft, published) - OR logic",
     ),
     event_id: int = Query(None, description="Filter by event ID"),
-    session_format: str = Query(
+    session_format: list[str] | None = Query(
         None,
-        description="Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic",
+        description="Filter by session format - repeat the param for multiple values (input, lightning talk, diskussion, workshop, training, lab, other) - OR logic",
     ),
-    tags: str = Query(None, description="Filter by tags (comma-separated, OR logic)"),
-    location_cities: str | None = Query(
-        None, description="Filter by city (comma-separated, OR logic)"
+    tags: list[str] | None = Query(
+        None, description="Filter by tags - repeat the param for multiple values (OR logic)"
     ),
-    location_names: str | None = Query(
+    location_cities: list[str] | None = Query(
+        None, description="Filter by city - repeat the param for multiple values (OR logic)"
+    ),
+    location_names: list[str] | None = Query(
         None,
-        description="Filter by location name such as stage or room (comma-separated, OR logic)",
+        description="Filter by location name such as stage or room - repeat the param for multiple values (OR logic)",
     ),
-    language: str = Query(
+    language: list[str] | None = Query(
         None,
-        description="Filter by language - comma-separated (ISO 639-1 code, e.g., en,de) - OR logic",
+        description="Filter by language - repeat the param for multiple values (ISO 639-1 code, e.g., en,de) - OR logic",
     ),
     duration_min: int = Query(None, ge=0, description="Minimum duration in minutes"),
     duration_max: int = Query(None, ge=0, description="Maximum duration in minutes"),
@@ -541,32 +548,29 @@ async def list_sessions(
 
     Public users see only published sessions. Authenticated users also see their own drafts.
 
-    **Filters (all optional):**
-    - **skip**: Number of records to skip (default: 0)
-    - **limit**: Maximum records to return (default: 100, max: 1000)
-    - **status**: Filter by status - comma-separated (draft, published) - OR logic
-    - **event_id**: Filter by event ID
-    - **session_format**: Filter by session format - comma-separated (input, lighting talk, diskussion, workshop, training, lab, other) - OR logic
-    - **tags**: Filter by tags - comma-separated list (OR logic: returns sessions with any tag)
-    - **location_cities**: Filter by city - comma-separated list (OR logic)
-    - **location_names**: Filter by location names (stage/room/venue) - comma-separated list (OR logic)
-    - **language**: Filter by language code - comma-separated (e.g., en, de, fr) - OR logic
-    - **duration_min**: Minimum duration in minutes
-    - **duration_max**: Maximum duration in minutes
-    - **speaker**: Search for speaker name (case-insensitive)
-    - **time_windows**: JSON array of windows; sessions must fit completely inside at least one window
-    - **search**: Full-text search on title, description, and speakers (case-insensitive)
+        **Filters (all optional):**
+        - **skip**: Number of records to skip (default: 0)
+        - **limit**: Maximum records to return (default: 100, max: 1000)
+        - **status**: Filter by status - repeat the param for multiple values (draft, published) - OR logic
+        - **event_id**: Filter by event ID
+        - **session_format**: Filter by session format - repeat the param for multiple values (input, lightning talk, diskussion, workshop, training, lab, other) - OR logic
+        - **tags**: Filter by tags - repeat the param for multiple values (OR logic: returns sessions with any tag)
+        - **location_cities**: Filter by city - repeat the param for multiple values (OR logic)
+        - **location_names**: Filter by location names (stage/room/venue) - repeat the param for multiple values (OR logic). Use percent-encoding for reserved characters like `&`.
+        - **language**: Filter by language code - repeat the param for multiple values (e.g., `en`, `de`, `fr`) - OR logic
+        - **duration_min**: Minimum duration in minutes
+        - **duration_max**: Maximum duration in minutes
+        - **speaker**: Search for speaker name (case-insensitive)
+        - **time_windows**: JSON array of windows; sessions must fit completely inside at least one window
+        - **search**: Full-text search on title, description, and speakers (case-insensitive)
 
-    **Examples:**
-    - `/api/v2/sessions?status=published&language=en`
-    - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
-    - `/api/v2/sessions?tags=ai,machine+learning&language=en,de`
-    - `/api/v2/sessions?location_names=Landing:Stage+Berlin,AI:Stage+TU+Graz`
-    - `/api/v2/sessions?location_cities=Berlin,Graz`
-    - `/api/v2/sessions?tags=AI%26Technology,FutureSkills` (tags with ampersand - URL-encoded)
-    - `/api/v2/sessions?search=machine+learning&status=published`
-    - `/api/v2/sessions?session_format=input,workshop`
-    - `/api/v2/sessions?time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (sessions in timeframe)
+        **Examples (use repeated query params; `curl -G --data-urlencode` is recommended):**
+        - `/api/v2/sessions?status=published&language=en`
+        - `/api/v2/sessions?event_id=5&duration_min=20&duration_max=60`
+        - `/api/v2/sessions?location_names=Landing:Stage+Berlin&location_names=AI:Stage+TU+Graz`
+        - `/api/v2/sessions?search=machine+learning&status=published`
+        - `/api/v2/sessions?session_format=input&session_format=workshop`
+        - `/api/v2/sessions?time_windows=[{"start":"2024-06-01T10:00:00","end":"2024-06-01T11:30:00"}]` (sessions in timeframe)
     """
     from app.database.models import SessionFormat, SessionStatus
 
@@ -578,27 +582,17 @@ async def list_sessions(
         else None
     )
 
-    # Parse language (comma-separated, normalize to lowercase for consistency)
-    language_list = None
-    if language:
-        language_list = [lang.strip().lower() for lang in language.split(",") if lang.strip()]
+    # Parse language (repeat param, normalize to lowercase for consistency)
+    language_list = [language.lower() for language in language] if language else None
 
-    # Parse locations (comma-separated)
-    location_cities_list = None
-    if location_cities:
-        location_cities_list = [city.strip() for city in location_cities.split(",") if city.strip()]
-
-    location_names_list = None
-    if location_names:
-        location_names_list = [name.strip() for name in location_names.split(",") if name.strip()]
-
+    # Locations (repeat param)
+    location_cities_list = location_cities if location_cities else None
+    location_names_list = location_names if location_names else None
     # Parse time windows JSON if provided
     parsed_time_windows = DateTimeUtils.parse_time_windows_json(time_windows)
 
-    # Parse tags (comma-separated)
-    tags_list = None
-    if tags:
-        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+    # Tags (repeat param)
+    tags_list = tags if tags else None
 
     # Use enhanced filtering
     sessions = session_crud.list_with_filters(
