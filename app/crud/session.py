@@ -584,6 +584,31 @@ class CRUDSession(CRUDBase[SessionModel, SessionCreate, SessionUpdate]):
             event_id = db_obj.event_id
             was_published = db_obj.status == "published"
 
+            try:
+                from app.services.s3_service import get_s3_service
+
+                s3 = get_s3_service()
+                prefixes = [
+                    f"content/summaraizer/slides/session_{session_id}/",
+                    f"content/summaraizer/session_{session_id}/",
+                    f"content/summaraizer/audio/raw/session_{session_id}/",
+                    f"content/summaraizer/audio/chunks/session_{session_id}/",
+                    f"content/summaraizer/published/session_{session_id}/",
+                ]
+                for prefix in prefixes:
+                    try:
+                        s3.delete_prefix(prefix)
+                    except Exception:
+                        logger.exception(
+                            "s3_delete_prefix_failed_for_session",
+                            session_id=session_id,
+                            prefix=prefix,
+                        )
+            except Exception:
+                logger.exception(
+                    "s3_delete_prefix_iteration_failed_before_session_delete", session_id=session_id
+                )
+
             db.delete(db_obj)
             db.commit()
             logger.info("session_deleted", session_id=id)

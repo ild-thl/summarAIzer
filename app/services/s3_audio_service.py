@@ -95,25 +95,6 @@ class S3AudioService(S3Service):
         keys.sort()
         return keys
 
-    def delete_object(self, s3_key: str) -> None:
-        """Delete a single S3 object."""
-        self.s3_client.delete_object(Bucket=self.bucket, Key=s3_key)
-        logger.info("s3_object_deleted", s3_key=s3_key)
-
-    def delete_prefix(self, prefix: str) -> int:
-        """Delete all objects under a prefix and return the deleted count."""
-        paginator = self.s3_client.get_paginator("list_objects_v2")
-        deleted = 0
-        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
-            objects = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
-            if objects:
-                self.s3_client.delete_objects(
-                    Bucket=self.bucket, Delete={"Objects": objects, "Quiet": True}
-                )
-                deleted += len(objects)
-        logger.info("s3_prefix_deleted", prefix=prefix, deleted_count=deleted)
-        return deleted
-
 
 def get_s3_audio_service() -> S3AudioService:
     """Dependency-injectable factory for S3AudioService."""

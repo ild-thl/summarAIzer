@@ -3,7 +3,7 @@
 import json
 from collections import OrderedDict
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import structlog
 from sqlalchemy.orm import Session as SQLSession
@@ -13,6 +13,7 @@ from app.crud.generated_content import list_for_session
 from app.crud.session import session_crud
 from app.database.models import SessionStatus
 from app.schemas.session import DocumentationSection, SessionDocumentationResponse
+from app.services.s3_service import get_s3_service
 
 logger = structlog.get_logger()
 
@@ -159,8 +160,8 @@ class DocumentationBuilder:
             section_content = None
         elif content.identifier == SLIDE_DECK_IDENTIFIER:
             section_type = "resource_link"
-            section_resource_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/download"
-            section_embed_url = f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/embed"
+            # Delegate slide-specific logic to helper
+            section_resource_url, section_embed_url = _build_slide_deck_section(session_id, content)
             section_content = None
         elif section_type in URL_SECTION_TYPES:
             section_resource_url = _extract_resource_url(content.content, content.meta_info)
@@ -174,6 +175,10 @@ class DocumentationBuilder:
                         "identifier": content.identifier,
                         "content_type": section_type,
                     },
+                )
+            else:
+                section_resource_url = _maybe_copy_s3_for_publication(
+                    session_id, content, section_resource_url
                 )
 
         return DocumentationSection(
@@ -285,3 +290,88 @@ def _is_http_url(value: str) -> bool:
 
     parsed = urlparse(value)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def _maybe_copy_s3_for_publication(session_id: int, content, section_resource_url: str) -> str:
+    """If the provided URL or content meta references an S3 key in our bucket,
+    copy it into a stable published prefix and return the rewritten public URL.
+
+    This is best-effort: failures are logged but do not stop documentation build.
+    """
+    try:
+        aws_base = (settings.aws_url or "").rstrip("/")
+        s3 = get_s3_service()
+
+        # Prefer explicit meta_info.s3_key when present
+        meta_s3_key = None
+        if isinstance(content.meta_info, dict):
+            meta_s3_key = content.meta_info.get("s3_key")
+
+        source_key = None
+        if isinstance(meta_s3_key, str) and meta_s3_key.strip():
+            source_key = meta_s3_key.strip().lstrip("/")
+        else:
+            if aws_base and section_resource_url.startswith(aws_base + "/"):
+                source_key = section_resource_url[len(aws_base) + 1 :].lstrip("/")
+
+        if not source_key:
+            return section_resource_url
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        basename = source_key.rsplit("/", 1)[-1]
+        dest_key = f"content/summaraizer/published/session_{session_id}/{ts}/{basename}"
+
+        try:
+            s3.copy_object(source_key, dest_key, acl="public-read")
+            new_url = _build_public_s3_url(dest_key) or section_resource_url
+            if isinstance(content.meta_info, dict):
+                content.meta_info["s3_key"] = dest_key
+                if "resource_url" in content.meta_info:
+                    content.meta_info["resource_url"] = new_url
+            return new_url
+        except Exception:
+            logger.exception(
+                "failed_to_copy_s3_object_for_publication",
+                session_id=session_id,
+                source=source_key,
+            )
+            return section_resource_url
+
+    except Exception:
+        logger.exception(
+            "error_during_publish_copy_check",
+            session_id=session_id,
+            identifier=getattr(content, "identifier", None),
+        )
+        return section_resource_url
+
+
+def _build_slide_deck_section(session_id: int, content) -> tuple[str | None, str | None]:
+    """Build resource/embed URLs for a slide_deck section, copying S3 object when possible.
+
+    Returns (resource_url, embed_url). Falls back to API endpoints when copy not possible.
+    """
+    api_download = (
+        f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/download"
+    )
+    api_embed = (
+        f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/embed"
+    )
+    try:
+        # Prefer explicit s3_key present inside the stored content payload
+        payload = _parse_json_dict(content.content) if isinstance(content.content, str) else None
+        if payload and isinstance(payload.get("s3_key"), str):
+            s3_src = _build_public_s3_url(payload.get("s3_key"))
+            if s3_src:
+                published_url = _maybe_copy_s3_for_publication(session_id, content, s3_src)
+                if published_url and published_url != api_download:
+                    s3_key = None
+                    if isinstance(content.meta_info, dict):
+                        s3_key = content.meta_info.get("s3_key")
+                    if s3_key:
+                        return published_url, f"{api_embed}?s3_key={quote(s3_key)}"
+                    return published_url, api_embed
+
+    except Exception:
+        logger.exception("slide_publish_copy_failed", session_id=session_id)
+
+    return api_download, api_embed

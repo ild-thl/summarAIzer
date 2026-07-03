@@ -226,7 +226,9 @@ class TestSessionFilteringAPI:
     @pytest.mark.usefixtures("sessions_for_filtering")
     def test_filter_by_location_multiple_or_logic(self, client):
         """Test filtering by multiple locations uses OR logic."""
-        response = client.get("/api/v2/sessions?location_names=Stage+Berlin&location_names=AI+Stage+TU+Graz")
+        response = client.get(
+            "/api/v2/sessions?location_names=Stage+Berlin&location_names=AI+Stage+TU+Graz"
+        )
         assert response.status_code == HTTP_200_OK
         data = response.json()
         # Should include sessions from both locations (OR logic)
