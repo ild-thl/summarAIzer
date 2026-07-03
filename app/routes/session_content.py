@@ -1,6 +1,7 @@
 """API routes for Session Content Management (sub-resource)."""
 
 import json
+from urllib.parse import quote
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
@@ -54,6 +55,24 @@ def _content_media_type(content_type: str | None) -> str:
     }
 
     return media_type_map.get(normalized, "text/plain; charset=utf-8")
+
+
+def _content_disposition_header(filename: str, inline: bool = True) -> str:
+    """Build a Content-Disposition header that is safe for non-ASCII filenames.
+
+    Returns a header using an ASCII fallback `filename` and the RFC5987
+    `filename*` parameter with UTF-8 percent-encoding so the header value
+    contains only ASCII characters and won't raise on header encoding.
+    """
+    disposition = "inline" if inline else "attachment"
+    if not isinstance(filename, str) or not filename:
+        filename = "file"
+
+    # ASCII fallback: replace non-printable or non-ascii chars with '_'
+    fallback = "".join(ch if 32 <= ord(ch) <= 126 else "_" for ch in filename)
+    # RFC5987 percent-encoded UTF-8 filename
+    encoded = quote(filename, safe="")
+    return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
 
 
 def _is_browser_navigation(request: Request) -> bool:
@@ -520,6 +539,13 @@ async def upload_slide_file(
     if not data:
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="Uploaded file is empty")
 
+    # Ensure uploaded file is a PDF (magic bytes check). Reject other formats like PPTX.
+    if not isinstance(data, bytes | bytearray) or not data.startswith(b"%PDF"):
+        raise HTTPException(
+            status_code=HTTP_400_BAD_REQUEST,
+            detail="Uploaded slide file must be a PDF",
+        )
+
     s3 = get_s3_slide_service()
     s3_key = s3.upload_slide(session_id, file.filename, data)
 
@@ -599,7 +625,7 @@ async def download_slide_file(
     return Response(
         content=data,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+        headers={"Content-Disposition": _content_disposition_header(safe_filename)},
     )
 
 
@@ -663,5 +689,5 @@ async def embed_slide_file(
     return Response(
         content=data,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+        headers={"Content-Disposition": _content_disposition_header(safe_filename)},
     )
