@@ -1,11 +1,77 @@
 """CRUD operations for generated content."""
 
+import json
 from datetime import datetime
 
+import structlog
 from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session as SQLSession
 
 from app.database.models import GeneratedContent, WorkflowExecution
+from app.services.s3_service import get_s3_service
+
+logger = structlog.get_logger()
+
+
+def _extract_s3_key_from_content(content: str | None) -> str | None:
+    """Try to extract an `s3_key` from JSON content or a plain URL.
+
+    Returns the raw s3 key (e.g. "content/summaraizer/...") or None.
+    """
+    if not content:
+        return None
+
+    # Try JSON parse first
+    try:
+        payload = json.loads(content)
+        if isinstance(payload, dict) and payload.get("s3_key"):
+            return payload.get("s3_key")
+    except Exception:
+        pass
+
+    # If content looks like a full public URL, try to strip the base
+    if isinstance(content, str) and content.startswith("http"):
+        # aws_url configured in services will include the base; use generic S3 service
+        try:
+            svc = get_s3_service()
+            base = (svc.aws_url or "").rstrip("/")
+            if base and content.startswith(base):
+                return content[len(base) + 1 :]
+        except Exception:
+            pass
+
+    return None
+
+
+def _delete_s3_for_generated_content(db_content: GeneratedContent) -> None:
+    """Delete any S3 objects referenced by a GeneratedContent record.
+
+    Non-fatal: log and continue on errors.
+    """
+    try:
+        s3_key = _extract_s3_key_from_content(db_content.content)
+        if not s3_key:
+            # Try meta_info fallback
+            meta = getattr(db_content, "meta_info", None) or {}
+            s3_key = meta.get("s3_key") or meta.get("image_url")
+            if isinstance(s3_key, str) and s3_key.startswith("http"):
+                # convert image_url to key if possible
+                s3_key = _extract_s3_key_from_content(s3_key)
+
+        if not s3_key:
+            return
+
+        # Use the generic S3 service to delete the referenced object.
+        svc = get_s3_service()
+        try:
+            svc.delete_object(s3_key)
+            logger.info("deleted_s3_object", s3_key=s3_key, session_id=db_content.session_id)
+        except Exception:
+            logger.exception("failed_delete_s3_object", s3_key=s3_key)
+        return
+
+    except Exception:
+        logger.exception("s3_cleanup_unexpected_error", content_id=getattr(db_content, "id", None))
 
 
 def create_content(
@@ -82,6 +148,14 @@ def create_or_update_content(
     )
 
     if existing:
+        try:
+            old_s3_key = _extract_s3_key_from_content(existing.content)
+            new_s3_key = _extract_s3_key_from_content(content)
+            if old_s3_key and old_s3_key != new_s3_key:
+                _delete_s3_for_generated_content(existing)
+        except Exception:
+            logger.exception("s3_cleanup_before_update_failed", content_id=existing.id)
+
         # Update existing record instead of creating duplicate
         existing.content = content
         existing.content_type = content_type
@@ -173,6 +247,15 @@ def update_content(
     """Update content (for manual edits)."""
     db_content = get_content_by_id(db, content_id)
     if db_content:
+        # If updating content, attempt to delete any previous S3 assets
+        try:
+            old_s3_key = _extract_s3_key_from_content(db_content.content)
+            new_s3_key = _extract_s3_key_from_content(content)
+            if old_s3_key and old_s3_key != new_s3_key:
+                _delete_s3_for_generated_content(db_content)
+        except Exception:
+            logger.exception("s3_cleanup_before_manual_update_failed", content_id=db_content.id)
+
         db_content.content = content
         if meta_info is not None:
             db_content.meta_info = meta_info
@@ -211,6 +294,24 @@ def delete_content(db: SQLSession, content_id: int) -> bool:
 
 def delete_content_by_identifier(db: SQLSession, session_id: int, identifier: str) -> bool:
     """Delete all content with given identifier for session."""
+    # Fetch affected rows first so we can clean up any referenced S3 objects
+    contents = (
+        db.query(GeneratedContent)
+        .filter(
+            and_(
+                GeneratedContent.session_id == session_id,
+                GeneratedContent.identifier == identifier,
+            )
+        )
+        .all()
+    )
+
+    for c in contents:
+        try:
+            _delete_s3_for_generated_content(c)
+        except Exception:
+            logger.exception("s3_cleanup_failed_before_delete", content_id=c.id)
+
     count = (
         db.query(GeneratedContent)
         .filter(

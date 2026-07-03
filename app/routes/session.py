@@ -48,6 +48,7 @@ from app.security.auth import (
     require_session_owner,
 )
 from app.services.documentation_builder import DocumentationBuilder
+from app.services.s3_service import get_s3_service
 from app.utils.helpers import DateTimeUtils
 from app.utils.matomo import track_list_sessions_usage
 
@@ -1079,6 +1080,14 @@ async def rebuild_all_documentation(
                     failed += 1
             else:
                 # No generated content: remove existing artifact (cleanup)
+                # Also attempt to remove any published S3 copies for this session.
+                try:
+                    s3 = get_s3_service()
+                    prefix = f"content/summaraizer/published/session_{session.id}/"
+                    s3.delete_prefix(prefix)
+                except Exception:
+                    logger.exception("failed_to_delete_published_s3_prefix", session_id=session.id)
+
                 session.published_documentation_artifact = None
                 db.add(session)
                 db.commit()
@@ -1143,6 +1152,14 @@ async def delete_session_documentation(
     session = session_crud.read(db, session_id)
     if session is None:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Session not found")
+
+    # Attempt best-effort cleanup of published S3 copies for this session
+    try:
+        s3 = get_s3_service()
+        prefix = f"content/summaraizer/published/session_{session.id}/"
+        s3.delete_prefix(prefix)
+    except Exception:
+        logger.exception("failed_to_delete_published_s3_prefix", session_id=session.id)
 
     session.published_documentation_artifact = None
     db.add(session)

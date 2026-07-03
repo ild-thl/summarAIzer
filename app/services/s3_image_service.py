@@ -115,34 +115,3 @@ class S3ImageService(S3Service):
                 exc_info=True,
             )
             raise
-
-    def delete_image(self, s3_key: str, session_id: int) -> bool:
-        """Delete an image from S3."""
-        try:
-            logger.info(
-                "deleting_image_from_s3",
-                session_id=session_id,
-                s3_key=s3_key,
-            )
-
-            self.s3_client.delete_object(
-                Bucket=self.bucket,
-                Key=s3_key,
-            )
-
-            logger.info(
-                "image_deleted_from_s3",
-                session_id=session_id,
-                s3_key=s3_key,
-            )
-
-            return True
-
-        except Exception as e:
-            logger.error(
-                "s3_image_deletion_failed",
-                session_id=session_id,
-                s3_key=s3_key,
-                error=str(e),
-            )
-            raise
