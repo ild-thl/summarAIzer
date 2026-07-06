@@ -360,7 +360,7 @@ def _export_event_summaries_response(
     ):
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    sessions = session_crud.list_by_event(db, event_id)
+    sessions = session_crud.list_by_event(db, event_id, 0, 1000)
     eligible_sessions = [s for s in sessions if s.published_documentation_artifact]
     # Order sessions by start_datetime (oldest first). Sessions without a start_datetime
     # are placed at the end.
