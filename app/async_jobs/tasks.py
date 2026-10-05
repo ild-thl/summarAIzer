@@ -537,11 +537,10 @@ def _handle_workflow_error(
     session_id: int,
     target: str,
     task_id: str,
-    task_self,
     db: Session | None = None,
 ):
     """
-    Handle workflow execution errors with proper logging and retry logic.
+    Record workflow execution errors.
 
     Separated to reduce main task complexity.
 
@@ -551,15 +550,12 @@ def _handle_workflow_error(
         session_id: Session ID
         target: Workflow target
         task_id: Celery task ID
-        task_self: Celery task self object (for retry)
         db: Optional database session
     """
     import traceback
 
     tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
     tb_str = "".join(tb_lines)
-
-    should_retry = _is_transient_error(e)
 
     logger.error(
         "content_generation_task_failed",
@@ -569,7 +565,7 @@ def _handle_workflow_error(
         target=target,
         error=str(e),
         error_type=type(e).__name__,
-        should_retry=should_retry,
+        retry_policy="manual_only",
         exc_info=True,
         full_traceback=tb_str,
     )
@@ -590,33 +586,13 @@ def _handle_workflow_error(
                 original_error=str(e),
             )
 
-    # Only retry on transient errors
-    if should_retry:
-        try:
-            logger.info(
-                "content_generation_task_retrying",
-                task_id=task_id,
-                retry_count=task_self.request.retries,
-                max_retries=task_self.max_retries,
-                countdown_seconds=60 * (task_self.request.retries + 1),
-                error_type=type(e).__name__,
-            )
-            raise task_self.retry(exc=e, countdown=60 * (task_self.request.retries + 1)) from e
-        except Exception as retry_exception:
-            logger.error(
-                "content_generation_task_max_retries_exceeded",
-                task_id=task_id,
-                execution_id=execution_id,
-                final_error=str(retry_exception),
-            )
-    else:
-        logger.error(
-            "content_generation_task_not_retried_programming_error",
-            task_id=task_id,
-            execution_id=execution_id,
-            error_type=type(e).__name__,
-            reason="Error is not transient (programming error). Permanent failure recorded.",
-        )
+    logger.info(
+        "content_generation_task_not_retried",
+        task_id=task_id,
+        execution_id=execution_id,
+        error_type=type(e).__name__,
+        retry_policy="manual_only",
+    )
 
 
 @app.task(
@@ -733,7 +709,7 @@ def process_audio_upload(self, audio_file_id: int) -> dict:  # noqa: ARG001
 @app.task(
     name="app.async_jobs.tasks.execute_generated_content",
     bind=True,
-    max_retries=2,
+    max_retries=0,
     queue="workflows",
 )
 def execute_generated_content(
@@ -758,6 +734,15 @@ def execute_generated_content(
         triggered_by: "user_triggered" or "auto_scheduled"
         created_by_user_id: User who triggered the workflow (stored in WorkflowExecution)
     """
+    if self.request.retries > 0:
+        logger.warning(
+            "content_generation_retry_suppressed",
+            task_id=self.request.id,
+            execution_id=execution_id,
+            retry_count=self.request.retries,
+        )
+        return {"status": "ignored_retry", "execution_id": execution_id}
+
     db: Session | None = None
     try:
         db = SessionLocal()
@@ -852,7 +837,7 @@ def execute_generated_content(
         }
 
     except Exception as e:
-        _handle_workflow_error(e, execution_id, session_id, target, self.request.id, self, db)
+        _handle_workflow_error(e, execution_id, session_id, target, self.request.id, db)
 
     finally:
         if db:

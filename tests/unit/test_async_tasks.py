@@ -9,6 +9,31 @@ from app.async_jobs import tasks as tasks_module
 from app.database.models import WorkflowExecutionStatus
 
 
+def test_workflow_errors_are_marked_failed_without_automatic_retry(mock_db_session):
+    error = TimeoutError("provider request timed out")
+
+    with (
+        patch("app.async_jobs.tasks.WorkflowExecutionService.mark_failed") as mark_failed,
+        patch("app.async_jobs.tasks.logger") as mock_logger,
+    ):
+        tasks_module._handle_workflow_error(
+            error,
+            execution_id=17,
+            session_id=601,
+            target="talk_workflow",
+            task_id="workflow-17",
+            db=mock_db_session,
+        )
+
+    mark_failed.assert_called_once_with(17, mock_db_session, str(error))
+    assert tasks_module.execute_generated_content.max_retries == 0
+    assert any(
+        call.args[0] == "content_generation_task_not_retried"
+        and call.kwargs["retry_policy"] == "manual_only"
+        for call in mock_logger.info.call_args_list
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_generated_content_stores_created_by_user_id(
     mock_db_session, clean_registries
