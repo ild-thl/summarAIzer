@@ -212,13 +212,21 @@ class TestSessionDocumentationEndpoint:
             == f"http://localhost:7860/api/v2/sessions/{session_published.id}/content/transcription"
         )
 
-    def test_artifact_normalizes_image_url_to_resource_url(self, session_published, test_db):
+    def test_artifact_normalizes_image_url_to_resource_url(
+        self, session_published, test_db, monkeypatch
+    ):
         """Image sections should expose canonical URL via resource_url only."""
+        from app.services import documentation_builder
         from app.services.documentation_builder import DocumentationBuilder
 
         image_url = (
             "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
             "session_32/generated_image_20260513_145220.png"
+        )
+        monkeypatch.setattr(
+            documentation_builder,
+            "_maybe_copy_s3_for_publication",
+            lambda _session_id, _content, resource_url: resource_url,
         )
         create_content(
             db=test_db,
@@ -240,13 +248,21 @@ class TestSessionDocumentationEndpoint:
         assert image_section["resource_url"] == image_url
         assert image_section["content"] is None
 
-    def test_artifact_uses_meta_image_url_when_content_missing(self, session_published, test_db):
+    def test_artifact_uses_meta_image_url_when_content_missing(
+        self, session_published, test_db, monkeypatch
+    ):
         """Image URL should still be exposed via resource_url when only meta contains the URL."""
+        from app.services import documentation_builder
         from app.services.documentation_builder import DocumentationBuilder
 
         image_url = (
             "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
             "session_42/generated_image_20260513_150000.png"
+        )
+        monkeypatch.setattr(
+            documentation_builder,
+            "_maybe_copy_s3_for_publication",
+            lambda _session_id, _content, resource_url: resource_url,
         )
         create_content(
             db=test_db,
@@ -267,13 +283,21 @@ class TestSessionDocumentationEndpoint:
         assert image_section["resource_url"] == image_url
         assert image_section["content"] is None
 
-    def test_artifact_extracts_image_url_from_json_content(self, session_published, test_db):
+    def test_artifact_extracts_image_url_from_json_content(
+        self, session_published, test_db, monkeypatch
+    ):
         """Image section should resolve URL from JSON payload content for S3-backed consistency."""
+        from app.services import documentation_builder
         from app.services.documentation_builder import DocumentationBuilder
 
         image_url = (
             "https://dennis-dlc-dev.s3-eu-central-2.ionoscloud.com/content/summaraizer/"
             "session_42/generated_image_20260513_150000.png"
+        )
+        monkeypatch.setattr(
+            documentation_builder,
+            "_maybe_copy_s3_for_publication",
+            lambda _session_id, _content, resource_url: resource_url,
         )
         create_content(
             db=test_db,
@@ -296,10 +320,25 @@ class TestSessionDocumentationEndpoint:
         assert image_section["resource_url"] == image_url
         assert image_section["content"] is None
 
-    def test_artifact_exposes_slide_deck_download_resource(self, session_published, test_db):
-        """Slide deck should be represented as link-only section in the published artifact."""
+    def test_artifact_exposes_published_slide_deck_snapshot(
+        self, session_published, test_db, monkeypatch
+    ):
+        """Slide deck links should target the copied publication snapshot."""
+        from app.services import documentation_builder
         from app.services.documentation_builder import DocumentationBuilder
 
+        published_key = (
+            f"content/summaraizer/published/session_{session_published.id}/version/deck.pdf"
+        )
+        published_url = f"{documentation_builder.settings.aws_url.rstrip('/')}/{published_key}"
+
+        def copy_to_publication(_session_id, content, _resource_url):
+            content.meta_info["s3_key"] = published_key
+            return published_url
+
+        monkeypatch.setattr(
+            documentation_builder, "_maybe_copy_s3_for_publication", copy_to_publication
+        )
         create_content(
             db=test_db,
             session_id=session_published.id,
@@ -315,10 +354,8 @@ class TestSessionDocumentationEndpoint:
         assert artifact is not None
         slide_section = next(s for s in artifact["sections"] if s["identifier"] == "slide_deck")
         assert slide_section["type"] == "resource_link"
-        assert (
-            slide_section["resource_url"]
-            == f"http://localhost:7860/api/v2/sessions/{session_published.id}/slide-files/download"
-        )
+        assert slide_section["resource_url"] == published_url
+        assert slide_section["embed_url"].endswith(f"?s3_key={published_key}")
         assert slide_section["content"] is None
 
 
