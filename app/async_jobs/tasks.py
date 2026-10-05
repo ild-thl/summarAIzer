@@ -838,6 +838,7 @@ def execute_generated_content(
 
     except Exception as e:
         _handle_workflow_error(e, execution_id, session_id, target, self.request.id, db)
+        raise
 
     finally:
         if db:

@@ -34,6 +34,35 @@ def test_workflow_errors_are_marked_failed_without_automatic_retry(mock_db_sessi
     )
 
 
+def test_execute_generated_content_propagates_graph_failure_to_celery(mock_db_session):
+    error = TimeoutError("summary request timed out")
+
+    with (
+        patch("app.async_jobs.tasks.SessionLocal", return_value=mock_db_session),
+        patch("app.async_jobs.tasks.WorkflowExecutionService.mark_running"),
+        patch("app.async_jobs.tasks.content_crud.list_for_session", return_value=[]),
+        patch("app.async_jobs.tasks._resolve_and_build_workflow", return_value=Mock()),
+        patch("app.async_jobs.tasks._execute_workflow_graph", side_effect=error),
+        patch("app.async_jobs.tasks._handle_workflow_error") as handle_error,
+        pytest.raises(TimeoutError, match="summary request timed out"),
+    ):
+        tasks_module.execute_generated_content.run(
+            session_id=601,
+            execution_id=17,
+            target="talk_workflow",
+        )
+
+    handle_error.assert_called_once_with(
+        error,
+        17,
+        601,
+        "talk_workflow",
+        tasks_module.execute_generated_content.request.id,
+        mock_db_session,
+    )
+    mock_db_session.close.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_execute_generated_content_stores_created_by_user_id(
     mock_db_session, clean_registries
