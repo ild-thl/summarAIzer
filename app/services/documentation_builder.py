@@ -346,31 +346,27 @@ def _maybe_copy_s3_for_publication(session_id: int, content, section_resource_ur
 
 
 def _build_slide_deck_section(session_id: int, content) -> tuple[str | None, str | None]:
-    """Build resource/embed URLs for a slide_deck section, copying S3 object when possible.
-
-    Returns (resource_url, embed_url). Falls back to API endpoints when copy not possible.
-    """
+    """Build resource/embed URLs for a slide_deck section, copying its S3 object when possible."""
     api_download = (
         f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/download"
     )
     api_embed = (
         f"{settings.api_base_url.rstrip('/')}/api/v2/sessions/{session_id}/slide-files/embed"
     )
+
     try:
-        # Prefer explicit s3_key present inside the stored content payload
         payload = _parse_json_dict(content.content) if isinstance(content.content, str) else None
         if payload and isinstance(payload.get("s3_key"), str):
-            s3_src = _build_public_s3_url(payload.get("s3_key"))
-            if s3_src:
-                published_url = _maybe_copy_s3_for_publication(session_id, content, s3_src)
+            s3_url = _build_public_s3_url(payload["s3_key"])
+            if s3_url:
+                published_url = _maybe_copy_s3_for_publication(session_id, content, s3_url)
                 if published_url and published_url != api_download:
-                    s3_key = None
+                    published_key = None
                     if isinstance(content.meta_info, dict):
-                        s3_key = content.meta_info.get("s3_key")
-                    if s3_key:
-                        return published_url, f"{api_embed}?s3_key={quote(s3_key)}"
+                        published_key = content.meta_info.get("s3_key")
+                    if published_key:
+                        return published_url, f"{api_embed}?s3_key={quote(published_key)}"
                     return published_url, api_embed
-
     except Exception:
         logger.exception("slide_publish_copy_failed", session_id=session_id)
 
