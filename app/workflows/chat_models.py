@@ -32,7 +32,7 @@ class ChatModelConfig:
             "temperature": get_settings().llm_temperature,
             "max_tokens": get_settings().llm_max_tokens,
             "top_p": get_settings().llm_top_p,
-            "max_retries": 3,
+            "max_retries": 1,
             "rate_limiter": DEFAULT_RATE_LIMITER,
             "timeout": httpx.Timeout(
                 connect=12.0,

@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     llm_temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     llm_max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2000"))
     llm_top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
-    llm_request_timeout_seconds: float = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "300"))
+    llm_request_timeout_seconds: float = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "180"))
 
     # Embedding Configuration for semantic search
     enable_embeddings: bool = os.getenv("ENABLE_EMBEDDINGS", "true").lower() == "true"
