@@ -6,6 +6,7 @@ uvicorn[standard]
 # Database & ORM
 sqlalchemy>=2.0
 psycopg2-binary
+psycopg[binary]>=3.1
 alembic
 
 # Data validation
