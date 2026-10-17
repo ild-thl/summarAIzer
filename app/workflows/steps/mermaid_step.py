@@ -141,7 +141,7 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
         4. If still invalid after retry: return empty content with validation_failed=True in meta.
         """
         messages = self.get_messages(session, context)
-        response = await self.get_model().ainvoke(messages)
+        response = await self._invoke_model(messages)
         mermaid_code = _extract_mermaid_code(response)
 
         is_valid, reason = _validate_mermaid(mermaid_code)
@@ -165,7 +165,7 @@ Erstelle nun eine Mermaid-Mindmap für diese Veranstaltung."""
                     )
                 ),
             ]
-            retry_response = await self.get_model().ainvoke(correction_messages)
+            retry_response = await self._invoke_model(correction_messages)
             mermaid_code = _extract_mermaid_code(retry_response)
             is_valid, reason = _validate_mermaid(mermaid_code)
 

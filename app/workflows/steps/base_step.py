@@ -1,5 +1,6 @@
 """Base class for workflow steps."""
 
+import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -90,6 +91,27 @@ class WorkflowStep(ABC):
         """
         config = self.get_model_config()
         return create_chat_model(config)
+
+    async def _invoke_model(self, messages: list[Any]) -> Any:
+        """Invoke the step's LLM and close its async HTTP client before returning."""
+        model = self.get_model()
+        try:
+            return await model.ainvoke(messages)
+        finally:
+            client = getattr(model, "root_async_client", None)
+            close = getattr(client, "close", None)
+            if close is not None:
+                try:
+                    close_result = close()
+                    if inspect.isawaitable(close_result):
+                        await close_result
+                except Exception as exc:
+                    logger.warning(
+                        "llm_async_client_close_failed",
+                        step_id=self.identifier,
+                        error_type=type(exc).__name__,
+                        error=str(exc)[:500],
+                    )
 
     async def execute(
         self,

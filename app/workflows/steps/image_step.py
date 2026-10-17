@@ -147,7 +147,7 @@ Create a concise English prompt for a high-quality visualization image that repr
 
             # Step 1: Generate image description via LLM
             messages = self.get_messages(session, context)
-            response = await self.get_model().ainvoke(messages)
+            response = await self._invoke_model(messages)
 
             logger.debug(
                 "image_description_generated",

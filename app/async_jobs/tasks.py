@@ -313,18 +313,12 @@ def generate_session_embedding(
     """
     db: Session | None = None
     try:
-        # Run the async helper
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                _generate_session_embedding_base(
-                    session_id=session_id,
-                    embedding_text=embedding_text,
-                )
+        asyncio.run(
+            _generate_session_embedding_base(
+                session_id=session_id,
+                embedding_text=embedding_text,
             )
-        finally:
-            loop.close()
+        )
 
     except Exception as e:
         logger.error(
@@ -440,15 +434,13 @@ def _execute_workflow_graph(
         initial_state_keys=list(initial_state.keys()),
     )
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
         logger.info(
             "about_to_invoke_graph",
             execution_id=execution_id,
         )
 
-        final_state = loop.run_until_complete(graph.ainvoke(initial_state))
+        final_state = asyncio.run(graph.ainvoke(initial_state))
 
         logger.info(
             "content_generation_execution_completed",
@@ -468,8 +460,6 @@ def _execute_workflow_graph(
             exc_info=not is_transcription_request_error,
         )
         raise
-    finally:
-        loop.close()
 
 
 def _track_generated_content(

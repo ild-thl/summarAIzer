@@ -18,6 +18,23 @@ from .test_workflows_utils import (
 
 
 @pytest.mark.asyncio
+async def test_invoke_model_closes_async_client():
+    """The step closes OpenAI's async client while its event loop is still running."""
+    step = create_mock_step(identifier="client_cleanup_step")
+    model = Mock()
+    model.ainvoke = AsyncMock(return_value="response")
+    model.root_async_client = Mock()
+    model.root_async_client.close = AsyncMock()
+
+    with patch.object(step, "get_model", return_value=model):
+        result = await step._invoke_model([])
+
+    assert result == "response"
+    model.ainvoke.assert_awaited_once_with([])
+    model.root_async_client.close.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_step_execute_generates_and_persists(mock_db_session):
     """Test that execute() generates content AND persists it."""
     step = create_mock_step(

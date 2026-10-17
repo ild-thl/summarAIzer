@@ -191,9 +191,7 @@ class Settings(BaseSettings):
         f"{os.getenv('LLM_BASE_URL', '').rstrip('/')}/audio/transcriptions",
     )
     # Defaults to the LLM key for compatibility with existing deployments
-    transcription_api_key: str = os.getenv(
-        "TRANSCRIPTION_API_KEY", os.getenv("LLM_API_KEY", "")
-    )
+    transcription_api_key: str = os.getenv("TRANSCRIPTION_API_KEY", os.getenv("LLM_API_KEY", ""))
     # Whisper model name at the transcription endpoint
     transcription_model: str = os.getenv("TRANSCRIPTION_MODEL", "whisper-large-v2")
     # Whisper response format (json|text|srt|verbose_json|vtt)

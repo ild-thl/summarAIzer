@@ -191,8 +191,7 @@ class ShortDescriptionStep(LLMStep):
         messages = self._build_messages_for_session(session, source)
 
         # Invoke LLM
-        model = self.get_model()
-        response = await model.ainvoke(messages)
+        response = await self._invoke_model(messages)
 
         logger.debug(
             "short_description_step_llm_invoked",
