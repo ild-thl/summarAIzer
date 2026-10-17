@@ -20,6 +20,7 @@ from app.services.embedding.factory import get_embedding_service
 from app.services.embedding.service import EmbeddingService
 from app.services.execution_service import WorkflowExecutionService
 from app.services.s3_audio_service import S3AudioService, get_s3_audio_service
+from app.services.transcription.exceptions import TranscriptionRequestError
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
@@ -458,12 +459,13 @@ def _execute_workflow_graph(
         )
         return final_state
     except Exception as exec_error:
+        is_transcription_request_error = isinstance(exec_error, TranscriptionRequestError)
         logger.error(
             "graph_execution_failed",
             execution_id=execution_id,
             error=str(exec_error),
             error_type=type(exec_error).__name__,
-            exc_info=True,
+            exc_info=not is_transcription_request_error,
         )
         raise
     finally:
@@ -552,10 +554,14 @@ def _handle_workflow_error(
         task_id: Celery task ID
         db: Optional database session
     """
-    import traceback
+    is_transcription_request_error = isinstance(e, TranscriptionRequestError)
+    if is_transcription_request_error:
+        tb_str = None
+    else:
+        import traceback
 
-    tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
-    tb_str = "".join(tb_lines)
+        tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
+        tb_str = "".join(tb_lines)
 
     logger.error(
         "content_generation_task_failed",
@@ -566,7 +572,7 @@ def _handle_workflow_error(
         error=str(e),
         error_type=type(e).__name__,
         retry_policy="manual_only",
-        exc_info=True,
+        exc_info=not is_transcription_request_error,
         full_traceback=tb_str,
     )
 

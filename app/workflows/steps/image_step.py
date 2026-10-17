@@ -48,7 +48,7 @@ class ImageStep(LLMStep):
         self,
         api_url: str | None = None,
         api_key: str | None = None,
-        model: str = "flux",
+        model: str | None = None,
         width: int = 1024,
         height: int = 768,
     ):
@@ -58,7 +58,7 @@ class ImageStep(LLMStep):
         Args:
             api_url: URL of the Academic Cloud image generation API (reads from settings if None)
             api_key: API key for authentication with Academic Cloud (reads from settings if None)
-            model: Model for image generation (default: "flux")
+            model: Model for image generation (reads from settings if None)
             width: Image width in pixels (default: 1024)
             height: Image height in pixels (default: 768)
         """
@@ -71,7 +71,7 @@ class ImageStep(LLMStep):
         self.image_service = ImageGenerationService(api_url=api_url, api_key=api_key)
         self.s3_service = S3ImageService()
         self.aws_url = (settings.aws_url or "").rstrip("/")
-        self.image_model = model
+        self.image_model = model or settings.image_generation_model
         self.width = width
         self.height = height
 

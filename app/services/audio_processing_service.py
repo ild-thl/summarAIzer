@@ -58,7 +58,7 @@ class AudioProcessingService:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             input_path = os.path.join(tmpdir, f"input{suffix}")
-            output_pattern = os.path.join(tmpdir, "chunk_%04d.flac")
+            output_pattern = os.path.join(tmpdir, "chunk_%04d.wav")
 
             # Write raw input
             with open(input_path, "wb") as f:
@@ -68,7 +68,7 @@ class AudioProcessingService:
             self._run_ffmpeg(input_path, output_pattern)
 
             # Collect output chunks in sorted order
-            chunk_files = sorted(Path(tmpdir).glob("chunk_*.flac"))
+            chunk_files = sorted(Path(tmpdir).glob("chunk_*.wav"))
             if not chunk_files:
                 raise AudioProcessingError(
                     f"ffmpeg produced no output chunks for '{original_filename}'"
@@ -76,12 +76,14 @@ class AudioProcessingService:
 
             chunks = []
             for chunk_path in chunk_files:
-                chunk_bytes = chunk_path.read_bytes()
+                flac_path = chunk_path.with_suffix(".flac")
+                self._encode_flac(chunk_path, flac_path)
+                chunk_bytes = flac_path.read_bytes()
                 size_mb = len(chunk_bytes) / (1024 * 1024)
                 if size_mb > self.max_file_size_mb:
                     logger.warning(
                         "audio_chunk_exceeds_size_limit",
-                        chunk_file=chunk_path.name,
+                        chunk_file=flac_path.name,
                         size_mb=round(size_mb, 2),
                         max_size_mb=self.max_file_size_mb,
                     )
@@ -96,7 +98,7 @@ class AudioProcessingService:
             return chunks
 
     def _run_ffmpeg(self, input_path: str, output_pattern: str) -> None:
-        """Run ffmpeg to segment audio into FLAC chunks."""
+        """Run ffmpeg to segment audio into temporary PCM WAV chunks."""
         cmd = [
             "ffmpeg",
             "-y",  # overwrite outputs
@@ -108,15 +110,15 @@ class AudioProcessingService:
             "-ac",
             "1",  # mono
             "-c:a",
-            "flac",
-            "-compression_level",
-            str(self.compression_level),
+            "pcm_s16le",
             "-f",
             "segment",
             "-segment_time",
             str(self.segment_seconds),
             "-reset_timestamps",
             "1",
+            "-segment_format",
+            "wav",
             output_pattern,
         ]
 
@@ -145,3 +147,39 @@ class AudioProcessingService:
             )
 
         logger.info("ffmpeg_completed", output_pattern=output_pattern)
+
+    def _encode_flac(self, input_path: Path, output_path: Path) -> None:
+        """Encode one segment to FLAC so its STREAMINFO has the chunk duration."""
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "flac",
+                "-compression_level",
+                str(self.compression_level),
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+        if result.returncode != 0:
+            logger.error(
+                "ffmpeg_flac_encode_failed",
+                input_file=input_path.name,
+                returncode=result.returncode,
+                stderr=result.stderr[-2000:],
+            )
+            raise AudioProcessingError(
+                f"ffmpeg FLAC encoding failed with code {result.returncode}: "
+                f"{result.stderr[-500:]}"
+            )

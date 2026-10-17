@@ -137,6 +137,7 @@ class Settings(BaseSettings):
         "https://chat-ai.academiccloud.de/v1/images/generations",
     )
     image_generation_api_key: str = os.getenv("IMAGE_GENERATION_API_KEY", "")
+    image_generation_model: str = os.getenv("IMAGE_GENERATION_MODEL", "flux")
 
     # Docling PDF conversion configuration
     docling_api_url: str = os.getenv(
@@ -184,6 +185,15 @@ class Settings(BaseSettings):
     transcribe_segment_seconds: int = int(os.getenv("TRANSCRIBE_SEGMENT_SECONDS", "170"))
     # Maximum single file size accepted by the Whisper endpoint (MB)
     transcribe_max_file_size_mb: int = int(os.getenv("TRANSCRIBE_MAX_FILE_SIZE_MB", "25"))
+    # Full OpenAI-compatible audio transcription endpoint URL
+    transcription_api_url: str = os.getenv(
+        "TRANSCRIPTION_API_URL",
+        f"{os.getenv('LLM_BASE_URL', '').rstrip('/')}/audio/transcriptions",
+    )
+    # Defaults to the LLM key for compatibility with existing deployments
+    transcription_api_key: str = os.getenv(
+        "TRANSCRIPTION_API_KEY", os.getenv("LLM_API_KEY", "")
+    )
     # Whisper model name at the transcription endpoint
     transcription_model: str = os.getenv("TRANSCRIPTION_MODEL", "whisper-large-v2")
     # Whisper response format (json|text|srt|verbose_json|vtt)
