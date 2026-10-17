@@ -13,6 +13,10 @@ class TranscriptionUnavailableError(TranscriptionError):
     """
 
 
+class TranscriptionRequestError(TranscriptionError):
+    """Raised when an external transcription provider rejects or cannot serve a request."""
+
+
 class TranscriptionPendingError(TranscriptionError):
     """
     Raised when audio files exist but are not yet processed (pending/processing).

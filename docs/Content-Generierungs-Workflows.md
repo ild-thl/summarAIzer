@@ -110,7 +110,7 @@ Beispielkonfiguration pro Step:
 | Step        | Standard-Modell                      | Eigenschaft                          | Begründung                                                                                      |
 |-------------|--------------------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------|
 | `summary`   | `gemma-4-31b-it` | `temperature=0.3`, `max_tokens=5000` | Großes Modell mit guten sprachlichen Fähigkeiten für ausführliche, kohärente Zusammenfassungen. |
-| `mermaid`   | `devstral-2-123b-instruct-2512`      | `temperature=0.2`, `max_tokens=1500` | Coding-optimiertes Modell für zuverlässige Mermaid-Syntax-Generierung.                          |
+| `mermaid`   | `qwen3-coder-next`      | `temperature=0.2`, `max_tokens=1500` | Coding-optimiertes Modell für zuverlässige Mermaid-Syntax-Generierung.                          |
 | `wordcloud` | `meta-llama-3.1-8b-instruct`         | `temperature=0.1`, `max_tokens=500`  | Kleines, schnelles Modell für einfache Aufgaben wie Wortwolken-Generierung.                     |
 
 ---

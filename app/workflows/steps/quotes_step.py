@@ -133,7 +133,7 @@ Wähle nun 3-5 prägnante Originalzitate aus dem Transkript aus."""
         4. Keep up to 2 verified quotes; return empty string if none pass (graceful fallback).
         """
         messages = self.get_messages(session, context)
-        response = await self.get_model().ainvoke(messages)
+        response = await self._invoke_model(messages)
         raw_output = response.content if hasattr(response, "content") else str(response)
 
         transcription = context.get("transcription", "")

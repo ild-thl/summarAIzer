@@ -20,6 +20,7 @@ from app.services.embedding.factory import get_embedding_service
 from app.services.embedding.service import EmbeddingService
 from app.services.execution_service import WorkflowExecutionService
 from app.services.s3_audio_service import S3AudioService, get_s3_audio_service
+from app.services.transcription.exceptions import TranscriptionRequestError
 from app.workflows.execution_context import (
     StepRegistry,
     WorkflowRegistry,
@@ -312,18 +313,12 @@ def generate_session_embedding(
     """
     db: Session | None = None
     try:
-        # Run the async helper
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                _generate_session_embedding_base(
-                    session_id=session_id,
-                    embedding_text=embedding_text,
-                )
+        asyncio.run(
+            _generate_session_embedding_base(
+                session_id=session_id,
+                embedding_text=embedding_text,
             )
-        finally:
-            loop.close()
+        )
 
     except Exception as e:
         logger.error(
@@ -439,15 +434,13 @@ def _execute_workflow_graph(
         initial_state_keys=list(initial_state.keys()),
     )
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
         logger.info(
             "about_to_invoke_graph",
             execution_id=execution_id,
         )
 
-        final_state = loop.run_until_complete(graph.ainvoke(initial_state))
+        final_state = asyncio.run(graph.ainvoke(initial_state))
 
         logger.info(
             "content_generation_execution_completed",
@@ -458,16 +451,15 @@ def _execute_workflow_graph(
         )
         return final_state
     except Exception as exec_error:
+        is_transcription_request_error = isinstance(exec_error, TranscriptionRequestError)
         logger.error(
             "graph_execution_failed",
             execution_id=execution_id,
             error=str(exec_error),
             error_type=type(exec_error).__name__,
-            exc_info=True,
+            exc_info=not is_transcription_request_error,
         )
         raise
-    finally:
-        loop.close()
 
 
 def _track_generated_content(
@@ -552,10 +544,14 @@ def _handle_workflow_error(
         task_id: Celery task ID
         db: Optional database session
     """
-    import traceback
+    is_transcription_request_error = isinstance(e, TranscriptionRequestError)
+    if is_transcription_request_error:
+        tb_str = None
+    else:
+        import traceback
 
-    tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
-    tb_str = "".join(tb_lines)
+        tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
+        tb_str = "".join(tb_lines)
 
     logger.error(
         "content_generation_task_failed",
@@ -566,7 +562,7 @@ def _handle_workflow_error(
         error=str(e),
         error_type=type(e).__name__,
         retry_policy="manual_only",
-        exc_info=True,
+        exc_info=not is_transcription_request_error,
         full_traceback=tb_str,
     )
 

@@ -114,7 +114,7 @@ class LLMStep(WorkflowStep):
         messages = self.get_messages(session, context)
 
         # Call LLM
-        response = await self.get_model().ainvoke(messages)
+        response = await self._invoke_model(messages)
 
         logger.debug(
             "prompt_step_llm_invoked",
