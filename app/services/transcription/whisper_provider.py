@@ -1,5 +1,6 @@
 """Whisper API transcription provider — uses processed FLAC chunks from S3."""
 
+import json
 from urllib.parse import urlsplit, urlunsplit
 
 import structlog
@@ -182,9 +183,16 @@ class WhisperTranscriptionProvider:
                 f"Whisper request failed (status={status}{request_suffix})"
             ) from None
 
-        if isinstance(result, str):
-            return result.strip()
-        return (result.text or "").strip()
+        response_text = result if isinstance(result, str) else (result.text or "")
+        response_text = response_text.strip()
+        try:
+            payload = json.loads(response_text)
+        except json.JSONDecodeError:
+            return response_text
+
+        if isinstance(payload, dict) and isinstance(payload.get("text"), str):
+            return payload["text"].strip()
+        return response_text
 
 
 def _transcription_base_url(endpoint_url: str) -> str:
