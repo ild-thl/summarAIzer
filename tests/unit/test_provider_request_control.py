@@ -97,15 +97,26 @@ def test_whisper_uses_transcription_specific_url_and_api_key(test_db):
     client.close.assert_called_once()
 
 
-def test_whisper_returns_text_response_from_openai_client():
-    """The OpenAI client may return plain text when text response format is requested."""
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (" transcribed text ", "transcribed text"),
+        ('{"text":" So, herzlich willkommen. "}', "So, herzlich willkommen."),
+        (
+            SimpleNamespace(text='{"text":" JSON-wrapped result. "}'),
+            "JSON-wrapped result.",
+        ),
+    ],
+)
+def test_whisper_extracts_text_from_openai_client_response(result, expected):
+    """Plain text stays intact while JSON-encoded text fields are unwrapped."""
     settings = SimpleNamespace(
         transcription_model="whisper-large-v2",
         transcription_response_format="text",
         openai_transcribe_temperature=0.4,
     )
     client = Mock()
-    client.audio.transcriptions.create.return_value = " transcribed text "
+    client.audio.transcriptions.create.return_value = result
 
     with (
         patch("app.services.transcription.whisper_provider.acquire_provider_request_slot") as slot,
@@ -120,7 +131,7 @@ def test_whisper_returns_text_response_from_openai_client():
             chunk_key="chunk_0000.flac",
         )
 
-    assert result == "transcribed text"
+    assert result == expected
     slot.assert_called_once_with()
 
 
